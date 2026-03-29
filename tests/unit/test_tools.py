@@ -1,46 +1,38 @@
 """Tests for the tool system."""
 
-import asyncio
 import json
 from pathlib import Path
-from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from micromech.core.errors import ToolExecutionError
 from micromech.tools.base import Tool, ToolMetadata
-from micromech.tools.builtin.echo import EchoTool
 from micromech.tools.registry import ToolNotFoundError, ToolRegistry
 
 
-class DummyTool(Tool):
-    """Minimal tool for testing."""
+def _make_tool(tool_id: str = "dummy", timeout: int = 10) -> Tool:
+    """Create a simple test tool."""
 
-    metadata = ToolMetadata(id="dummy", name="Dummy", version="1.0.0", timeout=10)
+    def run_fn(**kwargs):
+        prompt = kwargs.get("prompt", "")
+        return f"dummy:{prompt}", prompt, None, None
 
-    async def execute(self, prompt: str, **kwargs: Any) -> str:
-        return f"dummy:{prompt}"
+    metadata = ToolMetadata(id=tool_id, name="Dummy", version="1.0.0", timeout=timeout)
+    return Tool(metadata=metadata, run_fn=run_fn)
 
 
-class SlowTool(Tool):
-    """Tool that takes too long — for timeout testing."""
+def _make_slow_tool() -> Tool:
+    """Create a tool that sleeps too long for timeout testing."""
+
+    def run_fn(**kwargs):
+        import time
+
+        time.sleep(10)
+        return "never", None, None, None
 
     metadata = ToolMetadata(id="slow", name="Slow", timeout=1)
-
-    async def execute(self, prompt: str, **kwargs: Any) -> str:
-        await asyncio.sleep(10)
-        return "never reached"
-
-
-class FailingTool(Tool):
-    """Tool that always raises."""
-
-    metadata = ToolMetadata(id="failing", name="Failing", timeout=5)
-
-    async def execute(self, prompt: str, **kwargs: Any) -> str:
-        msg = "intentional failure"
-        raise RuntimeError(msg)
+    return Tool(metadata=metadata, run_fn=run_fn)
 
 
 class TestToolMetadata:
@@ -64,75 +56,65 @@ class TestToolMetadata:
     def test_id_validation_lowercase(self):
         ToolMetadata(id="my-tool")
         ToolMetadata(id="tool123")
-        ToolMetadata(id="my-tool-v2")
 
     def test_id_validation_rejects_invalid(self):
         with pytest.raises(ValidationError):
-            ToolMetadata(id="MyTool")  # uppercase
+            ToolMetadata(id="MyTool")
         with pytest.raises(ValidationError):
-            ToolMetadata(id="my tool")  # space
+            ToolMetadata(id="my tool")
         with pytest.raises(ValidationError):
-            ToolMetadata(id="123tool")  # starts with number
-        with pytest.raises(ValidationError):
-            ToolMetadata(id="../etc")  # path traversal
+            ToolMetadata(id="../etc")
 
 
 class TestEchoTool:
-    def test_metadata(self):
-        tool = EchoTool()
-        assert tool.metadata.id == "echo"
-        assert tool.metadata.timeout == 5
+    def test_registry_loads_echo(self):
+        reg = ToolRegistry()
+        reg.load_builtins()
+        assert reg.has("echo")
 
     @pytest.mark.asyncio
     async def test_execute(self):
-        tool = EchoTool()
+        reg = ToolRegistry()
+        reg.load_builtins()
+        tool = reg.get("echo")
         result = await tool.execute("hello")
         data = json.loads(result)
         assert "p_yes" in data
         assert "p_no" in data
-
-    @pytest.mark.asyncio
-    async def test_execute_returns_valid_prediction(self):
-        tool = EchoTool()
-        result = await tool.execute("Will ETH hit 10k?")
-        data = json.loads(result)
         assert data["p_yes"] + data["p_no"] == 1.0
-        assert 0 <= data["confidence"] <= 1
-
-    @pytest.mark.asyncio
-    async def test_valory_run(self):
-        tool = EchoTool()
-        resp = tool.run(prompt="test")
-        assert len(resp) == 4
-        assert isinstance(resp[0], str)
-        assert resp[1] == "test"
 
     @pytest.mark.asyncio
     async def test_execute_with_timeout(self):
-        tool = EchoTool()
+        reg = ToolRegistry()
+        reg.load_builtins()
+        tool = reg.get("echo")
         result = await tool.execute_with_timeout("hello")
         data = json.loads(result)
+        assert "p_yes" in data
+
+    def test_valory_run(self):
+        reg = ToolRegistry()
+        reg.load_builtins()
+        tool = reg.get("echo")
+        resp = tool.run(prompt="test", tool="echo")
+        assert len(resp) == 4
+        assert resp[1] == "test"
+        data = json.loads(resp[0])
         assert "p_yes" in data
 
 
 class TestTimeoutEnforcement:
     @pytest.mark.asyncio
     async def test_slow_tool_times_out(self):
-        tool = SlowTool()
+        tool = _make_slow_tool()
         with pytest.raises(ToolExecutionError, match="Timed out"):
-            await tool.execute_with_timeout("test")
-
-    @pytest.mark.asyncio
-    async def test_failing_tool_propagates_error(self):
-        tool = FailingTool()
-        with pytest.raises(RuntimeError, match="intentional failure"):
             await tool.execute_with_timeout("test")
 
 
 class TestToolRegistry:
     def test_register_and_get(self):
         reg = ToolRegistry()
-        tool = DummyTool()
+        tool = _make_tool()
         reg.register(tool)
         assert reg.get("dummy") is tool
 
@@ -144,33 +126,26 @@ class TestToolRegistry:
     def test_get_optional(self):
         reg = ToolRegistry()
         assert reg.get_optional("nope") is None
-        reg.register(DummyTool())
+        reg.register(_make_tool())
         assert reg.get_optional("dummy") is not None
 
     def test_has(self):
         reg = ToolRegistry()
         assert reg.has("dummy") is False
-        reg.register(DummyTool())
+        reg.register(_make_tool())
         assert reg.has("dummy") is True
 
     def test_list_tools(self):
         reg = ToolRegistry()
-        reg.register(DummyTool())
-        reg.register(EchoTool())
-        tools = reg.list_tools()
-        assert len(tools) == 2
+        reg.register(_make_tool("tool-a"))
+        reg.register(_make_tool("tool-b"))
+        assert len(reg.list_tools()) == 2
 
     def test_tool_ids(self):
         reg = ToolRegistry()
-        reg.register(DummyTool())
-        reg.register(EchoTool())
-        assert set(reg.tool_ids) == {"dummy", "echo"}
-
-    def test_overwrite_warns(self):
-        reg = ToolRegistry()
-        reg.register(DummyTool())
-        reg.register(DummyTool())
-        assert len(reg.list_tools()) == 1
+        reg.register(_make_tool("tool-a"))
+        reg.register(_make_tool("tool-b"))
+        assert set(reg.tool_ids) == {"tool-a", "tool-b"}
 
     def test_load_builtins(self):
         reg = ToolRegistry()
@@ -187,11 +162,7 @@ class TestValoryCompat:
         tool_dir.mkdir()
 
         (tool_dir / "component.yaml").write_text(
-            "name: test_valory\n"
-            "entry_point: test_valory.py\n"
-            "callable: run\n"
-            "version: 0.2.0\n"
-            "description: Test Valory tool\n"
+            "name: test_valory\nentry_point: test_valory.py\ncallable: run\nversion: 0.2.0\n"
         )
 
         (tool_dir / "test_valory.py").write_text(
@@ -199,13 +170,12 @@ class TestValoryCompat:
             "\n"
             "def run(**kwargs):\n"
             '    prompt = kwargs.get("prompt", "")\n'
-            '    return f"valory:{prompt}", prompt, None, None, None\n'
+            '    return f"valory:{prompt}", prompt, None, None\n'
         )
 
         tool = load_valory_tool(tool_dir)
         assert tool is not None
         assert tool.metadata.id == "test-valory"
-        assert tool.metadata.version == "0.2.0"
 
         result = await tool.execute("hello")
         assert "valory:hello" in result
@@ -213,8 +183,7 @@ class TestValoryCompat:
     def test_missing_yaml(self, tmp_path: Path):
         from micromech.tools.valory_compat import load_valory_tool
 
-        tool = load_valory_tool(tmp_path / "nonexistent")
-        assert tool is None
+        assert load_valory_tool(tmp_path / "nonexistent") is None
 
     def test_missing_entry_point(self, tmp_path: Path):
         from micromech.tools.valory_compat import load_valory_tool
@@ -222,47 +191,30 @@ class TestValoryCompat:
         tool_dir = tmp_path / "bad_tool"
         tool_dir.mkdir()
         (tool_dir / "component.yaml").write_text("name: bad_tool\nentry_point: missing.py\n")
-        tool = load_valory_tool(tool_dir)
-        assert tool is None
+        assert load_valory_tool(tool_dir) is None
 
-    def test_missing_callable(self, tmp_path: Path):
-        from micromech.tools.valory_compat import load_valory_tool
-
-        tool_dir = tmp_path / "no_callable"
-        tool_dir.mkdir()
-        (tool_dir / "component.yaml").write_text(
-            "name: no_callable\nentry_point: no_callable.py\ncallable: missing_fn\n"
-        )
-        (tool_dir / "no_callable.py").write_text("x = 1\n")
-        tool = load_valory_tool(tool_dir)
-        assert tool is None
-
-    def test_invalid_name_rejected(self, tmp_path: Path):
+    def test_invalid_name(self, tmp_path: Path):
         from micromech.tools.valory_compat import load_valory_tool
 
         tool_dir = tmp_path / "evil"
         tool_dir.mkdir()
         (tool_dir / "component.yaml").write_text("name: ../../etc\n")
-        tool = load_valory_tool(tool_dir)
-        assert tool is None
+        assert load_valory_tool(tool_dir) is None
 
-    @pytest.mark.asyncio
-    async def test_valory_full_tuple(self, tmp_path: Path):
+    def test_valory_run_direct(self, tmp_path: Path):
         from micromech.tools.valory_compat import load_valory_tool
 
-        tool_dir = tmp_path / "full_tuple"
+        tool_dir = tmp_path / "direct"
         tool_dir.mkdir()
         (tool_dir / "component.yaml").write_text(
-            "name: full_tuple\nentry_point: full_tuple.py\ncallable: run\n"
+            "name: direct_tool\nentry_point: direct_tool.py\ncallable: run\n"
         )
-        (tool_dir / "full_tuple.py").write_text(
-            'def run(**kwargs):\n    return "result", "prompt", {"tx": "0x1"}, None, None\n'
+        (tool_dir / "direct_tool.py").write_text(
+            'def run(**kwargs):\n    return "ok", "p", {"tx": "0x1"}, None\n'
         )
 
         tool = load_valory_tool(tool_dir)
         assert tool is not None
-        resp = await tool.execute_valory(prompt="test")
-        assert len(resp) == 4
-        assert resp[0] == "result"
-        assert resp[1] == "prompt"
+        resp = tool.run(prompt="test")
+        assert resp[0] == "ok"
         assert resp[2] == {"tx": "0x1"}

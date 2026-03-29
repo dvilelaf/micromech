@@ -1,18 +1,15 @@
-"""Abstract base class for mech tools.
+"""Tool base classes and types.
 
-Tool interface follows the Valory mech standard:
-- Each tool defines ALLOWED_TOOLS (list of tool names it handles)
-- run(**kwargs) -> Tuple[str, Optional[str], Optional[Dict], Any]
-  Returns: (result_json, prompt_used, transaction, counter_callback)
-- The framework wraps this into a 5-tuple adding api_keys as the 5th element
+Valory mech tool format:
+- Each tool is a package with __init__.py, component.yaml, and <name>.py
+- The .py file defines ALLOWED_TOOLS (list[str]) and run(**kwargs) -> MechResponse
+- MechResponse = (result_json, prompt_used, transaction, counter_callback)
 
-micromech tools use an async execute() method internally, with a Valory-compatible
-wrapper for interop.
+micromech wraps these as Tool instances for the async runtime.
 """
 
 import asyncio
 import re
-from abc import ABC, abstractmethod
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -22,7 +19,7 @@ from micromech.core.errors import ToolExecutionError
 TOOL_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
 # Valory run() return type: (result, prompt_used, transaction, counter_callback)
-MechResponse = tuple[str, Optional[str], Optional[dict[str, Any]], Any]
+MechResponse = tuple[Optional[str], Optional[str], Optional[dict[str, Any]], Any]
 
 
 class ToolMetadata(BaseModel):
@@ -47,27 +44,32 @@ class ToolMetadata(BaseModel):
             self.name = self.id
 
 
-class Tool(ABC):
-    """Abstract base class for all mech tools.
+class Tool:
+    """Wrapper around a Valory-format tool's run() function.
 
-    Subclasses implement execute() which must return a JSON string.
-    They also define ALLOWED_TOOLS for Valory compatibility.
+    The run() function is the Valory-compatible synchronous entry point.
+    execute() wraps it in asyncio.to_thread() for the async runtime.
     """
 
-    metadata: ToolMetadata
-    ALLOWED_TOOLS: list[str] = []
+    def __init__(
+        self,
+        metadata: ToolMetadata,
+        run_fn: Any,
+        allowed_tools: list[str] | None = None,
+    ):
+        self.metadata = metadata
+        self._run_fn = run_fn
+        self.ALLOWED_TOOLS = allowed_tools or [metadata.id]
 
-    @abstractmethod
     async def execute(self, prompt: str, **kwargs: Any) -> str:
-        """Execute the tool with the given prompt.
-
-        Args:
-            prompt: The main input (question/prompt).
-            **kwargs: Tool-specific parameters (model, api_keys, etc.)
-
-        Returns:
-            JSON string with the result.
-        """
+        """Execute the tool asynchronously (offloaded to thread pool)."""
+        result = await asyncio.to_thread(
+            self._run_fn, prompt=prompt, tool=self.metadata.id, **kwargs
+        )
+        # run() returns a tuple — first element is the result string
+        if isinstance(result, tuple) and len(result) >= 1:
+            return result[0] or ""
+        return str(result)
 
     async def execute_with_timeout(self, prompt: str, **kwargs: Any) -> str:
         """Execute with timeout enforcement from metadata."""
@@ -80,18 +82,5 @@ class Tool(ABC):
             raise ToolExecutionError(self.metadata.id, f"Timed out after {self.metadata.timeout}s")
 
     def run(self, **kwargs: Any) -> MechResponse:
-        """Valory-compatible synchronous entry point.
-
-        This is the function that Valory's mech framework calls.
-        Returns: (result_json, prompt_used, transaction, counter_callback)
-        """
-        prompt = kwargs.get("prompt", "")
-        counter_callback = kwargs.get("counter_callback")
-        loop = asyncio.new_event_loop()
-        try:
-            result = loop.run_until_complete(self.execute(prompt, **kwargs))
-        except Exception as e:
-            return str(e), prompt, None, counter_callback
-        finally:
-            loop.close()
-        return result, prompt, None, counter_callback
+        """Direct Valory-compatible call."""
+        return self._run_fn(**kwargs)

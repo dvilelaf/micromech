@@ -2,56 +2,21 @@
 
 Loads Valory-format tools (component.yaml + Python module with run() function)
 from local filesystem. Uses importlib instead of exec() for safety.
-Synchronous tool execution is offloaded to a thread pool.
 """
 
-import asyncio
 import importlib.util
 import re
 import sys
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import yaml
 from loguru import logger
 
-from micromech.tools.base import MechResponse, Tool, ToolMetadata
+from micromech.tools.base import Tool, ToolMetadata
 
 _VALID_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-
-
-class ValoryTool(Tool):
-    """Wrapper around a Valory-format tool module."""
-
-    def __init__(self, metadata: ToolMetadata, module: Any, callable_name: str):
-        self.metadata = metadata
-        self._module = module
-        self._callable_name = callable_name
-
-    def _sync_run(self, prompt: str, **kwargs: Any) -> str:
-        """Synchronous execution — called from thread pool."""
-        fn = getattr(self._module, self._callable_name)
-        result = fn(prompt=prompt, tool=self.metadata.id, **kwargs)
-        if isinstance(result, tuple) and len(result) >= 1:
-            return str(result[0])
-        return str(result)
-
-    async def execute(self, prompt: str, **kwargs: Any) -> str:
-        """Execute the Valory tool's run() function in a thread."""
-        return await asyncio.to_thread(self._sync_run, prompt, **kwargs)
-
-    def _sync_run_valory(self, **kwargs: Any) -> MechResponse:
-        """Synchronous Valory execution — called from thread pool."""
-        fn = getattr(self._module, self._callable_name)
-        result = fn(**kwargs)
-        if isinstance(result, tuple) and len(result) >= 4:
-            return result[:4]
-        return str(result), kwargs.get("prompt"), None, None
-
-    async def execute_valory(self, **kwargs: Any) -> MechResponse:
-        """Execute returning the Valory 4-tuple, in a thread."""
-        return await asyncio.to_thread(self._sync_run_valory, **kwargs)
 
 
 def load_valory_tool(tool_dir: Path) -> Optional[Tool]:
@@ -60,7 +25,7 @@ def load_valory_tool(tool_dir: Path) -> Optional[Tool]:
     Expected structure:
         tool_dir/
             component.yaml   # name, entry_point, callable
-            <tool_name>.py   # Python module with run() function
+            <tool_name>.py   # Python module with ALLOWED_TOOLS + run()
 
     Returns:
         Tool instance, or None if loading fails.
@@ -82,7 +47,7 @@ def load_valory_tool(tool_dir: Path) -> Optional[Tool]:
     version = spec.get("version", "0.1.0")
     description = spec.get("description", "")
 
-    # Validate tool name as safe identifier
+    # Validate tool name
     if not _VALID_NAME_RE.match(name):
         logger.error("Invalid tool name '{}' in {}", name, tool_dir)
         return None
@@ -92,7 +57,7 @@ def load_valory_tool(tool_dir: Path) -> Optional[Tool]:
         logger.error("Entry point {} not found in {}", entry_point, tool_dir)
         return None
 
-    # Use unique module name to avoid collisions in sys.modules
+    # Use unique module name to avoid sys.modules collisions
     unique_id = uuid.uuid4().hex[:8]
     module_name = f"_micromech_ext_{name}_{unique_id}"
 
@@ -110,13 +75,15 @@ def load_valory_tool(tool_dir: Path) -> Optional[Tool]:
         del sys.modules[module_name]
         return None
 
-    if not hasattr(module, callable_name):
+    run_fn = getattr(module, callable_name, None)
+    if run_fn is None:
         logger.error("Module {} has no callable '{}'", module_path, callable_name)
         del sys.modules[module_name]
         return None
 
     # Convert name to valid tool ID (lowercase, hyphens ok)
     tool_id = name.lower().replace("_", "-")
+    allowed = getattr(module, "ALLOWED_TOOLS", [tool_id])
 
     metadata = ToolMetadata(
         id=tool_id,
@@ -126,4 +93,4 @@ def load_valory_tool(tool_dir: Path) -> Optional[Tool]:
     )
 
     logger.info("Loaded Valory tool: {} v{} from {}", tool_id, version, tool_dir)
-    return ValoryTool(metadata=metadata, module=module, callable_name=callable_name)
+    return Tool(metadata=metadata, run_fn=run_fn, allowed_tools=allowed)

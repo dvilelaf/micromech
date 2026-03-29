@@ -1,0 +1,10 @@
+name: echo_tool
+author: micromech
+version: 0.1.0
+type: custom
+description: Returns a default prediction. For testing the request-execute-deliver pipeline.
+license: Apache-2.0
+aea_version: ">=1.0.0, <2.0.0"
+entry_point: echo_tool.py
+callable: run
+dependencies: {}

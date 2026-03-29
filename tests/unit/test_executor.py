@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from typing import Any
+import time
 
 import pytest
 
@@ -11,32 +11,30 @@ from micromech.core.models import MechRequest
 from micromech.core.persistence import PersistentQueue
 from micromech.runtime.executor import ToolExecutor
 from micromech.tools.base import Tool, ToolMetadata
-from micromech.tools.builtin.echo import EchoTool
 from micromech.tools.registry import ToolRegistry
 
 
-class SlowTestTool(Tool):
-    metadata = ToolMetadata(id="slow-test", timeout=1)
-
-    async def execute(self, prompt: str, **kwargs: Any) -> str:
-        await asyncio.sleep(10)
-        return "never"
+def _echo_run(**kwargs):
+    prompt = kwargs.get("prompt", "")
+    return json.dumps({"p_yes": 0.5, "p_no": 0.5}), prompt, None, None
 
 
-class FailTestTool(Tool):
-    metadata = ToolMetadata(id="fail-test", timeout=5)
+def _slow_run(**kwargs):
+    time.sleep(10)
+    return "never", None, None, None
 
-    async def execute(self, prompt: str, **kwargs: Any) -> str:
-        msg = "boom"
-        raise RuntimeError(msg)
+
+def _fail_run(**kwargs):
+    msg = "boom"
+    raise RuntimeError(msg)
 
 
 @pytest.fixture
 def registry() -> ToolRegistry:
     reg = ToolRegistry()
-    reg.register(EchoTool())
-    reg.register(SlowTestTool())
-    reg.register(FailTestTool())
+    reg.register(Tool(ToolMetadata(id="echo", timeout=5), run_fn=_echo_run))
+    reg.register(Tool(ToolMetadata(id="slow-test", timeout=1), run_fn=_slow_run))
+    reg.register(Tool(ToolMetadata(id="fail-test", timeout=5), run_fn=_fail_run))
     return reg
 
 
@@ -57,7 +55,6 @@ class TestToolExecutor:
         assert "p_yes" in data
         assert result.execution_time > 0
 
-        # Check DB updated
         record = queue.get_by_id("r1")
         assert record.request.status == STATUS_EXECUTED
 
@@ -108,7 +105,6 @@ class TestToolExecutor:
 
     @pytest.mark.asyncio
     async def test_concurrent_execution(self, executor: ToolExecutor, queue: PersistentQueue):
-        """Multiple requests execute concurrently."""
         requests = []
         for i in range(5):
             req = MechRequest(request_id=f"r{i}", prompt=f"msg{i}", tool="echo")
@@ -126,4 +122,4 @@ class TestToolExecutor:
         req = MechRequest(request_id="r1", prompt="hello", tool="echo")
         queue.add_request(req)
         await executor.execute(req)
-        assert executor.active_count == 0  # done
+        assert executor.active_count == 0

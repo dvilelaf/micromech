@@ -1,11 +1,12 @@
 """Tool registry: discover, load, and manage tools."""
 
+import importlib
 from typing import Optional
 
 from loguru import logger
 
 from micromech.core.errors import MechError
-from micromech.tools.base import Tool
+from micromech.tools.base import Tool, ToolMetadata
 
 
 class ToolNotFoundError(MechError):
@@ -54,19 +55,46 @@ class ToolRegistry:
         """List all registered tool IDs."""
         return list(self._tools.keys())
 
+    def _load_tool_package(self, module_path: str, tool_id: str, **meta_kwargs) -> None:
+        """Load a tool from a Valory-format package module."""
+        try:
+            mod = importlib.import_module(module_path)
+            run_fn = getattr(mod, "run")
+            allowed = getattr(mod, "ALLOWED_TOOLS", [tool_id])
+            metadata = ToolMetadata(id=tool_id, **meta_kwargs)
+            tool = Tool(metadata=metadata, run_fn=run_fn, allowed_tools=allowed)
+            self.register(tool)
+            # Register aliases (other ALLOWED_TOOLS names)
+            for alias in allowed:
+                if alias != tool_id and alias not in self._tools:
+                    self._tools[alias] = tool
+        except ImportError:
+            logger.info("Tool {} not available (missing dependencies)", tool_id)
+        except Exception as e:
+            logger.error("Failed to load tool {}: {}", tool_id, e)
+
     def load_builtins(self) -> None:
         """Load all built-in tools."""
-        from micromech.tools.builtin.echo import EchoTool
+        self._load_tool_package(
+            "micromech.tools.builtin.echo_tool.echo_tool",
+            "echo",
+            name="Echo",
+            description="Returns default prediction. For testing.",
+            timeout=5,
+        )
 
-        self.register(EchoTool())
+        self._load_tool_package(
+            "micromech.tools.builtin.llm_tool.llm_tool",
+            "llm",
+            name="Local LLM",
+            description="General-purpose local LLM (Qwen 0.5B, CPU).",
+            timeout=120,
+        )
 
-        try:
-            from micromech.tools.builtin.llm import LLMTool
-
-            self.register(LLMTool())
-
-            from micromech.tools.builtin.prediction import PredictionTool
-
-            self.register(PredictionTool())
-        except ImportError:
-            logger.info("LLM/prediction tools not available (install micromech[llm])")
+        self._load_tool_package(
+            "micromech.tools.builtin.prediction_request.prediction_request",
+            "prediction-offline",
+            name="Prediction Offline (Local LLM)",
+            description="Prediction market analysis using local LLM.",
+            timeout=120,
+        )
