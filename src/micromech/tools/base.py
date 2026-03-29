@@ -62,10 +62,17 @@ class Tool:
         self.ALLOWED_TOOLS = allowed_tools or [metadata.id]
 
     async def execute(self, prompt: str, **kwargs: Any) -> str:
-        """Execute the tool asynchronously (offloaded to thread pool)."""
-        result = await asyncio.to_thread(
-            self._run_fn, prompt=prompt, tool=self.metadata.id, **kwargs
-        )
+        """Execute the tool asynchronously (offloaded to thread pool).
+
+        Catches all exceptions from the tool — a broken tool must never crash the mech.
+        """
+        try:
+            result = await asyncio.to_thread(
+                self._run_fn, prompt=prompt, tool=self.metadata.id, **kwargs
+            )
+        except Exception as e:
+            raise ToolExecutionError(self.metadata.id, str(e)) from e
+
         # run() returns a tuple — first element is the result string
         if isinstance(result, tuple) and len(result) >= 1:
             return result[0] or ""
