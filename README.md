@@ -139,14 +139,27 @@ tools:
 ## CLI Reference
 
 ```
+# Runtime
 micromech init              # Create config file
 micromech config            # Show current config
 micromech run [--no-http]   # Run the server
-micromech web [--port N]    # Launch web dashboard only
+micromech web [--port N]    # Launch web dashboard
 micromech status            # Show queue status from DB
 micromech tools             # List available tools
 micromech test-tool ID PROMPT  # Test a tool interactively
 micromech cleanup [--days N]   # Remove old records
+
+# Lifecycle management (requires iwa)
+micromech create-service    # Create OLAS service on-chain
+micromech deploy-mech KEY   # Activate → register → deploy → create mech
+micromech stake KEY         # Stake in supply staking contract
+micromech unstake KEY       # Unstake from staking contract
+micromech claim KEY         # Claim staking rewards
+micromech mech-status KEY   # Show service/staking status
+micromech metadata-build    # Generate metadata.json from tools
+micromech metadata-push     # Push metadata to IPFS
+micromech metadata-update KEY HASH  # Update metadata hash on-chain
+
 micromech version           # Show version
 ```
 
@@ -165,6 +178,11 @@ curl http://localhost:8000/status
 
 # Health check
 curl http://localhost:8000/health
+
+# Management actions (stake, unstake, claim, checkpoint, status)
+curl -X POST http://localhost:8000/api/management/status \
+  -H "Content-Type: application/json" \
+  -d '{"service_key": "my-mech"}'
 ```
 
 ## Tools
@@ -173,8 +191,9 @@ curl http://localhost:8000/health
 
 | Tool | Description | Timeout | Dependencies |
 |------|-------------|---------|-------------|
-| `echo` | Returns the prompt as-is | 5s | None |
-| `llm` | Local LLM (Qwen 0.5B Q4, CPU) | 120s | `micromech[llm]` |
+| `echo` | Returns default prediction (p_yes=0.5) | 5s | None |
+| `llm` | General-purpose local LLM (Qwen 0.5B Q4, CPU) | 120s | `micromech[llm]` |
+| `prediction-offline` | Prediction market analysis using local LLM | 120s | `micromech[llm]` |
 
 ### Custom Tools
 
@@ -265,9 +284,9 @@ just test-unit   # unit tests only
 
 ### Project Stats
 
-- **Source**: ~2,200 lines across 26 modules
-- **Tests**: 200 tests, 90% coverage
-- **Dependencies**: 4 core (pydantic, peewee, loguru, pyyaml) + optional extras
+- **Source**: ~3,400 lines across 30+ modules
+- **Tests**: 234 unit tests + 4 E2E (Anvil), 90%+ coverage
+- **Dependencies**: 6 core (pydantic, peewee, loguru, pyyaml, aiohttp, multiformats) + optional extras
 
 ## Valory Compatibility
 
