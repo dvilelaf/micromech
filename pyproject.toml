@@ -1,0 +1,17 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "micromech"
+version = "0.0.1"
+description = "Lightweight OLAS mech runtime"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [
+    { name = "David Vilela", email = "david.vilela@gmail.com" },
+]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Programming Language :: Python :: 3",
+]
