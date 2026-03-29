@@ -1,6 +1,7 @@
 """Tests for the CLI commands."""
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
 
@@ -101,10 +102,27 @@ class TestCleanupCommand:
         cfg = MicromechConfig(persistence={"db_path": tmp_path / "test.db"})
         cfg.save(config_path)
 
-        # Create DB
         queue = PersistentQueue(tmp_path / "test.db")
         queue.close()
 
         result = runner.invoke(app, ["cleanup", "--config", str(config_path)])
         assert result.exit_code == 0
         assert "0 records" in result.output.lower()
+
+
+class TestRunCommand:
+    @patch("micromech.runtime.server.MechServer")
+    def test_run_starts_server(self, mock_server_cls, tmp_path: Path):
+        config_path = tmp_path / "config.yaml"
+        MicromechConfig(persistence={"db_path": tmp_path / "test.db"}).save(config_path)
+
+        mock_server = MagicMock()
+        mock_server_cls.return_value = mock_server
+        # Make asyncio.run() a no-op so the CLI returns
+        mock_server.run = MagicMock(return_value=None)
+
+        with patch("micromech.cli.asyncio"):
+            result = runner.invoke(app, ["run", "--config", str(config_path), "--no-http"])
+
+        assert result.exit_code == 0
+        mock_server.shutdown.assert_called_once()
