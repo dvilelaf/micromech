@@ -138,6 +138,54 @@ def build_tools_to_package_hash(
     return mapping
 
 
+def fingerprint_tool_package(tool_dir: Path) -> dict[str, str]:
+    """Compute bafkrei... fingerprints for each file in a tool package.
+
+    Returns a dict mapping relative file paths to their CIDv1 base32 hashes.
+    Also updates the component.yaml fingerprint field in-place.
+    """
+    from micromech.ipfs.client import compute_cid
+
+    fingerprints: dict[str, str] = {}
+    for f in sorted(tool_dir.rglob("*")):
+        if not f.is_file():
+            continue
+        if "__pycache__" in str(f):
+            continue
+        if f.name == "component.yaml":
+            continue
+        rel = str(f.relative_to(tool_dir))
+        fingerprints[rel] = compute_cid(f.read_bytes())
+
+    # Update component.yaml
+    component_yaml = tool_dir / "component.yaml"
+    if component_yaml.exists():
+        spec = yaml.safe_load(component_yaml.read_text())
+        spec["fingerprint"] = fingerprints
+        component_yaml.write_text(yaml.dump(spec, default_flow_style=False, sort_keys=False))
+
+    return fingerprints
+
+
+def fingerprint_all_builtins() -> dict[str, dict[str, str]]:
+    """Compute and write fingerprints for all built-in tool packages.
+
+    Returns a dict mapping tool directory names to their fingerprints.
+    """
+    tools_dir = Path(__file__).parent.parent / "tools" / "builtin"
+    results: dict[str, dict[str, str]] = {}
+    for tool_dir in sorted(tools_dir.iterdir()):
+        if not tool_dir.is_dir():
+            continue
+        component_yaml = tool_dir / "component.yaml"
+        if not component_yaml.exists():
+            continue
+        fps = fingerprint_tool_package(tool_dir)
+        results[tool_dir.name] = fps
+        logger.info("Fingerprinted {}: {} files", tool_dir.name, len(fps))
+    return results
+
+
 def compute_onchain_hash(metadata: dict[str, Any]) -> str:
     """Compute the on-chain hash for a metadata dict.
 

@@ -324,6 +324,79 @@ class TestMicromechOnchainE2E:
             print(f"    - {req.request_id[:16]}... tool={req.tool}")
 
 
+class TestIpfsCidComputation:
+    """Test IPFS CID computation matches expected format and is deterministic."""
+
+    def test_cid_roundtrip(self):
+        """Compute a CID locally, verify roundtrip: data -> CID -> multihash -> CID."""
+        from micromech.ipfs.client import (
+            cid_hex_to_multihash_bytes,
+            compute_cid,
+            compute_cid_hex,
+            multihash_to_cid,
+        )
+
+        data = json.dumps({"prompt": "Will ETH hit 10k?", "tool": "echo", "result": "yes"}).encode(
+            "utf-8"
+        )
+
+        # Compute CID in both formats
+        cid_str = compute_cid(data)
+        cid_hex = compute_cid_hex(data)
+
+        # Verify format
+        assert cid_str.startswith("bafkrei"), f"Expected bafkrei..., got {cid_str}"
+        assert cid_hex.startswith("f0155"), f"Expected f0155..., got {cid_hex}"
+
+        # Roundtrip: hex -> multihash bytes -> back to CID string
+        multihash_bytes = cid_hex_to_multihash_bytes(cid_hex)
+        assert len(multihash_bytes) == 34
+        assert multihash_bytes[0] == 0x12  # sha2-256
+        assert multihash_bytes[1] == 0x20  # 32 bytes
+
+        recovered_cid = multihash_to_cid(multihash_bytes)
+        assert recovered_cid == cid_str, f"Roundtrip failed: {cid_str} != {recovered_cid}"
+        print(f"\n  CID: {cid_str}")
+        print(f"  CID hex: {cid_hex}")
+        print(f"  Multihash: {multihash_bytes.hex()}")
+
+    def test_cid_deterministic_across_calls(self):
+        """Same data always produces the same CID."""
+        from micromech.ipfs.client import compute_cid
+
+        data = b'{"prompt":"determinism test","tool":"echo"}'
+        cids = [compute_cid(data) for _ in range(10)]
+        assert len(set(cids)) == 1, f"Non-deterministic CIDs: {set(cids)}"
+
+    def test_fingerprint_tool_package(self, tmp_path):
+        """Fingerprint a tool package and verify component.yaml is updated."""
+        import yaml
+
+        from micromech.ipfs.metadata import fingerprint_tool_package
+
+        # Create a minimal tool package
+        tool_dir = tmp_path / "test_tool"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text(
+            yaml.dump({"name": "test_tool", "version": "0.1.0"})
+        )
+        (tool_dir / "test_tool.py").write_text("ALLOWED_TOOLS = ['test']\n")
+        (tool_dir / "__init__.py").write_text("")
+
+        # Compute fingerprints
+        fps = fingerprint_tool_package(tool_dir)
+
+        assert "test_tool.py" in fps
+        assert "__init__.py" in fps
+        assert all(v.startswith("bafkrei") for v in fps.values())
+
+        # Verify component.yaml was updated
+        updated = yaml.safe_load((tool_dir / "component.yaml").read_text())
+        assert "fingerprint" in updated
+        assert updated["fingerprint"]["test_tool.py"] == fps["test_tool.py"]
+        print(f"\n  Fingerprints: {fps}")
+
+
 class TestMicromechFullServerLoop:
     """Test the full micromech server loop: listen → execute → verify.
 

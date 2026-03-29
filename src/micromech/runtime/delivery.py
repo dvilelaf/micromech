@@ -135,10 +135,12 @@ class DeliveryManager:
     def _submit_delivery(self, request_id: str, data: bytes) -> str:
         """Submit deliverToMarketplace transaction on-chain (sync, runs in thread).
 
-        Calls mech.deliverToMarketplace([requestId], [data]) via direct transaction.
-        In production with Safe, this would go through iwa's Safe service.
+        Calls mech.deliverToMarketplace([requestId], [data]).
+        Tries impersonation first (Anvil auto-impersonate mode), then falls
+        back to signed transaction via iwa wallet for real deployments.
         """
         mech_contract = self._get_mech_contract()
+        from_addr = self.bridge.web3.to_checksum_address(self.config.mech.mech_address)
 
         # Convert request_id to bytes32
         if request_id.startswith("0x"):
@@ -147,37 +149,63 @@ class DeliveryManager:
             req_id_bytes = bytes.fromhex(request_id)
         req_id_bytes = req_id_bytes.ljust(32, b"\x00")[:32]
 
-        # Build transaction
-        tx = mech_contract.functions.deliverToMarketplace(
+        # Try impersonation first (works on Anvil with --auto-impersonate)
+        try:
+            tx_hash = self._submit_impersonated(mech_contract, from_addr, req_id_bytes, data)
+            return tx_hash
+        except Exception as imp_err:
+            logger.debug("Impersonation failed ({}), trying signed tx", imp_err)
+
+        # Fall back to signed transaction via iwa wallet
+        return self._submit_signed(mech_contract, from_addr, req_id_bytes, data)
+
+    def _submit_impersonated(
+        self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
+    ) -> str:
+        """Submit via impersonation (Anvil). Transact directly from the address."""
+        tx_hash = contract.functions.deliverToMarketplace(
+            [req_id_bytes],
+            [data],
+        ).transact(
+            {
+                "from": from_addr,
+                "gas": 500_000,
+            }
+        )
+        receipt = self.bridge.web3.eth.wait_for_transaction_receipt(tx_hash)
+        if receipt["status"] != 1:
+            msg = f"Delivery transaction reverted: {tx_hash.hex()}"
+            raise RuntimeError(msg)
+        return tx_hash.hex()
+
+    def _submit_signed(
+        self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
+    ) -> str:
+        """Submit via signed transaction using iwa wallet key."""
+        tx = contract.functions.deliverToMarketplace(
             [req_id_bytes],
             [data],
         ).build_transaction(
             {
-                "from": self.bridge.web3.to_checksum_address(self.config.mech.mech_address),
+                "from": from_addr,
                 "gas": 500_000,
                 "gasPrice": self.bridge.web3.eth.gas_price,
-                "nonce": self.bridge.web3.eth.get_transaction_count(
-                    self.bridge.web3.to_checksum_address(self.config.mech.mech_address)
-                ),
+                "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
             }
         )
 
-        # Send via iwa wallet or directly
-        signed = self.bridge.web3.eth.account.sign_transaction(
-            tx, private_key=self._get_signer_key()
-        )
+        private_key = self._get_signer_key()
+        signed = self.bridge.web3.eth.account.sign_transaction(tx, private_key=private_key)
         tx_hash = self.bridge.web3.eth.send_raw_transaction(signed.raw_transaction)
         receipt = self.bridge.web3.eth.wait_for_transaction_receipt(tx_hash)
 
         if receipt["status"] != 1:
             msg = f"Delivery transaction reverted: {tx_hash.hex()}"
             raise RuntimeError(msg)
-
         return tx_hash.hex()
 
     def _get_signer_key(self) -> str:
         """Get the private key for signing delivery transactions."""
-        # Use iwa wallet to get the key for the mech account
         account_tag = self.config.mech.account_tag
         try:
             account = self.bridge.wallet.account_service.resolve_account(account_tag)

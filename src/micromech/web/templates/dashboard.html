@@ -93,7 +93,68 @@
         </table>
     </div>
 
+    <div class="section">
+        <h2>Management</h2>
+        <div style="margin-bottom: 0.75rem;">
+            <label for="service-key" style="font-size: 0.85rem; color: #888;">Service Key:</label>
+            <input type="text" id="service-key" placeholder="e.g. mech_gnosis"
+                   style="background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; width: 250px; font-size: 0.85rem;">
+        </div>
+        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+            <button class="mgmt-btn" onclick="mgmtAction('stake')">Stake</button>
+            <button class="mgmt-btn" onclick="mgmtAction('unstake')">Unstake</button>
+            <button class="mgmt-btn" onclick="mgmtAction('claim')">Claim</button>
+            <button class="mgmt-btn" onclick="mgmtAction('checkpoint')">Checkpoint</button>
+        </div>
+        <pre id="mgmt-result" style="margin-top: 0.75rem; background: #111; border: 1px solid #222; border-radius: 4px; padding: 0.75rem; font-size: 0.8rem; color: #aaa; min-height: 2rem; display: none; white-space: pre-wrap;"></pre>
+    </div>
+
+    <style>
+        .mgmt-btn {
+            background: #263238; color: #80cbc4; border: 1px solid #37474f;
+            padding: 6px 16px; border-radius: 4px; cursor: pointer;
+            font-size: 0.85rem; font-weight: 500; transition: background 0.2s;
+        }
+        .mgmt-btn:hover { background: #37474f; }
+        .mgmt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    </style>
+
     <script>
+        async function mgmtAction(action) {
+            const serviceKey = document.getElementById('service-key').value.trim();
+            if (!serviceKey) {
+                alert('Please enter a service key');
+                return;
+            }
+            const resultEl = document.getElementById('mgmt-result');
+            resultEl.style.display = 'block';
+            resultEl.textContent = 'Running ' + action + '...';
+
+            // Disable buttons while running
+            document.querySelectorAll('.mgmt-btn').forEach(b => b.disabled = true);
+
+            try {
+                const resp = await fetch('/api/management/' + action, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({service_key: serviceKey}),
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    resultEl.style.color = '#69f0ae';
+                    resultEl.textContent = action + ' succeeded' + (data.data ? ':\n' + JSON.stringify(data.data, null, 2) : '');
+                } else {
+                    resultEl.style.color = '#ff8a80';
+                    resultEl.textContent = action + ' failed: ' + (data.error || 'unknown error');
+                }
+            } catch (err) {
+                resultEl.style.color = '#ff8a80';
+                resultEl.textContent = action + ' error: ' + err.message;
+            } finally {
+                document.querySelectorAll('.mgmt-btn').forEach(b => b.disabled = false);
+            }
+        }
+
         // Auto-refresh every 10 seconds
         setTimeout(() => location.reload(), 10000);
     </script>

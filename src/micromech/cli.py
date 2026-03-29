@@ -194,6 +194,19 @@ def web(
     uvicorn.run(web_app, host=host, port=port)
 
 
+@app.command()
+def fingerprint() -> None:
+    """Compute and write fingerprints for all built-in tool packages."""
+    from micromech.ipfs.metadata import fingerprint_all_builtins
+
+    results = fingerprint_all_builtins()
+    for tool_name, fps in results.items():
+        typer.echo(f"\n{tool_name}:")
+        for path, cid in fps.items():
+            typer.echo(f"  {path}: {cid}")
+    typer.echo(f"\nFingerprinted {len(results)} tool(s)")
+
+
 @app.command(name="metadata-build")
 def metadata_build() -> None:
     """Build metadata.json from registered tools."""
