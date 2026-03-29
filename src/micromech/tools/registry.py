@@ -64,5 +64,9 @@ class ToolRegistry:
             from micromech.tools.builtin.llm import LLMTool
 
             self.register(LLMTool())
+
+            from micromech.tools.builtin.prediction import PredictionTool
+
+            self.register(PredictionTool())
         except ImportError:
-            logger.info("LLM tool not available (install micromech[llm])")
+            logger.info("LLM/prediction tools not available (install micromech[llm])")

@@ -88,28 +88,22 @@ class TestEchoTool:
         tool = EchoTool()
         result = await tool.execute("hello")
         data = json.loads(result)
-        assert data["result"] == "hello"
-        assert data["tool"] == "echo"
+        assert "p_yes" in data
+        assert "p_no" in data
 
     @pytest.mark.asyncio
-    async def test_execute_empty(self):
+    async def test_execute_returns_valid_prediction(self):
         tool = EchoTool()
-        result = await tool.execute("")
+        result = await tool.execute("Will ETH hit 10k?")
         data = json.loads(result)
-        assert data["result"] == ""
+        assert data["p_yes"] + data["p_no"] == 1.0
+        assert 0 <= data["confidence"] <= 1
 
     @pytest.mark.asyncio
-    async def test_execute_unicode(self):
+    async def test_valory_run(self):
         tool = EchoTool()
-        result = await tool.execute("ETH > $10k?")
-        data = json.loads(result)
-        assert data["result"] == "ETH > $10k?"
-
-    @pytest.mark.asyncio
-    async def test_valory_compat(self):
-        tool = EchoTool()
-        resp = await tool.execute_valory(prompt="test")
-        assert len(resp) == 5
+        resp = tool.run(prompt="test")
+        assert len(resp) == 4
         assert isinstance(resp[0], str)
         assert resp[1] == "test"
 
@@ -118,7 +112,7 @@ class TestEchoTool:
         tool = EchoTool()
         result = await tool.execute_with_timeout("hello")
         data = json.loads(result)
-        assert data["result"] == "hello"
+        assert "p_yes" in data
 
 
 class TestTimeoutEnforcement:
@@ -262,13 +256,13 @@ class TestValoryCompat:
             "name: full_tuple\nentry_point: full_tuple.py\ncallable: run\n"
         )
         (tool_dir / "full_tuple.py").write_text(
-            'def run(**kwargs):\n    return "result", "prompt", {"tx": "0x1"}, "artifact", None\n'
+            'def run(**kwargs):\n    return "result", "prompt", {"tx": "0x1"}, None, None\n'
         )
 
         tool = load_valory_tool(tool_dir)
         assert tool is not None
         resp = await tool.execute_valory(prompt="test")
+        assert len(resp) == 4
         assert resp[0] == "result"
         assert resp[1] == "prompt"
         assert resp[2] == {"tx": "0x1"}
-        assert resp[3] == "artifact"

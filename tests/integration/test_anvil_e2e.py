@@ -127,7 +127,7 @@ class TestMicromechOffchainE2E:
                 ), f"Request test-{i} status={record.request.status}"
                 if record.result:
                     data = json.loads(record.result.output)
-                    assert f"Question {i}" in data["result"]
+                    assert "p_yes" in data
                     print(f"  ✓ test-{i}: executed in {record.result.execution_time:.3f}s")
 
             # Verify queue status

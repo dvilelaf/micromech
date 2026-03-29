@@ -16,7 +16,7 @@ from typing import Any, Optional
 import yaml
 from loguru import logger
 
-from micromech.tools.base import Tool, ToolMetadata, ValoryResponse
+from micromech.tools.base import MechResponse, Tool, ToolMetadata
 
 _VALID_NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
@@ -41,16 +41,16 @@ class ValoryTool(Tool):
         """Execute the Valory tool's run() function in a thread."""
         return await asyncio.to_thread(self._sync_run, prompt, **kwargs)
 
-    def _sync_run_valory(self, **kwargs: Any) -> ValoryResponse:
+    def _sync_run_valory(self, **kwargs: Any) -> MechResponse:
         """Synchronous Valory execution — called from thread pool."""
         fn = getattr(self._module, self._callable_name)
         result = fn(**kwargs)
-        if isinstance(result, tuple) and len(result) == 5:
-            return result
-        return str(result), kwargs.get("prompt"), None, None, None
+        if isinstance(result, tuple) and len(result) >= 4:
+            return result[:4]
+        return str(result), kwargs.get("prompt"), None, None
 
-    async def execute_valory(self, **kwargs: Any) -> ValoryResponse:
-        """Execute returning the full Valory 5-tuple, in a thread."""
+    async def execute_valory(self, **kwargs: Any) -> MechResponse:
+        """Execute returning the Valory 4-tuple, in a thread."""
         return await asyncio.to_thread(self._sync_run_valory, **kwargs)
 
 

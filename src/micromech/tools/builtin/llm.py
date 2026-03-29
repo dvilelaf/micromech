@@ -1,8 +1,9 @@
 """Local LLM tool using llama-cpp-python.
 
+Valory-compatible: defines ALLOWED_TOOLS and run(**kwargs) -> MechResponse.
+
 Default model: Qwen2.5-0.5B-Instruct (Q4_K_M quantization).
 Runs on CPU, ~400MB RAM, ~60-80 tokens/sec.
-
 All inference is offloaded to a thread pool to avoid blocking the event loop.
 """
 
@@ -20,7 +21,7 @@ from micromech.core.constants import (
     DEFAULT_LLM_MAX_TOKENS,
     DEFAULT_LLM_MODEL,
 )
-from micromech.tools.base import Tool, ToolMetadata
+from micromech.tools.base import MechResponse, Tool, ToolMetadata
 
 try:
     from huggingface_hub import hf_hub_download
@@ -31,26 +32,20 @@ except ImportError as e:
         "Install with: pip install micromech[llm]"
     ) from e
 
-
-PREDICTION_SYSTEM_PROMPT = (
-    "You are a prediction market analyst. Given a yes/no question about future events, "
-    "estimate the probability. Respond ONLY with a JSON object containing: "
-    '"p_yes" (float 0-1), "p_no" (float 0-1), "confidence" (float 0-1), '
-    'and "info_utility" (float 0-1). Example: '
-    '{"p_yes": 0.6, "p_no": 0.4, "confidence": 0.7, "info_utility": 0.5}'
-)
+ALLOWED_TOOLS = ["llm"]
 
 
 class LLMTool(Tool):
-    """Local LLM tool for prediction market questions."""
+    """Local LLM tool for general-purpose prompts."""
 
     metadata = ToolMetadata(
         id="llm",
         name="Local LLM",
-        description="Answers prediction market questions using a local LLM.",
+        description="Answers prompts using a local LLM (Qwen 0.5B, CPU).",
         version="0.1.0",
         timeout=120,
     )
+    ALLOWED_TOOLS = ALLOWED_TOOLS
 
     def __init__(
         self,
@@ -98,18 +93,29 @@ class LLMTool(Tool):
                     logger.info("LLM loaded successfully")
         return self._llm
 
-    def _sync_execute(self, prompt: str, system_prompt: str) -> str:
-        """Synchronous inference — called from thread pool."""
+    def _sync_chat(
+        self, messages: list[dict[str, str]], max_tokens: int, temperature: float
+    ) -> dict:
+        """Synchronous LLM chat completion — called from thread pool."""
         llm = self._get_llm()
-
-        response = llm.create_chat_completion(
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=self.max_tokens,
-            temperature=0.3,
+        return llm.create_chat_completion(
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
+
+    async def execute(self, prompt: str, **kwargs: Any) -> str:
+        """Run LLM inference, offloaded to thread pool."""
+        system_prompt = kwargs.get("system_prompt", "You are a helpful assistant.")
+        max_tokens = kwargs.get("max_tokens", self.max_tokens)
+        temperature = kwargs.get("temperature", 0.3)
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+
+        response = await asyncio.to_thread(self._sync_chat, messages, max_tokens, temperature)
 
         content = response["choices"][0]["message"]["content"]
         usage = response.get("usage", {})
@@ -117,13 +123,13 @@ class LLMTool(Tool):
         return json.dumps(
             {
                 "result": content,
-                "tool": "llm",
                 "model": self.model_repo,
                 "tokens": usage.get("total_tokens", 0),
             }
         )
 
-    async def execute(self, prompt: str, **kwargs: Any) -> str:
-        """Run prediction market analysis, offloaded to thread pool."""
-        system_prompt = kwargs.get("system_prompt", PREDICTION_SYSTEM_PROMPT)
-        return await asyncio.to_thread(self._sync_execute, prompt, system_prompt)
+
+def run(**kwargs: Any) -> MechResponse:
+    """Valory-compatible entry point."""
+    tool = LLMTool()
+    return tool.run(**kwargs)

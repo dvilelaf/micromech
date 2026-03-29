@@ -149,7 +149,7 @@ class TestMechServerProcessing:
         result = await server.executor.execute(queued_req)
 
         assert result.success
-        assert "hello world" in result.output
+        assert "p_yes" in result.output
 
         record = server.queue.get_by_id("r1")
         assert record.result is not None

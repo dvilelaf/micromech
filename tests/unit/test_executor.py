@@ -54,7 +54,7 @@ class TestToolExecutor:
 
         assert result.success
         data = json.loads(result.output)
-        assert data["result"] == "hello"
+        assert "p_yes" in data
         assert result.execution_time > 0
 
         # Check DB updated
@@ -104,7 +104,7 @@ class TestToolExecutor:
 
         assert result.success
         data = json.loads(result.output)
-        assert data["tool"] == "echo"
+        assert "p_yes" in data
 
     @pytest.mark.asyncio
     async def test_concurrent_execution(self, executor: ToolExecutor, queue: PersistentQueue):
