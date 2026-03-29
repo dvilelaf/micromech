@@ -244,6 +244,153 @@ def metadata_push(
         typer.echo("Use the on-chain hash above to update manually.")
 
 
+@app.command(name="create-service")
+def create_service(
+    agent_id: int = typer.Option(40, help="Agent ID for the service"),
+    bond: int = typer.Option(10000, help="Bond amount in OLAS"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Create a new OLAS service on-chain."""
+    from micromech.management.lifecycle import MechLifecycle
+
+    cfg = _load_config(config_path)
+    lc = MechLifecycle(cfg)
+    service_id = lc.create_service(agent_id=agent_id, bond_olas=bond)
+    if service_id:
+        typer.echo(f"Service created: {service_id}")
+    else:
+        typer.echo("Failed to create service")
+        raise typer.Exit(1)
+
+
+@app.command(name="deploy-mech")
+def deploy_mech(
+    service_key: str = typer.Argument(help="Service key from iwa config"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Deploy mech: activate → register → deploy Safe → create mech on marketplace."""
+    from micromech.management.lifecycle import MechLifecycle
+
+    cfg = _load_config(config_path)
+    lc = MechLifecycle(cfg)
+
+    typer.echo("Activating registration...")
+    if not lc.activate(service_key):
+        typer.echo("Activation failed")
+        raise typer.Exit(1)
+
+    typer.echo("Registering agent...")
+    if not lc.register_agent(service_key):
+        typer.echo("Registration failed")
+        raise typer.Exit(1)
+
+    typer.echo("Deploying Safe...")
+    multisig = lc.deploy(service_key)
+    if not multisig:
+        typer.echo("Deploy failed")
+        raise typer.Exit(1)
+    typer.echo(f"Safe deployed: {multisig}")
+
+    typer.echo("Creating mech on marketplace...")
+    mech_addr = lc.create_mech(service_key)
+    if mech_addr:
+        typer.echo(f"Mech created: {mech_addr}")
+    else:
+        typer.echo("Mech creation failed")
+        raise typer.Exit(1)
+
+
+@app.command(name="stake")
+def stake_cmd(
+    service_key: str = typer.Argument(help="Service key from iwa config"),
+    contract: Optional[str] = typer.Option(None, "--contract", help="Staking contract address"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Stake the service in a supply staking contract."""
+    from micromech.management.lifecycle import MechLifecycle
+
+    cfg = _load_config(config_path)
+    lc = MechLifecycle(cfg)
+    if lc.stake(service_key, staking_contract=contract):
+        typer.echo("Staked successfully")
+    else:
+        typer.echo("Staking failed")
+        raise typer.Exit(1)
+
+
+@app.command(name="unstake")
+def unstake_cmd(
+    service_key: str = typer.Argument(help="Service key from iwa config"),
+    contract: Optional[str] = typer.Option(None, "--contract"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Unstake the service."""
+    from micromech.management.lifecycle import MechLifecycle
+
+    cfg = _load_config(config_path)
+    lc = MechLifecycle(cfg)
+    if lc.unstake(service_key, staking_contract=contract):
+        typer.echo("Unstaked successfully")
+    else:
+        typer.echo("Unstaking failed")
+        raise typer.Exit(1)
+
+
+@app.command(name="claim")
+def claim_cmd(
+    service_key: str = typer.Argument(help="Service key from iwa config"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Claim staking rewards."""
+    from micromech.management.lifecycle import MechLifecycle
+
+    cfg = _load_config(config_path)
+    lc = MechLifecycle(cfg)
+    if lc.claim_rewards(service_key):
+        typer.echo("Rewards claimed")
+    else:
+        typer.echo("Claim failed")
+        raise typer.Exit(1)
+
+
+@app.command(name="mech-status")
+def mech_status_cmd(
+    service_key: str = typer.Argument(help="Service key from iwa config"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Show mech service and staking status."""
+    import json
+
+    from micromech.management.lifecycle import MechLifecycle
+
+    cfg = _load_config(config_path)
+    lc = MechLifecycle(cfg)
+    status = lc.get_status(service_key)
+    if status:
+        typer.echo(json.dumps(status, indent=2))
+    else:
+        typer.echo("Failed to get status")
+
+
+@app.command(name="metadata-update")
+def metadata_update(
+    service_key: str = typer.Argument(help="Service key from iwa config"),
+    metadata_hash: str = typer.Argument(help="0x-prefixed hash from metadata-push"),
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Update mech metadata hash on-chain."""
+    from micromech.management.lifecycle import MechLifecycle
+
+    cfg = _load_config(config_path)
+    lc = MechLifecycle(cfg)
+    tx = lc.update_metadata_onchain(service_key, metadata_hash)
+    if tx:
+        typer.echo(f"Metadata updated: {tx}")
+    else:
+        typer.echo("Update failed")
+        raise typer.Exit(1)
+
+
 @app.command()
 def version() -> None:
     """Show version."""

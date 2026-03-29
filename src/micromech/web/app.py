@@ -8,6 +8,8 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from micromech.core.config import MicromechConfig
+
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -64,6 +66,36 @@ def create_web_app(
     @app.get("/api/tools")
     async def api_tools() -> list[dict]:
         return get_tools()
+
+    @app.post("/api/management/{action}")
+    async def management_action(action: str, body: dict = {}) -> dict:
+        """Execute a management action (stake, unstake, claim, checkpoint)."""
+        try:
+            from micromech.management.lifecycle import MechLifecycle
+
+            config = MicromechConfig.load()
+            lc = MechLifecycle(config)
+            service_key = body.get("service_key", "")
+
+            if action == "stake":
+                ok = lc.stake(service_key, body.get("contract"))
+                return {"success": ok, "action": "stake"}
+            elif action == "unstake":
+                ok = lc.unstake(service_key, body.get("contract"))
+                return {"success": ok, "action": "unstake"}
+            elif action == "claim":
+                ok = lc.claim_rewards(service_key)
+                return {"success": ok, "action": "claim"}
+            elif action == "checkpoint":
+                ok = lc.checkpoint(service_key)
+                return {"success": ok, "action": "checkpoint"}
+            elif action == "status":
+                status = lc.get_status(service_key)
+                return {"success": True, "data": status}
+            else:
+                return {"success": False, "error": f"Unknown action: {action}"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     return app
 
