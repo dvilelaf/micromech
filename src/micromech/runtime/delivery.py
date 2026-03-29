@@ -96,8 +96,9 @@ class DeliveryManager:
     async def _deliver_one(self, record: RequestRecord) -> Optional[str]:
         """Deliver a single response. Returns tx hash or None.
 
-        Pushes the result to IPFS first (if enabled), then delivers the
-        IPFS multihash bytes on-chain via deliverToMarketplace.
+        Pushes the result to IPFS first (if enabled), then delivers on-chain:
+        - On-chain requests: deliverToMarketplace(requestIds[], datas[])
+        - Off-chain (HTTP) requests: deliverMarketplaceWithSignatures(...)
         """
         if record.result is None:
             logger.error("No result for {}", record.request.request_id)
@@ -129,7 +130,10 @@ class DeliveryManager:
         else:
             delivery_data = response_payload
 
-        tx_hash = await asyncio.to_thread(self._submit_delivery, request_id, delivery_data)
+        if record.request.is_offchain:
+            tx_hash = await asyncio.to_thread(self._submit_offchain_delivery, record, delivery_data)
+        else:
+            tx_hash = await asyncio.to_thread(self._submit_delivery, request_id, delivery_data)
         return tx_hash
 
     def _submit_delivery(self, request_id: str, data: bytes) -> str:
@@ -160,6 +164,120 @@ class DeliveryManager:
 
         # Fall back to signed transaction via iwa wallet
         return self._submit_signed(mech_contract, from_addr, req_id_bytes, data)
+
+    def _submit_offchain_delivery(self, record: RequestRecord, delivery_data: bytes) -> str:
+        """Submit deliverMarketplaceWithSignatures for off-chain (HTTP) requests.
+
+        Calls mech.deliverMarketplaceWithSignatures(requester, deliverWithSignatures[],
+        deliveryRates[], paymentData).
+        """
+        mech_contract = self._get_mech_contract()
+        sender = self.config.mech.multisig_address or self.config.mech.mech_address
+        from_addr = self.bridge.web3.to_checksum_address(sender)
+
+        # requester: the sender from the HTTP request, or our own address
+        requester_addr = record.request.sender or from_addr
+        requester = self.bridge.web3.to_checksum_address(requester_addr)
+
+        # Build the original request data
+        request_data = record.request.data or json.dumps(
+            {"prompt": record.request.prompt, "tool": record.request.tool},
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        # Signature: from the HTTP request, or empty bytes
+        sig_hex = record.request.signature or ""
+        signature = bytes.fromhex(sig_hex.removeprefix("0x")) if sig_hex else b""
+
+        # deliverWithSignatures is an array of tuples
+        deliver_with_sigs = [(request_data, signature, delivery_data)]
+
+        delivery_rates = [self.config.mech.delivery_rate]
+        payment_data = b""
+
+        # Try impersonation first (Anvil), then signed tx
+        try:
+            tx_hash = self._submit_offchain_impersonated(
+                mech_contract,
+                from_addr,
+                requester,
+                deliver_with_sigs,
+                delivery_rates,
+                payment_data,
+            )
+            return tx_hash
+        except Exception as imp_err:
+            logger.debug("Impersonation failed ({}), trying signed tx", imp_err)
+
+        return self._submit_offchain_signed(
+            mech_contract,
+            from_addr,
+            requester,
+            deliver_with_sigs,
+            delivery_rates,
+            payment_data,
+        )
+
+    def _submit_offchain_impersonated(
+        self,
+        contract: Any,
+        from_addr: str,
+        requester: str,
+        deliver_with_sigs: list[tuple[bytes, bytes, bytes]],
+        delivery_rates: list[int],
+        payment_data: bytes,
+    ) -> str:
+        """Submit deliverMarketplaceWithSignatures via impersonation (Anvil)."""
+        tx_hash = contract.functions.deliverMarketplaceWithSignatures(
+            requester,
+            deliver_with_sigs,
+            delivery_rates,
+            payment_data,
+        ).transact(
+            {
+                "from": from_addr,
+                "gas": 500_000,
+            }
+        )
+        receipt = self.bridge.web3.eth.wait_for_transaction_receipt(tx_hash)
+        if receipt["status"] != 1:
+            msg = f"Offchain delivery transaction reverted: {tx_hash.hex()}"
+            raise RuntimeError(msg)
+        return tx_hash.hex()
+
+    def _submit_offchain_signed(
+        self,
+        contract: Any,
+        from_addr: str,
+        requester: str,
+        deliver_with_sigs: list[tuple[bytes, bytes, bytes]],
+        delivery_rates: list[int],
+        payment_data: bytes,
+    ) -> str:
+        """Submit deliverMarketplaceWithSignatures via signed transaction."""
+        tx = contract.functions.deliverMarketplaceWithSignatures(
+            requester,
+            deliver_with_sigs,
+            delivery_rates,
+            payment_data,
+        ).build_transaction(
+            {
+                "from": from_addr,
+                "gas": 500_000,
+                "gasPrice": self.bridge.web3.eth.gas_price,
+                "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
+            }
+        )
+
+        private_key = self._get_signer_key()
+        signed = self.bridge.web3.eth.account.sign_transaction(tx, private_key=private_key)
+        tx_hash = self.bridge.web3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = self.bridge.web3.eth.wait_for_transaction_receipt(tx_hash)
+
+        if receipt["status"] != 1:
+            msg = f"Offchain delivery transaction reverted: {tx_hash.hex()}"
+            raise RuntimeError(msg)
+        return tx_hash.hex()
 
     def _submit_impersonated(
         self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes

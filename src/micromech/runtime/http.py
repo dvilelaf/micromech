@@ -33,6 +33,7 @@ class RequestPayload(BaseModel):
     tool: str = "echo"
     request_id: Optional[str] = None
     sender: Optional[str] = None
+    signature: Optional[str] = None  # hex-encoded signature for off-chain delivery
     extra_params: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -45,15 +46,28 @@ class StatusResponse(BaseModel):
     delivered_total: int = 0
 
 
+class ResultResponse(BaseModel):
+    """Response for GET /result/{request_id}."""
+
+    request_id: str
+    status: str
+    tool: str = ""
+    result: Optional[dict[str, Any]] = None
+    error: Optional[str] = None
+    execution_time: Optional[float] = None
+
+
 def create_app(
     on_request: Callable,
     get_status: Callable,
+    get_result: Optional[Callable] = None,
 ) -> FastAPI:
     """Create the FastAPI app with endpoints.
 
     Args:
         on_request: async callback(MechRequest) for new requests.
         get_status: callable returning StatusResponse dict.
+        get_result: optional callable(request_id) returning RequestRecord or None.
     """
     app = FastAPI(title="micromech", version="0.0.1")
 
@@ -73,6 +87,7 @@ def create_app(
             tool=payload.tool,
             extra_params=payload.extra_params,
             is_offchain=True,
+            signature=payload.signature,
         )
 
         try:
@@ -90,6 +105,40 @@ def create_app(
     async def server_status() -> StatusResponse:
         """Get server status and queue stats."""
         return StatusResponse(**get_status())
+
+    @app.get("/result/{request_id}")
+    async def get_request_result(request_id: str) -> ResultResponse:
+        """Get the result for a specific request.
+
+        Returns the tool output once executed, or current status if still pending.
+        """
+        if get_result is None:
+            raise HTTPException(status_code=501, detail="Result lookup not configured")
+
+        record = get_result(request_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Request not found")
+
+        import json as _json
+
+        response = ResultResponse(
+            request_id=request_id,
+            status=record.request.status,
+            tool=record.request.tool,
+            error=record.request.error,
+        )
+
+        if record.result:
+            response.execution_time = record.result.execution_time
+            if record.result.error:
+                response.error = record.result.error
+            else:
+                try:
+                    response.result = _json.loads(record.result.output)
+                except (ValueError, TypeError):
+                    response.result = {"raw": record.result.output}
+
+        return response
 
     @app.get("/health")
     async def health_check() -> dict:

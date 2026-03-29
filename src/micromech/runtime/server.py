@@ -204,6 +204,7 @@ class MechServer:
         app = create_app(
             on_request=self._on_new_request,
             get_status=self.get_status,
+            get_result=self.queue.get_by_id,
         )
 
         config = uvicorn.Config(

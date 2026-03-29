@@ -29,6 +29,27 @@ MECH_DELIVER_ABI = [
         "stateMutability": "nonpayable",
         "type": "function",
     },
+    {
+        "inputs": [
+            {"internalType": "address", "name": "requester", "type": "address"},
+            {
+                "components": [
+                    {"internalType": "bytes", "name": "requestData", "type": "bytes"},
+                    {"internalType": "bytes", "name": "signature", "type": "bytes"},
+                    {"internalType": "bytes", "name": "deliveryData", "type": "bytes"},
+                ],
+                "internalType": "struct DeliverWithSignature[]",
+                "name": "deliverWithSignatures",
+                "type": "tuple[]",
+            },
+            {"internalType": "uint256[]", "name": "deliveryRates", "type": "uint256[]"},
+            {"internalType": "bytes", "name": "paymentData", "type": "bytes"},
+        ],
+        "name": "deliverMarketplaceWithSignatures",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
 ]
 
 # Minimal ABI for marketplace request

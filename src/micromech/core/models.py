@@ -38,6 +38,7 @@ class MechRequest(BaseModel):
     # Delivery
     delivery_method: DeliveryMethodType = DELIVERY_MARKETPLACE
     is_offchain: bool = False
+    signature: Optional[str] = None  # hex-encoded signature for off-chain delivery
 
     # Status
     status: StatusType = STATUS_PENDING
