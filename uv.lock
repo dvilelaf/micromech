@@ -1925,7 +1925,9 @@ name = "micromech"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "aiohttp" },
     { name = "loguru" },
+    { name = "multiformats" },
     { name = "peewee" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -1957,12 +1959,14 @@ web = [
 
 [package.metadata]
 requires-dist = [
+    { name = "aiohttp", specifier = ">=3.9.0" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115.0" },
     { name = "huggingface-hub", marker = "extra == 'llm'", specifier = ">=0.19.0" },
     { name = "iwa", marker = "extra == 'chain'", specifier = ">=0.5.5" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.0" },
     { name = "llama-cpp-python", marker = "extra == 'llm'", specifier = ">=0.2.0" },
     { name = "loguru", specifier = ">=0.7.0" },
+    { name = "multiformats", specifier = ">=0.3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "peewee", specifier = ">=3.17.0" },
     { name = "pydantic", specifier = ">=2.0.0" },

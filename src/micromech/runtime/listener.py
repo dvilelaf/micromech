@@ -1,7 +1,8 @@
 """On-chain event listener for MechRequest events.
 
 Polls the MechMarketplace contract for Request events and converts
-them to MechRequest objects for processing.
+them to MechRequest objects for processing. Resolves IPFS CIDs to
+get the actual request payload (prompt, tool).
 """
 
 import asyncio
@@ -43,10 +44,10 @@ class EventListener:
         return self._marketplace_contract
 
     async def poll_once(self) -> list[MechRequest]:
-        """Poll for new requests since last block. Returns new requests.
+        """Poll for new requests since last block.
 
-        Does NOT advance _last_block — caller must call advance_block()
-        after successfully processing all returned requests.
+        Fetches events from chain, resolves IPFS CIDs if needed.
+        Does NOT advance _last_block — caller must call advance_block().
         """
         if self.bridge is None:
             return []
@@ -64,28 +65,59 @@ class EventListener:
             from_block = self._last_block + 1
             to_block = current_block
 
-            requests = await asyncio.to_thread(self._fetch_events, from_block, to_block)
+            # Fetch raw events from chain (sync, in thread)
+            raw_requests = await asyncio.to_thread(self._fetch_events, from_block, to_block)
+
+            # Resolve IPFS CIDs for any requests that need it (async)
+            resolved = []
+            for req in raw_requests:
+                resolved_req = await self._resolve_request(req)
+                resolved.append(resolved_req)
 
             self._polled_to_block = to_block
 
-            if requests:
+            if resolved:
                 logger.info(
                     "Found {} new requests (blocks {}-{})",
-                    len(requests),
+                    len(resolved),
                     from_block,
                     to_block,
                 )
-            return requests
+            return resolved
 
         except Exception as e:
             logger.error("Event polling failed: {}", e)
             return []
 
-    def advance_block(self) -> None:
-        """Advance _last_block to the last polled block.
+    async def _resolve_request(self, req: MechRequest) -> MechRequest:
+        """Resolve IPFS CID in request data if needed."""
+        from micromech.ipfs.client import (
+            fetch_json_from_ipfs,
+            is_ipfs_multihash,
+            multihash_to_cid,
+        )
 
-        Call this ONLY after all polled requests have been successfully processed.
-        """
+        if not req.data or req.prompt:
+            return req  # Already has prompt (raw JSON) or no data
+
+        if is_ipfs_multihash(req.data) and self.config.ipfs.enabled:
+            try:
+                cid = multihash_to_cid(req.data)
+                payload = await fetch_json_from_ipfs(cid, gateway=self.config.ipfs.gateway)
+                return MechRequest(
+                    request_id=req.request_id,
+                    data=req.data,
+                    prompt=payload.get("prompt", ""),
+                    tool=payload.get("tool", ""),
+                    extra_params={k: v for k, v in payload.items() if k not in ("prompt", "tool")},
+                )
+            except Exception as e:
+                logger.warning("Failed to resolve IPFS for {}: {}", req.request_id, e)
+
+        return req
+
+    def advance_block(self) -> None:
+        """Advance _last_block to the last polled block."""
         if self._polled_to_block is not None:
             self._last_block = self._polled_to_block
             self._polled_to_block = None
@@ -118,13 +150,12 @@ class EventListener:
     def _parse_marketplace_event(self, event: Any, mech_addr: Optional[str]) -> list[MechRequest]:
         """Parse a MarketplaceRequest event into MechRequest(s).
 
-        MarketplaceRequest has arrays: requestIds[] and requestDatas[].
-        priorityMech is the indexed mech address.
+        At this stage, request data may be raw JSON or IPFS multihash bytes.
+        IPFS resolution happens later in _resolve_request().
         """
         args = event.get("args", {})
         priority_mech = str(args.get("priorityMech", ""))
 
-        # Filter: only process requests for our mech
         if mech_addr and priority_mech.lower() != mech_addr.lower():
             return []
 
@@ -142,7 +173,9 @@ class EventListener:
             if isinstance(data, str):
                 data = data.encode()
 
+            # Try raw JSON first (off-chain/test path)
             prompt, tool, extra = self._parse_request_data(data)
+
             results.append(
                 MechRequest(
                     request_id=rid_hex,
@@ -157,11 +190,7 @@ class EventListener:
 
     @staticmethod
     def _parse_request_data(data: bytes) -> tuple[str, str, dict]:
-        """Extract prompt, tool, and params from request data.
-
-        Request data is typically a JSON payload:
-        {"prompt": "...", "tool": "...", "nonce": ...}
-        """
+        """Try to parse raw bytes as JSON. Returns empty strings if not JSON."""
         prompt = ""
         tool = ""
         extra: dict[str, Any] = {}
@@ -182,11 +211,7 @@ class EventListener:
         return prompt, tool, extra
 
     async def run(self, callback: Any) -> None:
-        """Run the event listener loop.
-
-        Calls callback(request) for each new request.
-        Only advances _last_block after ALL callbacks succeed for a batch.
-        """
+        """Run the event listener loop."""
         self._running = True
         interval = self.config.runtime.event_poll_interval
         logger.info("Event listener started (poll every {}s)", interval)

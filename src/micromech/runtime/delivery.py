@@ -5,6 +5,7 @@ via the mech service's Safe multisig.
 """
 
 import asyncio
+import json
 from typing import Any, Optional
 
 from loguru import logger
@@ -93,15 +94,42 @@ class DeliveryManager:
         return delivered
 
     async def _deliver_one(self, record: RequestRecord) -> Optional[str]:
-        """Deliver a single response. Returns tx hash or None."""
+        """Deliver a single response. Returns tx hash or None.
+
+        Pushes the result to IPFS first (if enabled), then delivers the
+        IPFS multihash bytes on-chain via deliverToMarketplace.
+        """
         if record.result is None:
             logger.error("No result for {}", record.request.request_id)
             return None
 
-        result_data = record.result.output.encode("utf-8")
         request_id = record.request.request_id
 
-        tx_hash = await asyncio.to_thread(self._submit_delivery, request_id, result_data)
+        # Build response payload
+        response_payload = json.dumps(
+            {
+                "requestId": request_id,
+                "result": record.result.output,
+                "prompt": record.request.prompt,
+                "tool": record.request.tool,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        # Push to IPFS and get multihash bytes for on-chain delivery
+        if self.config.ipfs.enabled:
+            try:
+                from micromech.ipfs.client import cid_hex_to_multihash_bytes, push_to_ipfs
+
+                _, cid_hex = await push_to_ipfs(response_payload, api_url=self.config.ipfs.api_url)
+                delivery_data = cid_hex_to_multihash_bytes(cid_hex)
+            except Exception as e:
+                logger.warning("IPFS push failed, delivering raw data: {}", e)
+                delivery_data = response_payload
+        else:
+            delivery_data = response_payload
+
+        tx_hash = await asyncio.to_thread(self._submit_delivery, request_id, delivery_data)
         return tx_hash
 
     def _submit_delivery(self, request_id: str, data: bytes) -> str:

@@ -194,6 +194,56 @@ def web(
     uvicorn.run(web_app, host=host, port=port)
 
 
+@app.command(name="metadata-build")
+def metadata_build() -> None:
+    """Build metadata.json from registered tools."""
+    import json
+
+    from micromech.ipfs.metadata import (
+        build_metadata,
+        build_tools_to_package_hash,
+        scan_tool_packages,
+    )
+
+    tools_dir = Path(__file__).parent / "tools" / "builtin"
+    tools = scan_tool_packages(tools_dir)
+    metadata = build_metadata(tools)
+    tools_hash = build_tools_to_package_hash(tools)
+
+    typer.echo(json.dumps(metadata, indent=2))
+    typer.echo(f"\nTOOLS_TO_PACKAGE_HASH:\n{json.dumps(tools_hash, indent=2)}")
+
+
+@app.command(name="metadata-push")
+def metadata_push(
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Build metadata and push to IPFS."""
+
+    from micromech.ipfs.metadata import (
+        build_metadata,
+        compute_onchain_hash,
+        scan_tool_packages,
+    )
+
+    tools_dir = Path(__file__).parent / "tools" / "builtin"
+    tools = scan_tool_packages(tools_dir)
+    metadata = build_metadata(tools)
+
+    onchain_hash = compute_onchain_hash(metadata)
+    typer.echo(f"On-chain hash: {onchain_hash}")
+
+    try:
+        from micromech.ipfs.client import push_json_to_ipfs
+
+        cid, cid_hex = asyncio.run(push_json_to_ipfs(metadata))
+        typer.echo(f"IPFS CID: {cid}")
+        typer.echo(f"CID hex: {cid_hex}")
+    except Exception as e:
+        typer.echo(f"IPFS push failed: {e}")
+        typer.echo("Use the on-chain hash above to update manually.")
+
+
 @app.command()
 def version() -> None:
     """Show version."""

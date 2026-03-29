@@ -98,6 +98,15 @@ class LLMConfig(BaseModel):
     models_dir: Path = Field(default=DEFAULT_CONFIG_DIR / "models")
 
 
+class IpfsConfig(BaseModel):
+    """IPFS settings."""
+
+    gateway: str = "https://gateway.autonolas.tech/ipfs/"
+    api_url: str = "http://localhost:5001"
+    timeout: int = Field(default=30, ge=5, le=120)
+    enabled: bool = True
+
+
 class ToolConfig(BaseModel):
     """Configuration for a single tool."""
 
@@ -112,6 +121,7 @@ class MicromechConfig(BaseModel):
     version: str = "1"
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     mech: MechConfig = Field(default_factory=MechConfig)
+    ipfs: IpfsConfig = Field(default_factory=IpfsConfig)
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     tools: list[ToolConfig] = Field(

@@ -95,3 +95,29 @@ def load_marketplace_abi() -> list[dict]:
             return json.loads(abi_file.read_text())
     logger.debug("Using bundled minimal marketplace ABI")
     return MARKETPLACE_REQUEST_ABI
+
+
+# ComplementaryServiceMetadata contract — stores mech metadata hash on-chain
+COMPLEMENTARY_SERVICE_METADATA_ADDRESS = {
+    "gnosis": "0x0598081D48FB80B0A7E52FAD2905AE9beCd6fC69",
+}
+
+COMPLEMENTARY_SERVICE_METADATA_ABI = [
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "serviceId", "type": "uint256"},
+            {"internalType": "bytes32", "name": "hash", "type": "bytes32"},
+        ],
+        "name": "changeHash",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+    {
+        "inputs": [{"internalType": "uint256", "name": "serviceId", "type": "uint256"}],
+        "name": "tokenURI",
+        "outputs": [{"internalType": "string", "name": "", "type": "string"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+]
