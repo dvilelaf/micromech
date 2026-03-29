@@ -52,6 +52,9 @@ micromech = "micromech.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["src/micromech"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/micromech/web/templates" = "micromech/web/templates"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"

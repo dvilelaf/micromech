@@ -1,6 +1,7 @@
 """Default constants for micromech."""
 
 import re
+from typing import Final
 
 # Ethereum address validation
 ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
@@ -44,13 +45,13 @@ DEFAULT_LLM_CONTEXT_SIZE = 2048
 # IPFS
 IPFS_GATEWAY = "https://gateway.autonolas.tech/ipfs/"
 
-# Request statuses
-STATUS_PENDING = "pending"
-STATUS_EXECUTING = "executing"
-STATUS_EXECUTED = "executed"
-STATUS_DELIVERED = "delivered"
-STATUS_FAILED = "failed"
+# Request statuses (Final for mypy Literal compatibility)
+STATUS_PENDING: Final = "pending"
+STATUS_EXECUTING: Final = "executing"
+STATUS_EXECUTED: Final = "executed"
+STATUS_DELIVERED: Final = "delivered"
+STATUS_FAILED: Final = "failed"
 
 # Delivery methods
-DELIVERY_MARKETPLACE = "marketplace"
-DELIVERY_LEGACY = "legacy"
+DELIVERY_MARKETPLACE: Final = "marketplace"
+DELIVERY_LEGACY: Final = "legacy"

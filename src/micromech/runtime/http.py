@@ -20,13 +20,16 @@ except ImportError as e:
         "HTTP server requires fastapi. Install with: pip install micromech[web]"
     ) from e
 
+from micromech.core.constants import ETH_ADDRESS_RE
 from micromech.core.models import MechRequest
+
+MAX_PROMPT_LENGTH = 10_000
 
 
 class RequestPayload(BaseModel):
     """HTTP request payload (Valory-compatible)."""
 
-    prompt: str
+    prompt: str = Field(max_length=MAX_PROMPT_LENGTH)
     tool: str = "echo"
     request_id: Optional[str] = None
     sender: Optional[str] = None
@@ -60,8 +63,7 @@ def create_app(
         request_id = payload.request_id or f"http-{uuid.uuid4().hex[:12]}"
         sender = payload.sender or ""
 
-        # Validate sender if provided
-        if sender and (not sender.startswith("0x") or len(sender) != 42):
+        if sender and not ETH_ADDRESS_RE.match(sender):
             raise HTTPException(status_code=400, detail="Invalid sender address")
 
         req = MechRequest(
@@ -81,8 +83,8 @@ def create_app(
                 content={"request_id": request_id, "status": "accepted"},
             )
         except Exception as e:
-            logger.error("Failed to accept request: {}", e)
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error("Failed to accept request {}: {}", request_id, e)
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @app.get("/status")
     async def server_status() -> StatusResponse:

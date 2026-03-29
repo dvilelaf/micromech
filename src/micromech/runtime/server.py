@@ -2,6 +2,13 @@
 
 Coordinates: event listener, request queue, tool executor, delivery manager, HTTP server.
 On startup, recovers any pending/interrupted requests from the database.
+
+All synchronous DB calls run on the single-threaded asyncio event loop.
+Since Peewee SQLite calls are non-yielding (no await between them),
+they are safe from concurrent access within the event loop. The
+asyncio.Semaphore in the executor provides concurrency control for
+tool execution, while DB writes are inherently serialized by the GIL
+and single-threaded event loop.
 """
 
 import asyncio
@@ -25,9 +32,10 @@ class MechServer:
 
     Lifecycle:
     1. Initialize components (queue, registry, executor, listener, delivery)
-    2. Recover interrupted requests from DB
-    3. Run all loops concurrently (event listener, processor, delivery, HTTP)
-    4. Graceful shutdown on SIGTERM/SIGINT
+    2. Start processor loop
+    3. Recover interrupted requests from DB
+    4. Run all loops concurrently (event listener, processor, delivery, HTTP)
+    5. Graceful shutdown on SIGTERM/SIGINT
     """
 
     def __init__(
@@ -49,12 +57,13 @@ class MechServer:
         self.listener = EventListener(config, bridge)
         self.delivery = DeliveryManager(config, self.queue, bridge)
 
-        # Internal queue with backpressure (maxsize = 2x concurrency)
-        max_queued = config.runtime.max_concurrent * 2
-        self._request_queue: asyncio.Queue[MechRequest] = asyncio.Queue(maxsize=max_queued)
+        # Unbounded queue — backpressure is handled by the executor semaphore
+        self._request_queue: asyncio.Queue[MechRequest] = asyncio.Queue()
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._executor_tasks: set[asyncio.Task] = set()
+        # Dedup set to prevent double execution of the same request
+        self._queued_ids: set[str] = set()
 
     def _load_tools(self) -> None:
         """Load tools based on config."""
@@ -69,18 +78,27 @@ class MechServer:
         logger.info("Loaded tools: {}", self.registry.tool_ids)
 
     async def _recover(self) -> None:
-        """Recover interrupted requests from DB on startup."""
+        """Recover interrupted requests from DB on startup.
+
+        Called AFTER the processor loop starts, so queue consumption is active.
+        """
         # Requests stuck in 'executing' were interrupted by crash — re-queue
         executing = self.queue.get_executing()
         for record in executing:
-            logger.info("Recovering interrupted request: {}", record.request.request_id)
-            await self._request_queue.put(record.request)
+            req_id = record.request.request_id
+            if req_id not in self._queued_ids:
+                logger.info("Recovering interrupted request: {}", req_id)
+                self._queued_ids.add(req_id)
+                await self._request_queue.put(record.request)
 
         # Pending requests also need processing
         pending = self.queue.get_pending()
         for record in pending:
-            logger.info("Recovering pending request: {}", record.request.request_id)
-            await self._request_queue.put(record.request)
+            req_id = record.request.request_id
+            if req_id not in self._queued_ids:
+                logger.info("Recovering pending request: {}", req_id)
+                self._queued_ids.add(req_id)
+                await self._request_queue.put(record.request)
 
         total = len(executing) + len(pending)
         if total:
@@ -89,14 +107,23 @@ class MechServer:
     async def _on_new_request(self, request: MechRequest) -> None:
         """Callback for new requests (from listener or HTTP).
 
-        Deduplicates: if request_id already exists with non-pending status, skip.
+        Deduplicates: skips if request is already queued or processed.
         """
-        existing = self.queue.get_by_id(request.request_id)
+        req_id = request.request_id
+
+        # Fast dedup: already in-flight
+        if req_id in self._queued_ids:
+            logger.debug("Skipping duplicate request {}", req_id)
+            return
+
+        # DB dedup: already processed
+        existing = self.queue.get_by_id(req_id)
         if existing and existing.request.status != STATUS_PENDING:
-            logger.debug("Skipping duplicate request {}", request.request_id)
+            logger.debug("Skipping already-processed request {}", req_id)
             return
 
         self.queue.add_request(request)
+        self._queued_ids.add(req_id)
         await self._request_queue.put(request)
 
     async def _processor_loop(self) -> None:
@@ -106,13 +133,20 @@ class MechServer:
             try:
                 request = await asyncio.wait_for(self._request_queue.get(), timeout=1.0)
                 # Track the task for graceful shutdown
-                task = asyncio.create_task(self.executor.execute(request))
+                task = asyncio.create_task(self._execute_and_cleanup(request))
                 self._executor_tasks.add(task)
                 task.add_done_callback(self._executor_tasks.discard)
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
                 logger.error("Processor error: {}", e)
+
+    async def _execute_and_cleanup(self, request: MechRequest) -> None:
+        """Execute a request and remove from dedup set when done."""
+        try:
+            await self.executor.execute(request)
+        finally:
+            self._queued_ids.discard(request.request_id)
 
     def get_status(self) -> dict:
         """Get current server status."""
@@ -127,7 +161,6 @@ class MechServer:
         """Run the server with all components."""
         self._running = True
         self._load_tools()
-        await self._recover()
 
         # Register signal handlers
         loop = asyncio.get_running_loop()
@@ -136,11 +169,14 @@ class MechServer:
 
         logger.info("MechServer starting...")
 
-        # Start background tasks
+        # Start processor FIRST so recovery queue is consumed
         self._tasks = [
             asyncio.create_task(self._processor_loop()),
             asyncio.create_task(self.delivery.run()),
         ]
+
+        # Recover after processor is running
+        await self._recover()
 
         if self.bridge:
             self._tasks.append(asyncio.create_task(self.listener.run(self._on_new_request)))
@@ -193,13 +229,14 @@ class MechServer:
         self._running = False
         self.listener.stop()
         self.delivery.stop()
-        # Cancel main loop tasks
         for task in self._tasks:
             task.cancel()
-        # Cancel in-flight executor tasks
         for task in self._executor_tasks:
             task.cancel()
-        logger.info("MechServer stopping ({} in-flight tasks cancelled)", len(self._executor_tasks))
+        logger.info(
+            "MechServer stopping ({} in-flight tasks cancelled)",
+            len(self._executor_tasks),
+        )
 
     def shutdown(self) -> None:
         """Final cleanup."""

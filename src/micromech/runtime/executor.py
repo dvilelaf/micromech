@@ -1,4 +1,9 @@
-"""Tool executor — manages concurrent tool execution with timeout."""
+"""Tool executor — manages concurrent tool execution with timeout.
+
+DB writes are synchronous Peewee/SQLite calls executed on the single-threaded
+asyncio event loop. Since they are non-yielding (no await between Peewee calls),
+concurrent access is safe — the event loop serializes them naturally.
+"""
 
 import asyncio
 import time
@@ -15,8 +20,7 @@ from micromech.tools.registry import ToolNotFoundError, ToolRegistry
 class ToolExecutor:
     """Executes tools concurrently with timeout enforcement.
 
-    Uses an asyncio semaphore for execution concurrency and an asyncio lock
-    to serialize SQLite writes (Peewee is not safe for concurrent async writes).
+    Uses an asyncio semaphore to limit concurrent executions.
     """
 
     def __init__(
@@ -28,7 +32,6 @@ class ToolExecutor:
         self.registry = registry
         self.queue = queue
         self._semaphore = asyncio.Semaphore(max_concurrent)
-        self._db_lock = asyncio.Lock()
         self._active: set[str] = set()
 
     @property
@@ -40,11 +43,6 @@ class ToolExecutor:
         async with self._semaphore:
             return await self._run(request)
 
-    async def _db_write(self, fn, *args, **kwargs):
-        """Serialize DB writes through asyncio lock."""
-        async with self._db_lock:
-            return fn(*args, **kwargs)
-
     async def _run(self, request: MechRequest) -> ToolResult:
         """Inner execution with persistence updates."""
         req_id = request.request_id
@@ -52,7 +50,7 @@ class ToolExecutor:
         start = time.monotonic()
 
         try:
-            await self._db_write(self.queue.mark_executing, req_id)
+            self.queue.mark_executing(req_id)
         except Exception as e:
             logger.error("Failed to mark {} as executing: {}", req_id, e)
             self._active.discard(req_id)
@@ -71,7 +69,7 @@ class ToolExecutor:
                     "version": tool.metadata.version,
                 },
             )
-            await self._db_write(self.queue.mark_executed, req_id, result)
+            self.queue.mark_executed(req_id, result)
             logger.info(
                 "Executed {} with tool {} in {:.2f}s",
                 req_id,
@@ -83,13 +81,13 @@ class ToolExecutor:
         except ToolExecutionError as e:
             elapsed = time.monotonic() - start
             result = ToolResult(error=str(e), execution_time=elapsed)
-            await self._db_write(self.queue.mark_executed, req_id, result)
+            self.queue.mark_executed(req_id, result)
             logger.warning("Tool timeout for {}: {}", req_id, e)
             return result
 
         except ToolNotFoundError as e:
             result = ToolResult(error=str(e))
-            await self._db_write(self.queue.mark_executed, req_id, result)
+            self.queue.mark_executed(req_id, result)
             logger.error("Tool not found for {}: {}", req_id, e)
             return result
 
@@ -97,7 +95,7 @@ class ToolExecutor:
             elapsed = time.monotonic() - start
             result = ToolResult(error=str(e), execution_time=elapsed)
             try:
-                await self._db_write(self.queue.mark_executed, req_id, result)
+                self.queue.mark_executed(req_id, result)
             except Exception:
                 logger.error("Failed to persist error for {}", req_id)
             logger.error("Execution failed for {}: {}", req_id, e)

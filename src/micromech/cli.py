@@ -65,7 +65,7 @@ def run(
 
         bridge = IwaBridge(chain_name=cfg.mech.chain)
         logger.info("iwa bridge loaded for chain: {}", cfg.mech.chain)
-    except (ImportError, Exception) as e:
+    except Exception as e:
         logger.warning("iwa bridge not available: {}. Running without chain access.", e)
 
     server = MechServer(cfg, bridge=bridge)
@@ -157,7 +157,7 @@ def cleanup(
 @app.command()
 def web(
     port: int = typer.Option(8000, "--port", "-p"),
-    host: str = typer.Option("0.0.0.0", "--host", "-h"),
+    host: str = typer.Option("0.0.0.0", "--host"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Launch the web dashboard."""
