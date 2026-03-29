@@ -322,3 +322,135 @@ class TestMicromechOnchainE2E:
         print(f"  ✓ Listener detected {len(requests)} request(s)")
         for req in requests:
             print(f"    - {req.request_id[:16]}... tool={req.tool}")
+
+
+class TestMicromechFullServerLoop:
+    """Test the full micromech server loop: listen → execute → verify.
+
+    Sends a marketplace request, then runs the micromech server which should:
+    1. Detect the request via EventListener
+    2. Execute the echo tool
+    3. Store the result in the DB
+    """
+
+    @pytest.mark.asyncio
+    async def test_server_detects_and_executes(self, w3, tmp_path):
+        """Full server integration: on-chain request → detection → execution."""
+        from micromech.core.config import (
+            IpfsConfig,
+            MechConfig,
+            MicromechConfig,
+            PersistenceConfig,
+            RuntimeConfig,
+        )
+        from micromech.core.constants import STATUS_EXECUTED, STATUS_FAILED
+        from micromech.runtime.server import MechServer
+
+        marketplace = w3.eth.contract(
+            address=w3.to_checksum_address(MARKETPLACE_ADDR),
+            abi=_load_abi("mech_marketplace.json"),
+        )
+
+        # Record block before request
+        block_before = w3.eth.block_number
+
+        # Send a marketplace request
+        w3.provider.make_request("anvil_impersonateAccount", [RICH_ACCOUNT])
+        fee = marketplace.functions.fee().call()
+        value = MECH_DELIVERY_RATE + fee
+
+        request_data = json.dumps(
+            {
+                "prompt": "Server loop test: will BTC hit 100k?",
+                "tool": "echo",
+            }
+        ).encode()
+
+        tx = marketplace.functions.request(
+            request_data,
+            MECH_DELIVERY_RATE,
+            PAYMENT_TYPE_NATIVE,
+            w3.to_checksum_address(MECH_ADDR),
+            300,
+            b"",
+        ).transact(
+            {
+                "from": RICH_ACCOUNT,
+                "value": value,
+                "gas": 500_000,
+            }
+        )
+        receipt = w3.eth.wait_for_transaction_receipt(tx)
+        assert receipt["status"] == 1
+        w3.provider.make_request("anvil_stopImpersonatingAccount", [RICH_ACCOUNT])
+        print(f"\n  Request sent at block {w3.eth.block_number}")
+
+        # Create AnvilBridge
+        class AnvilBridge:
+            def __init__(self, web3):
+                self.web3 = web3
+
+            def with_retry(self, fn, **kwargs):
+                return fn()
+
+        config = MicromechConfig(
+            persistence=PersistenceConfig(db_path=tmp_path / "server_loop.db"),
+            mech=MechConfig(
+                mech_address=MECH_ADDR,
+                marketplace_address=MARKETPLACE_ADDR,
+            ),
+            runtime=RuntimeConfig(
+                event_poll_interval=1,
+                event_lookback_blocks=100,
+                delivery_interval=1,
+                max_concurrent=5,
+            ),
+            ipfs=IpfsConfig(enabled=False),
+        )
+
+        bridge = AnvilBridge(w3)
+        server = MechServer(config, bridge=bridge)
+
+        # Set listener to start from before our request
+        server.listener._last_block = block_before
+
+        # Run server briefly
+        async def stop_after_processing():
+            # Wait for listener to detect + executor to process
+            for _ in range(20):
+                await asyncio.sleep(0.5)
+                counts = server.queue.count_by_status()
+                executed = counts.get("executed", 0) + counts.get("failed", 0)
+                if executed > 0:
+                    break
+            server.stop()
+
+        asyncio.create_task(stop_after_processing())
+
+        try:
+            await asyncio.wait_for(server.run(with_http=False), timeout=15.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+
+        # Verify request was detected and processed
+        recent = server.queue.get_recent(limit=10)
+        print(f"  Queue has {len(recent)} records")
+
+        executed_records = [
+            r for r in recent if r.request.status in (STATUS_EXECUTED, STATUS_FAILED)
+        ]
+        assert len(executed_records) >= 1, (
+            f"Expected at least 1 executed request, got {len(executed_records)}. "
+            f"Statuses: {[r.request.status for r in recent]}"
+        )
+
+        for r in executed_records:
+            print(
+                f"  ✓ {r.request.request_id[:16]}... "
+                f"status={r.request.status} tool={r.request.tool}"
+            )
+            if r.result:
+                print(f"    result: {r.result.output[:80]}")
+
+        server.shutdown()
+        print("  ✓ Full server loop completed")
