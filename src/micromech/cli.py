@@ -404,6 +404,82 @@ def metadata_update(
         raise typer.Exit(1)
 
 
+@app.command(name="add-tool")
+def add_tool(
+    name: str = typer.Argument(help="Name for the new tool (e.g. 'my_tool')"),
+) -> None:
+    """Scaffold a new custom tool package under tools/custom/<name>/."""
+    import re
+
+    if not re.match(r"^[a-z][a-z0-9_]*$", name):
+        typer.echo(f"Invalid tool name '{name}'. Use lowercase letters, digits, and underscores.")
+        raise typer.Exit(1)
+
+    tools_dir = Path(__file__).parent.parent.parent / "tools" / "custom"
+    tool_dir = tools_dir / name
+
+    if tool_dir.exists():
+        typer.echo(f"Tool directory already exists: {tool_dir}")
+        raise typer.Exit(1)
+
+    tool_dir.mkdir(parents=True, exist_ok=True)
+
+    # __init__.py
+    (tool_dir / "__init__.py").write_text(f'"""{name} tool package."""\n')
+
+    # component.yaml
+    component_yaml = (
+        f"name: {name}\n"
+        f"author: micromech\n"
+        f"version: 0.1.0\n"
+        f"type: custom\n"
+        f"description: Custom tool — {name}\n"
+        f"license: Apache-2.0\n"
+        f"aea_version: '>=1.0.0, <2.0.0'\n"
+        f"entry_point: {name}.py\n"
+        f"callable: run\n"
+        f"dependencies: {{}}\n"
+        f"fingerprint: {{}}\n"
+    )
+    (tool_dir / "component.yaml").write_text(component_yaml)
+
+    # <name>.py with ALLOWED_TOOLS + run() template
+    tool_py = (
+        f'"""{name} — custom micromech tool.\n'
+        f"\n"
+        f"Valory-compatible: ALLOWED_TOOLS + run(**kwargs) -> MechResponse.\n"
+        f'"""\n'
+        f"\n"
+        f"import json\n"
+        f"from typing import Any, Optional\n"
+        f"\n"
+        f'ALLOWED_TOOLS = ["{name}"]\n'
+        f"\n"
+        f"\n"
+        f"def run(\n"
+        f"    **kwargs: Any,\n"
+        f") -> tuple[Optional[str], Optional[str], Optional[dict[str, Any]], Any]:\n"
+        f'    """Valory-compatible entry point."""\n'
+        f'    prompt = kwargs.get("prompt", "")\n'
+        f'    counter_callback = kwargs.get("counter_callback")\n'
+        f"\n"
+        f"    # TODO: implement your tool logic here\n"
+        f"    result = json.dumps({{\n"
+        f'        "result": "not implemented",\n'
+        f'        "prompt": prompt,\n'
+        f"    }})\n"
+        f"\n"
+        f"    return result, prompt, None, counter_callback\n"
+    )
+    (tool_dir / f"{name}.py").write_text(tool_py)
+
+    typer.echo(f"Created tool package: {tool_dir}")
+    typer.echo(f"  {name}/__init__.py")
+    typer.echo(f"  {name}/component.yaml")
+    typer.echo(f"  {name}/{name}.py")
+    typer.echo(f"\nEdit {tool_dir / name}.py to implement your tool logic.")
+
+
 @app.command()
 def version() -> None:
     """Show version."""

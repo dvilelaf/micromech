@@ -71,11 +71,12 @@ class MechConfig(BaseModel):
     chain: str = DEFAULT_CHAIN
     service_id: Optional[int] = None
     mech_address: Optional[str] = None
+    multisig_address: Optional[str] = None
     marketplace_address: str = MECH_MARKETPLACE_ADDRESS
     delivery_rate: int = Field(default=DEFAULT_DELIVERY_RATE, ge=0)
     account_tag: str = "mech"
 
-    @field_validator("mech_address", "marketplace_address")
+    @field_validator("mech_address", "multisig_address", "marketplace_address")
     @classmethod
     def validate_eth_address(cls, v: Optional[str]) -> Optional[str]:
         return _validate_eth_address(v)

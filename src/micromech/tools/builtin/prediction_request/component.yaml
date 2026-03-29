@@ -2,17 +2,21 @@ name: prediction_request
 author: micromech
 version: 0.1.0
 type: custom
-description: >
-  Prediction market tool using local LLM. Equivalent to Valory's prediction-offline
+description: 'Prediction market tool using local LLM. Equivalent to Valory''s prediction-offline
   but runs entirely offline on CPU using Qwen 0.5B.
+
+  '
 license: Apache-2.0
-aea_version: ">=1.0.0, <2.0.0"
+aea_version: '>=1.0.0, <2.0.0'
 entry_point: prediction_request.py
 callable: run
 params:
   default_model: Qwen/Qwen2.5-0.5B-Instruct-GGUF
 dependencies:
   llama-cpp-python:
-    version: ">=0.2.0"
+    version: '>=0.2.0'
   huggingface-hub:
-    version: ">=0.19.0"
+    version: '>=0.19.0'
+fingerprint:
+  __init__.py: bafkreieark7qeq6htcoi77kjpieesdgfdurqyyzaolxbofkbl6z7choowu
+  prediction_request.py: bafkreiacmky74e3shsv2w636yqwg4ktp4dm5lzaylkhmdivpjmai36bbne

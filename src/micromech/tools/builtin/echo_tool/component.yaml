@@ -2,9 +2,13 @@ name: echo_tool
 author: micromech
 version: 0.1.0
 type: custom
-description: Returns a default prediction. For testing the request-execute-deliver pipeline.
+description: Returns a default prediction. For testing the request-execute-deliver
+  pipeline.
 license: Apache-2.0
-aea_version: ">=1.0.0, <2.0.0"
+aea_version: '>=1.0.0, <2.0.0'
 entry_point: echo_tool.py
 callable: run
 dependencies: {}
+fingerprint:
+  __init__.py: bafkreigjxsxg7sn7sluhjpuhlxboddyq4bti57xfrw4cmyi2psg7v2nxvq
+  echo_tool.py: bafkreigi3n5lstgnr4ulo2npwippu7kicu4hwztdsvf4spo3aixqytb5pe

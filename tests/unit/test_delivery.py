@@ -96,6 +96,169 @@ class TestDeliveryWithBridgeMultiple:
         assert count == 0
 
 
+class TestSubmitImpersonated:
+    def test_impersonated_success(self, queue: PersistentQueue):
+        """_submit_impersonated transacts and returns tx hash."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 1}
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+
+        mock_contract = MagicMock()
+        tx_hash_bytes = b"\xde\xad" + b"\x00" * 30
+        mock_contract.functions.deliverToMarketplace.return_value.transact.return_value = (
+            tx_hash_bytes
+        )
+
+        result = dm._submit_impersonated(mock_contract, "0x" + "ab" * 20, b"\x01" * 32, b"data")
+        assert result == tx_hash_bytes.hex()
+
+    def test_impersonated_reverted(self, queue: PersistentQueue):
+        """Reverted transaction raises RuntimeError."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 0}
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+
+        mock_contract = MagicMock()
+        tx_hash_bytes = b"\xde\xad" + b"\x00" * 30
+        mock_contract.functions.deliverToMarketplace.return_value.transact.return_value = (
+            tx_hash_bytes
+        )
+
+        with pytest.raises(RuntimeError, match="reverted"):
+            dm._submit_impersonated(mock_contract, "0x" + "ab" * 20, b"\x01" * 32, b"data")
+
+
+class TestSubmitSigned:
+    def test_signed_success(self, queue: PersistentQueue):
+        """_submit_signed builds, signs, and sends transaction."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        bridge.web3.eth.gas_price = 1000
+        bridge.web3.eth.get_transaction_count.return_value = 5
+        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 1}
+        tx_hash_bytes = b"\xca\xfe" + b"\x00" * 30
+        bridge.web3.eth.send_raw_transaction.return_value = tx_hash_bytes
+        mock_signed = MagicMock()
+        mock_signed.raw_transaction = b"signed_tx"
+        bridge.web3.eth.account.sign_transaction.return_value = mock_signed
+
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+        # Mock _get_signer_key
+        dm._get_signer_key = MagicMock(return_value="0x" + "ff" * 32)
+
+        mock_contract = MagicMock()
+        result = dm._submit_signed(mock_contract, "0x" + "ab" * 20, b"\x01" * 32, b"data")
+        assert result == tx_hash_bytes.hex()
+
+    def test_signed_reverted(self, queue: PersistentQueue):
+        """Reverted signed transaction raises RuntimeError."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        bridge.web3.eth.gas_price = 1000
+        bridge.web3.eth.get_transaction_count.return_value = 0
+        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 0}
+        tx_hash_bytes = b"\xca\xfe" + b"\x00" * 30
+        bridge.web3.eth.send_raw_transaction.return_value = tx_hash_bytes
+        mock_signed = MagicMock()
+        mock_signed.raw_transaction = b"signed_tx"
+        bridge.web3.eth.account.sign_transaction.return_value = mock_signed
+
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+        dm._get_signer_key = MagicMock(return_value="0x" + "ff" * 32)
+
+        mock_contract = MagicMock()
+        with pytest.raises(RuntimeError, match="reverted"):
+            dm._submit_signed(mock_contract, "0x" + "ab" * 20, b"\x01" * 32, b"data")
+
+
+class TestGetSignerKey:
+    def test_get_signer_key_success(self, queue: PersistentQueue):
+        config = MicromechConfig()
+        bridge = MagicMock()
+        mock_account = MagicMock()
+        mock_account.key.hex.return_value = "deadbeef" * 8
+        bridge.wallet.account_service.resolve_account.return_value = mock_account
+
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+        key = dm._get_signer_key()
+        assert key == "deadbeef" * 8
+
+    def test_get_signer_key_failure(self, queue: PersistentQueue):
+        config = MicromechConfig()
+        bridge = MagicMock()
+        bridge.wallet.account_service.resolve_account.side_effect = RuntimeError("not found")
+
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+        with pytest.raises(ValueError, match="Cannot resolve signer key"):
+            dm._get_signer_key()
+
+
+class TestGetMechContract:
+    def test_lazy_loads_contract(self, queue: PersistentQueue):
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        mock_contract = MagicMock()
+        bridge.web3.eth.contract.return_value = mock_contract
+
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+        contract = dm._get_mech_contract()
+        assert contract is mock_contract
+        # Second call returns cached instance
+        contract2 = dm._get_mech_contract()
+        assert contract2 is mock_contract
+        bridge.web3.eth.contract.assert_called_once()
+
+    def test_raises_if_no_mech_address(self, queue: PersistentQueue):
+        config = MicromechConfig()  # mech_address is None
+        bridge = MagicMock()
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+        with pytest.raises(ValueError, match="mech_address not configured"):
+            dm._get_mech_contract()
+
+
+class TestSubmitDelivery:
+    def test_impersonation_path(self, queue: PersistentQueue):
+        """When impersonation succeeds, returns tx hash without trying signed."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+
+        dm._get_mech_contract = MagicMock()
+        dm._submit_impersonated = MagicMock(return_value="0xdeadbeef")
+        dm._submit_signed = MagicMock()
+
+        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
+        assert result == "0xdeadbeef"
+        dm._submit_signed.assert_not_called()
+
+    def test_fallback_to_signed(self, queue: PersistentQueue):
+        """When impersonation fails, falls back to signed."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+
+        dm._get_mech_contract = MagicMock()
+        dm._submit_impersonated = MagicMock(side_effect=RuntimeError("not Anvil"))
+        dm._submit_signed = MagicMock(return_value="0xcafebabe")
+
+        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
+        assert result == "0xcafebabe"
+
+    def test_request_id_hex_prefix(self, queue: PersistentQueue):
+        """Request IDs with 0x prefix are handled correctly."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+
+        dm._get_mech_contract = MagicMock()
+        dm._submit_impersonated = MagicMock(return_value="0xtx")
+
+        result = dm._submit_delivery("0x" + "bb" * 32, b"data")
+        assert result == "0xtx"
+
+
 class TestDeliveryLifecycle:
     def test_stop(self, delivery_no_bridge: DeliveryManager):
         delivery_no_bridge._running = True

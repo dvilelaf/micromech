@@ -201,6 +201,54 @@ class TestValoryCompat:
         (tool_dir / "component.yaml").write_text("name: ../../etc\n")
         assert load_valory_tool(tool_dir) is None
 
+    def test_bad_yaml(self, tmp_path: Path):
+        """Invalid YAML returns None."""
+        from micromech.tools.valory_compat import load_valory_tool
+
+        tool_dir = tmp_path / "bad_yaml"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text("{{invalid yaml: [")
+        assert load_valory_tool(tool_dir) is None
+
+    def test_exec_module_failure(self, tmp_path: Path):
+        """Module that raises on import returns None."""
+        from micromech.tools.valory_compat import load_valory_tool
+
+        tool_dir = tmp_path / "import_fail"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text("name: import_fail\nentry_point: import_fail.py\n")
+        (tool_dir / "import_fail.py").write_text("raise RuntimeError('bad import')")
+        assert load_valory_tool(tool_dir) is None
+
+    def test_no_callable(self, tmp_path: Path):
+        """Module without the expected callable returns None."""
+        from micromech.tools.valory_compat import load_valory_tool
+
+        tool_dir = tmp_path / "no_run"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text(
+            "name: no_run\nentry_point: no_run.py\ncallable: run\n"
+        )
+        (tool_dir / "no_run.py").write_text("x = 42\n")
+        assert load_valory_tool(tool_dir) is None
+
+    def test_spec_from_file_returns_none(self, tmp_path: Path):
+        """When spec_from_file_location returns None, returns None."""
+        from unittest.mock import patch
+
+        from micromech.tools.valory_compat import load_valory_tool
+
+        tool_dir = tmp_path / "spec_none"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text("name: spec_none\nentry_point: spec_none.py\n")
+        (tool_dir / "spec_none.py").write_text("def run(**kw): pass\n")
+
+        with patch(
+            "micromech.tools.valory_compat.importlib.util.spec_from_file_location",
+            return_value=None,
+        ):
+            assert load_valory_tool(tool_dir) is None
+
     def test_valory_run_direct(self, tmp_path: Path):
         from micromech.tools.valory_compat import load_valory_tool
 

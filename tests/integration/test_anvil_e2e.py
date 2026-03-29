@@ -24,6 +24,7 @@ import asyncio
 import json
 import os
 import time as _time
+from pathlib import Path
 
 import pytest
 from web3 import Web3
@@ -33,11 +34,15 @@ ANVIL_URL = os.environ.get("ANVIL_URL", "http://localhost:18545")
 # Gnosis contracts (existing mech on mainnet)
 MARKETPLACE_ADDR = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
 MECH_ADDR = "0xC05e7412439bD7e91730a6880E18d5D5873F632C"
+MECH_MULTISIG = "0xccA28b516a8c596742Bf23D06324c638230705aE"
 MECH_SERVICE_ID = 2182
 MECH_DELIVERY_RATE = 10_000_000_000_000_000  # 0.01 xDAI
 PAYMENT_TYPE_NATIVE = bytes.fromhex(
     "ba699a34be8fe0e7725e93dcbce1701b0211a8ca61330aaeb8a05bf2ec7abed1"
 )
+
+# ComplementaryServiceMetadata contract on Gnosis
+COMPLEMENTARY_METADATA_ADDR = "0x0598081D48FB80B0A7E52FAD2905AE9beCd6fC69"
 
 # Well-funded Gnosis address for impersonation
 RICH_ACCOUNT = Web3.to_checksum_address("0xe1CB04A0fA36DdD16a06ea828007E35e1a3cBC37")
@@ -61,8 +66,6 @@ def _load_abi(name: str) -> list:
         abi_dir = files("iwa.plugins.olas.contracts.abis")
         return json.loads(abi_dir.joinpath(name).read_text())
     except Exception:
-        from pathlib import Path
-
         abi_file = (
             Path("/media/david/DATA/repos/iwa/src/iwa") / "plugins/olas/contracts/abis" / name
         )
@@ -542,6 +545,244 @@ class TestMicromechFullServerLoop:
         print("  ✓ Full server loop completed")
 
 
+class TestFullServerCycleE2E:
+    """Full closed-loop: on-chain request -> server detect -> execute -> deliver on-chain.
+
+    Proves the COMPLETE server cycle including delivery back to the marketplace
+    contract, with on-chain verification of mapMechDeliveryCounts.
+    """
+
+    @pytest.mark.asyncio
+    async def test_request_execute_deliver_on_chain(self, w3, tmp_path):
+        """Send request, server detects+executes+delivers, verify delivery on-chain."""
+        from micromech.core.config import (
+            IpfsConfig,
+            MechConfig,
+            MicromechConfig,
+            PersistenceConfig,
+            RuntimeConfig,
+        )
+        from micromech.core.constants import STATUS_DELIVERED, STATUS_EXECUTED, STATUS_FAILED
+        from micromech.runtime.server import MechServer
+
+        marketplace = w3.eth.contract(
+            address=w3.to_checksum_address(MARKETPLACE_ADDR),
+            abi=_load_abi("mech_marketplace.json"),
+        )
+
+        # Fund the multisig with xDAI for gas (delivery tx needs gas)
+        w3.provider.make_request(
+            "anvil_setBalance",
+            [MECH_MULTISIG, hex(10 * 10**18)],
+        )
+
+        # Record baseline delivery count
+        base_deliveries = marketplace.functions.mapMechDeliveryCounts(
+            w3.to_checksum_address(MECH_ADDR)
+        ).call()
+        print(f"\n  Baseline deliveries: {base_deliveries}")
+
+        # Record block before request
+        block_before = w3.eth.block_number
+
+        # Step 1: Send a marketplace request
+        print("\n--- Step 1: Send marketplace request ---")
+        w3.provider.make_request("anvil_impersonateAccount", [RICH_ACCOUNT])
+        fee = marketplace.functions.fee().call()
+        value = MECH_DELIVERY_RATE + fee
+
+        request_data = json.dumps(
+            {
+                "prompt": "Full cycle test: will SOL hit 500?",
+                "tool": "echo",
+            }
+        ).encode()
+
+        tx = marketplace.functions.request(
+            request_data,
+            MECH_DELIVERY_RATE,
+            PAYMENT_TYPE_NATIVE,
+            w3.to_checksum_address(MECH_ADDR),
+            300,
+            b"",
+        ).transact(
+            {
+                "from": RICH_ACCOUNT,
+                "value": value,
+                "gas": 500_000,
+            }
+        )
+        receipt = w3.eth.wait_for_transaction_receipt(tx)
+        assert receipt["status"] == 1, "Request tx reverted"
+        w3.provider.make_request("anvil_stopImpersonatingAccount", [RICH_ACCOUNT])
+        print(f"  Request sent at block {w3.eth.block_number}")
+
+        # Step 2: Start server with BOTH listener AND delivery enabled
+        print("\n--- Step 2: Start MechServer ---")
+
+        class AnvilBridge:
+            def __init__(self, web3):
+                self.web3 = web3
+
+            def with_retry(self, fn, **kwargs):
+                return fn()
+
+        config = MicromechConfig(
+            persistence=PersistenceConfig(db_path=tmp_path / "full_cycle.db"),
+            mech=MechConfig(
+                mech_address=MECH_ADDR,
+                multisig_address=MECH_MULTISIG,
+                marketplace_address=MARKETPLACE_ADDR,
+            ),
+            runtime=RuntimeConfig(
+                event_poll_interval=1,
+                event_lookback_blocks=100,
+                delivery_interval=1,
+                max_concurrent=5,
+            ),
+            ipfs=IpfsConfig(enabled=False),
+        )
+
+        bridge = AnvilBridge(w3)
+        server = MechServer(config, bridge=bridge)
+
+        # Set listener to start from before our request
+        server.listener._last_block = block_before
+
+        # Step 3: Run server and wait for detect + execute + deliver
+        async def stop_after_delivery():
+            for _ in range(30):
+                await asyncio.sleep(0.5)
+                counts = server.queue.count_by_status()
+                delivered = counts.get("delivered", 0)
+                failed = counts.get("failed", 0)
+                if delivered > 0 or failed > 0:
+                    break
+            server.stop()
+
+        asyncio.create_task(stop_after_delivery())
+
+        try:
+            await asyncio.wait_for(server.run(with_http=False), timeout=20.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError):
+            pass
+
+        # Step 4: Verify on-chain delivery
+        print("\n--- Step 3: Verify delivery on-chain ---")
+        new_deliveries = marketplace.functions.mapMechDeliveryCounts(
+            w3.to_checksum_address(MECH_ADDR)
+        ).call()
+
+        # Verify DB state
+        recent = server.queue.get_recent(limit=10)
+        print(f"  Queue has {len(recent)} records")
+        for r in recent:
+            print(f"  [{r.request.status}] {r.request.request_id[:16]}... tool={r.request.tool}")
+
+        delivered_records = [r for r in recent if r.request.status == STATUS_DELIVERED]
+        executed_or_delivered = [
+            r
+            for r in recent
+            if r.request.status in (STATUS_EXECUTED, STATUS_DELIVERED, STATUS_FAILED)
+        ]
+        assert len(executed_or_delivered) >= 1, (
+            f"Expected at least 1 processed request, got {len(executed_or_delivered)}. "
+            f"Statuses: {[r.request.status for r in recent]}"
+        )
+
+        assert new_deliveries > base_deliveries, (
+            f"Delivery count did not increase: {base_deliveries} -> {new_deliveries}"
+        )
+        print(f"  Deliveries: {base_deliveries} -> {new_deliveries}")
+        print(f"  Delivered records in DB: {len(delivered_records)}")
+
+        server.shutdown()
+        print("  ✓ Full server cycle (request -> execute -> deliver) completed")
+
+
+class TestMetadataUpdateOnChain:
+    """Test building metadata and updating the hash on-chain."""
+
+    def test_metadata_build_and_change_hash(self, w3):
+        """Build metadata, compute hash, call changeHash, verify on-chain."""
+        from micromech.ipfs.metadata import (
+            build_metadata,
+            compute_onchain_hash,
+            scan_tool_packages,
+        )
+        from micromech.runtime.contracts import (
+            COMPLEMENTARY_SERVICE_METADATA_ABI,
+        )
+
+        # Step 1: Build metadata from tools
+        print("\n--- Step 1: Build metadata ---")
+        tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools" / "builtin"
+        tools = scan_tool_packages(tools_dir)
+        assert len(tools) > 0, "No tools found"
+        metadata = build_metadata(tools)
+        assert "tools" in metadata
+        assert len(metadata["tools"]) > 0
+        print(f"  Tools: {metadata['tools']}")
+
+        # Step 2: Compute on-chain hash
+        print("\n--- Step 2: Compute on-chain hash ---")
+        onchain_hash_hex = compute_onchain_hash(metadata)
+        assert onchain_hash_hex.startswith("0x")
+        # Convert hex to bytes32
+        onchain_hash_bytes = bytes.fromhex(onchain_hash_hex[2:])
+        assert len(onchain_hash_bytes) == 34, (
+            f"Expected 34 bytes (multihash), got {len(onchain_hash_bytes)}"
+        )
+        print(f"  On-chain hash: {onchain_hash_hex[:20]}...")
+
+        # Step 3: Call changeHash on ComplementaryServiceMetadata
+        print("\n--- Step 3: Call changeHash ---")
+        metadata_contract = w3.eth.contract(
+            address=w3.to_checksum_address(COMPLEMENTARY_METADATA_ADDR),
+            abi=COMPLEMENTARY_SERVICE_METADATA_ABI,
+        )
+
+        # Read tokenURI before to compare later
+        uri_before = metadata_contract.functions.tokenURI(MECH_SERVICE_ID).call()
+        print(f"  tokenURI before: {uri_before[:60]}...")
+
+        # changeHash must be called by the service multisig
+        w3.provider.make_request(
+            "anvil_setBalance",
+            [MECH_MULTISIG, hex(1 * 10**18)],
+        )
+        w3.provider.make_request("anvil_impersonateAccount", [MECH_MULTISIG])
+
+        # changeHash takes (serviceId, bytes32 hash)
+        # The multihash is 34 bytes but the contract expects bytes32 (32 bytes).
+        # Pad/truncate to 32 bytes (drop the first 2 bytes of multihash prefix 0x1220).
+        hash_bytes32 = onchain_hash_bytes[2:]  # strip 0x12 0x20 prefix -> 32 bytes sha256
+        assert len(hash_bytes32) == 32
+
+        tx = metadata_contract.functions.changeHash(
+            MECH_SERVICE_ID,
+            hash_bytes32,
+        ).transact(
+            {
+                "from": MECH_MULTISIG,
+                "gas": 200_000,
+            }
+        )
+        receipt = w3.eth.wait_for_transaction_receipt(tx)
+        assert receipt["status"] == 1, "changeHash tx reverted"
+
+        w3.provider.make_request("anvil_stopImpersonatingAccount", [MECH_MULTISIG])
+
+        # Step 4: Verify the hash was stored
+        print("\n--- Step 4: Verify on-chain ---")
+        uri_after = metadata_contract.functions.tokenURI(MECH_SERVICE_ID).call()
+        print(f"  tokenURI after: {uri_after[:60]}...")
+
+        # The tokenURI should have changed (it encodes the hash)
+        assert uri_after != uri_before, "tokenURI did not change after changeHash"
+        print("  ✓ Metadata hash updated on-chain successfully")
+
+
 # ===================================================================
 # Lifecycle helpers
 # ===================================================================
@@ -924,3 +1165,114 @@ class TestMechLifecycleE2E:
         print(f"  Supply deliveries: {base_deliveries} -> {new_deliveries}")
         print(f"  Mech reward:       +{mech_reward_delta:.4f} OLAS")
         print("=" * 50)
+
+
+class TestOffchainHTTPE2E:
+    """Test the REAL HTTP flow: POST /request → server executes → verify result via API."""
+
+    @pytest.mark.asyncio
+    async def test_http_post_request_and_verify(self, tmp_path):
+        """Submit request via actual HTTP POST, verify execution via GET /status."""
+        import aiohttp
+
+        from micromech.core.config import (
+            IpfsConfig,
+            MicromechConfig,
+            PersistenceConfig,
+            RuntimeConfig,
+        )
+        from micromech.core.constants import STATUS_EXECUTED, STATUS_FAILED
+        from micromech.runtime.server import MechServer
+
+        port = 19876
+        config = MicromechConfig(
+            persistence=PersistenceConfig(db_path=tmp_path / "http_e2e.db"),
+            runtime=RuntimeConfig(
+                port=port,
+                host="127.0.0.1",
+                max_concurrent=5,
+                delivery_interval=1,
+                event_poll_interval=1,
+            ),
+            ipfs=IpfsConfig(enabled=False),
+        )
+
+        server = MechServer(config)
+
+        # Start server WITH HTTP
+        server_task = asyncio.create_task(server.run(with_http=True))
+
+        try:
+            # Wait for HTTP server to be ready
+            base_url = f"http://127.0.0.1:{port}"
+            ready = False
+            for _ in range(20):
+                await asyncio.sleep(0.5)
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(f"{base_url}/health") as resp:
+                            if resp.status == 200:
+                                ready = True
+                                break
+                except Exception:
+                    continue
+
+            assert ready, "HTTP server did not start"
+            print("\n  HTTP server ready")
+
+            # Step 1: Submit requests via HTTP POST
+            request_ids = []
+            async with aiohttp.ClientSession() as session:
+                for i in range(3):
+                    payload = {
+                        "prompt": f"HTTP E2E question {i}",
+                        "tool": "echo",
+                        "request_id": f"http-e2e-{i}",
+                    }
+                    async with session.post(
+                        f"{base_url}/request",
+                        json=payload,
+                    ) as resp:
+                        assert resp.status == 202, f"Request {i} failed: {resp.status}"
+                        data = await resp.json()
+                        request_ids.append(data["request_id"])
+                        print(f"  Submitted: {data['request_id']}")
+
+            assert len(request_ids) == 3
+
+            # Step 2: Wait for execution
+            await asyncio.sleep(2.0)
+
+            # Step 3: Verify via GET /status
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{base_url}/status") as resp:
+                    assert resp.status == 200
+                    status = await resp.json()
+                    print(f"  Status: {status['queue']}")
+
+            # Step 4: Verify each request in DB
+            for rid in request_ids:
+                record = server.queue.get_by_id(rid)
+                assert record is not None, f"Request {rid} not found"
+                assert record.request.status in (STATUS_EXECUTED, STATUS_FAILED)
+                assert record.request.is_offchain is True
+                print(f"  ✓ {rid}: status={record.request.status}")
+
+            # Step 5: Verify counts via GET /status
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{base_url}/status") as resp:
+                    assert resp.status == 200
+                    final_status = await resp.json()
+                    executed = final_status["queue"].get("executed", 0)
+                    failed = final_status["queue"].get("failed", 0)
+                    assert executed + failed >= 3
+
+            print("  ✓ Full HTTP E2E cycle completed")
+
+        finally:
+            server.stop()
+            try:
+                await asyncio.wait_for(server_task, timeout=5.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            server.shutdown()

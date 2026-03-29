@@ -112,6 +112,197 @@ class TestMechLifecycleWithMocks:
         assert status["rewards"] == 1.5
 
 
+class TestCreateMech:
+    """Test create_mech which interacts with the marketplace contract."""
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_create_mech_success(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.service.service_id = 42
+        mock_mgr.service.owner_address = "0x" + "aa" * 20
+
+        # Mock web3 + contract
+        mock_web3 = MagicMock()
+        mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
+
+        tx_hash = b"\xde\xad" + b"\x00" * 30
+        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = (
+            tx_hash
+        )
+        # Receipt with log containing mech address
+        mech_addr_hex = "cd" * 20
+        mock_web3.eth.wait_for_transaction_receipt.return_value = {
+            "status": 1,
+            "logs": [
+                {
+                    "topics": [
+                        bytes(32),
+                        bytes.fromhex("00" * 12 + mech_addr_hex),
+                    ],
+                }
+            ],
+        }
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.create_mech("svc-1")
+        assert result is not None
+        assert mech_addr_hex in result
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_create_mech_no_service_id(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.service.service_id = None
+        mock_web3 = MagicMock()
+        mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.create_mech("svc-1")
+        assert result is None
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_create_mech_tx_reverted(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.service.service_id = 42
+        mock_mgr.service.owner_address = "0x" + "aa" * 20
+        mock_web3 = MagicMock()
+        mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_web3.eth.wait_for_transaction_receipt.return_value = {"status": 0}
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.create_mech("svc-1")
+        assert result is None
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_create_mech_no_logs(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.service.service_id = 42
+        mock_mgr.service.owner_address = "0x" + "aa" * 20
+        mock_web3 = MagicMock()
+        mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_web3.eth.wait_for_transaction_receipt.return_value = {
+            "status": 1,
+            "logs": [],
+        }
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.create_mech("svc-1")
+        assert result is None
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_create_mech_exception(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.wallet.chain_interfaces.get.side_effect = RuntimeError("rpc error")
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.create_mech("svc-1")
+        assert result is None
+
+
+class TestUpdateMetadataOnchain:
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_update_metadata_success(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.service.service_id = 42
+        mock_mgr.service.multisig_address = "0x" + "bb" * 20
+        mock_web3 = MagicMock()
+        mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_mgr.wallet.safe_service.execute_safe_transaction.return_value = "0xtxhash"
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.update_metadata_onchain("svc-1", "0x" + "12" * 34)
+        assert result == "0xtxhash"
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_update_metadata_no_service_id(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.service.service_id = None
+        mock_web3 = MagicMock()
+        mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.update_metadata_onchain("svc-1", "0x1234")
+        assert result is None
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_update_metadata_unknown_chain(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_get_mgr.return_value = mock_mgr
+
+        cfg = MicromechConfig(mech={"chain": "unknown_chain"})
+        lc = MechLifecycle(cfg)
+        result = lc.update_metadata_onchain("svc-1", "0x1234")
+        assert result is None
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_update_metadata_exception(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.wallet.chain_interfaces.get.side_effect = RuntimeError("fail")
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.update_metadata_onchain("svc-1", "0x1234")
+        assert result is None
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_update_metadata_hash_without_0x(self, mock_get_mgr):
+        """Metadata hash without 0x prefix is handled."""
+        mock_mgr = MagicMock()
+        mock_mgr.service.service_id = 42
+        mock_mgr.service.multisig_address = "0x" + "bb" * 20
+        mock_web3 = MagicMock()
+        mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_mgr.wallet.safe_service.execute_safe_transaction.return_value = "0xtxhash"
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.update_metadata_onchain("svc-1", "12" * 34)
+        assert result == "0xtxhash"
+
+
+class TestGetServiceManager:
+    def test_raises_import_error_without_iwa(self):
+        """_get_service_manager raises ImportError when iwa is not available."""
+
+        with patch.dict(
+            "sys.modules", {"iwa.core.wallet": None, "iwa.plugins.olas.service_manager": None}
+        ):
+            with patch("micromech.management.lifecycle._get_service_manager") as mock_fn:
+                mock_fn.side_effect = ImportError("iwa is required")
+                import pytest as pt
+
+                with pt.raises(ImportError, match="iwa is required"):
+                    mock_fn(MicromechConfig())
+
+
+class TestGetStatusEdgeCases:
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_get_status_not_staked(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.get_staking_status.return_value = None
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        status = lc.get_status("svc-1")
+        assert status == {"status": "not_staked"}
+
+    @patch("micromech.management.lifecycle._get_service_manager")
+    def test_get_status_failure(self, mock_get_mgr):
+        mock_mgr = MagicMock()
+        mock_mgr.get_staking_status.side_effect = RuntimeError("rpc error")
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(MicromechConfig())
+        result = lc.get_status("svc-1")
+        assert result is None
+
+
 class TestMechLifecycleErrorHandling:
     """Test that failures return None/False instead of crashing."""
 

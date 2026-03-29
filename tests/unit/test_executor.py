@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -123,3 +124,74 @@ class TestToolExecutor:
         queue.add_request(req)
         await executor.execute(req)
         assert executor.active_count == 0
+
+    @pytest.mark.asyncio
+    async def test_mark_executing_failure(self, executor: ToolExecutor, queue: PersistentQueue):
+        """When mark_executing fails, returns error result without crashing."""
+        req = MechRequest(request_id="r1", prompt="hello", tool="echo")
+        queue.add_request(req)
+
+        # Make mark_executing raise
+        original = queue.mark_executing
+        queue.mark_executing = MagicMock(side_effect=RuntimeError("db locked"))
+
+        result = await executor.execute(req)
+        assert not result.success
+        assert "db locked" in result.error
+        assert executor.active_count == 0
+
+        queue.mark_executing = original
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_handler(self, queue: PersistentQueue, registry: ToolRegistry):
+        """Generic exception (not ToolExecutionError) is caught and persisted."""
+        executor = ToolExecutor(registry=registry, queue=queue, max_concurrent=5)
+
+        req = MechRequest(request_id="r1", prompt="test", tool="echo")
+        queue.add_request(req)
+
+        # Patch the tool's execute_with_timeout to raise a raw Exception
+        tool = registry.get("echo")
+        original_exec = tool.execute_with_timeout
+
+        async def raise_generic(*args, **kwargs):
+            raise RuntimeError("unexpected crash")
+
+        tool.execute_with_timeout = raise_generic
+        result = await executor.execute(req)
+        assert not result.success
+        assert "unexpected crash" in result.error
+        assert executor.active_count == 0
+
+        tool.execute_with_timeout = original_exec
+
+    @pytest.mark.asyncio
+    async def test_generic_exception_with_persist_failure(
+        self, queue: PersistentQueue, registry: ToolRegistry
+    ):
+        """When generic exception occurs AND mark_executed also fails, still returns result."""
+        executor = ToolExecutor(registry=registry, queue=queue, max_concurrent=5)
+
+        req = MechRequest(request_id="r1", prompt="test", tool="echo")
+        queue.add_request(req)
+
+        # Make tool raise a generic exception
+        tool = registry.get("echo")
+        original_exec = tool.execute_with_timeout
+
+        async def raise_generic(*args, **kwargs):
+            raise RuntimeError("tool crash")
+
+        tool.execute_with_timeout = raise_generic
+
+        # Also make mark_executed fail
+        original_mark = queue.mark_executed
+        queue.mark_executed = MagicMock(side_effect=RuntimeError("db locked"))
+
+        result = await executor.execute(req)
+        assert not result.success
+        assert "tool crash" in result.error
+        assert executor.active_count == 0
+
+        tool.execute_with_timeout = original_exec
+        queue.mark_executed = original_mark

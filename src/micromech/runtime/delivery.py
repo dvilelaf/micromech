@@ -140,7 +140,9 @@ class DeliveryManager:
         back to signed transaction via iwa wallet for real deployments.
         """
         mech_contract = self._get_mech_contract()
-        from_addr = self.bridge.web3.to_checksum_address(self.config.mech.mech_address)
+        # deliverToMarketplace must be called from the service multisig
+        sender = self.config.mech.multisig_address or self.config.mech.mech_address
+        from_addr = self.bridge.web3.to_checksum_address(sender)
 
         # Convert request_id to bytes32
         if request_id.startswith("0x"):

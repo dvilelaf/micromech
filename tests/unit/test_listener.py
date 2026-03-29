@@ -1,8 +1,9 @@
 """Tests for the event listener."""
 
 import asyncio
+import hashlib
 import json
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -250,3 +251,198 @@ class TestRunLoop:
         listener._running = True
         listener.stop()
         assert listener._running is False
+
+    @pytest.mark.asyncio
+    async def test_run_handles_callback_error(self):
+        """Callback errors don't crash the loop but prevent block advance."""
+        config = MicromechConfig(runtime=RuntimeConfig(event_poll_interval=1))
+        listener = EventListener(config, bridge=None)
+        advanced_after_error = None
+
+        async def failing_callback(req):
+            raise RuntimeError("callback boom")
+
+        call_count = 0
+
+        async def mock_poll():
+            nonlocal call_count, advanced_after_error
+            call_count += 1
+            if call_count == 1:
+                req = MechRequest(request_id="r1", prompt="test", tool="echo")
+                listener._polled_to_block = 200
+                return [req]
+            # Capture whether block was advanced after the first (failed) iteration
+            advanced_after_error = listener._last_block
+            listener.stop()
+            return []
+
+        listener.poll_once = mock_poll
+        await asyncio.wait_for(listener.run(failing_callback), timeout=5.0)
+        # Block should NOT have advanced after the failed callback iteration
+        assert advanced_after_error is None
+
+
+class TestResolveRequest:
+    """Test _resolve_request with IPFS multihash data."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_ipfs_multihash(self):
+        """Requests with IPFS multihash data get resolved via IPFS."""
+        config = MicromechConfig(ipfs={"enabled": True})
+        listener = EventListener(config)
+
+        # Build a valid 34-byte multihash (0x12 0x20 + 32-byte sha256)
+        digest = hashlib.sha256(b"test payload").digest()
+        multihash_data = bytes([0x12, 0x20]) + digest
+
+        req = MechRequest(
+            request_id="r1",
+            data=multihash_data,
+            prompt="",  # Empty — needs IPFS resolution
+            tool="",
+        )
+
+        ipfs_payload = {"prompt": "Will ETH hit 10k?", "tool": "llm", "nonce": 42}
+        with patch(
+            "micromech.ipfs.client.fetch_json_from_ipfs",
+            new_callable=AsyncMock,
+        ) as mock_fetch:
+            mock_fetch.return_value = ipfs_payload
+            resolved = await listener._resolve_request(req)
+
+        assert resolved.prompt == "Will ETH hit 10k?"
+        assert resolved.tool == "llm"
+        assert resolved.extra_params == {"nonce": 42}
+        assert resolved.request_id == "r1"
+
+    @pytest.mark.asyncio
+    async def test_resolve_skips_when_prompt_present(self):
+        """If prompt is already set, IPFS resolution is skipped."""
+        config = MicromechConfig(ipfs={"enabled": True})
+        listener = EventListener(config)
+
+        req = MechRequest(
+            request_id="r1",
+            data=b"\x12\x20" + b"\x00" * 32,
+            prompt="already set",
+            tool="echo",
+        )
+
+        resolved = await listener._resolve_request(req)
+        assert resolved.prompt == "already set"
+
+    @pytest.mark.asyncio
+    async def test_resolve_skips_when_ipfs_disabled(self):
+        """With IPFS disabled, multihash data is not resolved."""
+        config = MicromechConfig(ipfs={"enabled": False})
+        listener = EventListener(config)
+
+        digest = hashlib.sha256(b"test").digest()
+        req = MechRequest(
+            request_id="r1",
+            data=bytes([0x12, 0x20]) + digest,
+            prompt="",
+            tool="",
+        )
+
+        resolved = await listener._resolve_request(req)
+        assert resolved.prompt == ""  # Not resolved
+
+    @pytest.mark.asyncio
+    async def test_resolve_handles_ipfs_error(self):
+        """IPFS fetch failure returns original request."""
+        config = MicromechConfig(ipfs={"enabled": True})
+        listener = EventListener(config)
+
+        digest = hashlib.sha256(b"test").digest()
+        req = MechRequest(
+            request_id="r1",
+            data=bytes([0x12, 0x20]) + digest,
+            prompt="",
+            tool="",
+        )
+
+        with patch(
+            "micromech.ipfs.client.fetch_json_from_ipfs",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("gateway timeout"),
+        ):
+            resolved = await listener._resolve_request(req)
+
+        assert resolved is req  # Returns original
+
+    @pytest.mark.asyncio
+    async def test_resolve_non_multihash_data(self):
+        """Non-multihash binary data is returned as-is."""
+        config = MicromechConfig(ipfs={"enabled": True})
+        listener = EventListener(config)
+
+        req = MechRequest(
+            request_id="r1",
+            data=b"not a multihash",
+            prompt="",
+            tool="",
+        )
+
+        resolved = await listener._resolve_request(req)
+        assert resolved is req
+
+
+class TestGetMarketplaceContract:
+    def test_lazy_loads_contract(self):
+        config = MicromechConfig(
+            mech={"mech_address": MECH_ADDR},
+        )
+        bridge = MagicMock()
+        mock_contract = MagicMock()
+        bridge.web3.eth.contract.return_value = mock_contract
+
+        listener = EventListener(config, bridge=bridge)
+        contract = listener._get_marketplace_contract()
+        assert contract is mock_contract
+
+        # Second call returns cached
+        contract2 = listener._get_marketplace_contract()
+        assert contract2 is mock_contract
+        bridge.web3.eth.contract.assert_called_once()
+
+
+class TestParseMarketplaceEventEdgeCases:
+    def test_string_request_data(self):
+        """String request data is converted to bytes."""
+        listener = EventListener(MicromechConfig())
+        data_str = json.dumps({"prompt": "hello", "tool": "echo"})
+        event = _make_event(
+            MECH_ADDR,
+            request_datas=[data_str],
+        )
+        reqs = listener._parse_marketplace_event(event, None)
+        assert len(reqs) == 1
+        assert reqs[0].prompt == "hello"
+
+    def test_string_request_id(self):
+        """String request IDs (not bytes) are handled."""
+        listener = EventListener(MicromechConfig())
+        event = {
+            "args": {
+                "priorityMech": MECH_ADDR,
+                "requestIds": ["abc123"],
+                "requestDatas": [b""],
+            },
+        }
+        reqs = listener._parse_marketplace_event(event, None)
+        assert len(reqs) == 1
+        assert reqs[0].request_id == "abc123"
+
+    def test_missing_request_data(self):
+        """When requestDatas is shorter than requestIds, empty data is used."""
+        listener = EventListener(MicromechConfig())
+        event = _make_event(
+            MECH_ADDR,
+            request_ids=[b"\x01" * 32, b"\x02" * 32],
+            request_datas=[json.dumps({"prompt": "q1"}).encode()],
+        )
+        reqs = listener._parse_marketplace_event(event, None)
+        assert len(reqs) == 2
+        assert reqs[0].prompt == "q1"
+        assert reqs[1].prompt == ""  # Missing data -> empty
