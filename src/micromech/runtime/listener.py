@@ -13,14 +13,12 @@ from loguru import logger
 from micromech.core.config import MicromechConfig
 from micromech.core.models import MechRequest
 
-# MechMarketplace Request event signature
-_REQUEST_EVENT_SIG = "Request(address,bytes32,bytes)"
-
 
 class EventListener:
     """Polls on-chain MechRequest events from the marketplace contract.
 
-    Requires iwa for chain access. Falls back to no-op if iwa is unavailable.
+    Requires iwa bridge (or raw web3) for chain access.
+    Falls back to no-op if no bridge is available.
     """
 
     def __init__(self, config: MicromechConfig, bridge: Optional[Any] = None):
@@ -29,14 +27,20 @@ class EventListener:
         self._last_block: Optional[int] = None
         self._polled_to_block: Optional[int] = None
         self._running = False
-        self._request_topic: Optional[bytes] = None
+        self._marketplace_contract: Optional[Any] = None
 
-    def _get_request_topic(self) -> bytes:
-        """Cache keccak hash of event signature."""
-        if self._request_topic is None:
+    def _get_marketplace_contract(self) -> Any:
+        """Lazy-load the marketplace contract for event filtering."""
+        if self._marketplace_contract is None:
             web3 = self.bridge.web3
-            self._request_topic = web3.keccak(text=_REQUEST_EVENT_SIG)
-        return self._request_topic
+            from micromech.runtime.contracts import load_marketplace_abi
+
+            abi = load_marketplace_abi()
+            self._marketplace_contract = web3.eth.contract(
+                address=web3.to_checksum_address(self.config.mech.marketplace_address),
+                abi=abi,
+            )
+        return self._marketplace_contract
 
     async def poll_once(self) -> list[MechRequest]:
         """Poll for new requests since last block. Returns new requests.
@@ -62,7 +66,6 @@ class EventListener:
 
             requests = await asyncio.to_thread(self._fetch_events, from_block, to_block)
 
-            # Store what we polled up to — caller advances after processing
             self._polled_to_block = to_block
 
             if requests:
@@ -89,71 +92,74 @@ class EventListener:
 
     def _fetch_events(self, from_block: int, to_block: int) -> list[MechRequest]:
         """Fetch Request events from marketplace contract (sync, runs in thread)."""
-        web3 = self.bridge.web3
-        marketplace_addr = self.config.mech.marketplace_address
         mech_addr = self.config.mech.mech_address
-        request_topic = self._get_request_topic()
 
         try:
-            logs = self.bridge.with_retry(
-                lambda: web3.eth.get_logs(
-                    {
-                        "fromBlock": from_block,
-                        "toBlock": to_block,
-                        "address": marketplace_addr,
-                        "topics": ["0x" + request_topic.hex()],
-                    }
-                )
+            contract = self._get_marketplace_contract()
+            event_filter = contract.events.MarketplaceRequest.create_filter(
+                from_block=from_block,
+                to_block=to_block,
             )
+            logs = self.bridge.with_retry(lambda: event_filter.get_all_entries())
         except Exception as e:
-            logger.error("Failed to fetch logs: {}", e)
+            logger.error("Failed to fetch events: {}", e)
             return []
 
         requests = []
         for log in logs:
             try:
-                req = self._parse_log(log, mech_addr)
-                if req:
-                    requests.append(req)
+                parsed = self._parse_marketplace_event(log, mech_addr)
+                requests.extend(parsed)
             except Exception as e:
-                logger.warning("Failed to parse log: {}", e)
+                logger.warning("Failed to parse event: {}", e)
 
         return requests
 
-    def _parse_log(self, log: Any, mech_addr: Optional[str]) -> Optional[MechRequest]:
-        """Parse a raw log into a MechRequest."""
-        topics = log.get("topics", [])
-        if len(topics) < 2:
-            return None
+    def _parse_marketplace_event(self, event: Any, mech_addr: Optional[str]) -> list[MechRequest]:
+        """Parse a MarketplaceRequest event into MechRequest(s).
 
-        # topics[1] = indexed mech address (padded to 32 bytes)
-        log_mech = "0x" + topics[1].hex()[-40:]
+        MarketplaceRequest has arrays: requestIds[] and requestDatas[].
+        priorityMech is the indexed mech address.
+        """
+        args = event.get("args", {})
+        priority_mech = str(args.get("priorityMech", ""))
 
         # Filter: only process requests for our mech
-        if mech_addr and log_mech.lower() != mech_addr.lower():
-            return None
+        if mech_addr and priority_mech.lower() != mech_addr.lower():
+            return []
 
-        # topics[2] = requestId (bytes32)
-        request_id = topics[2].hex() if len(topics) > 2 else log["transactionHash"].hex()
+        request_ids = args.get("requestIds", [])
+        request_datas = args.get("requestDatas", [])
 
-        data = bytes(log.get("data", b""))
-        prompt, tool, extra = self._parse_request_data(data)
+        results = []
+        for i, rid in enumerate(request_ids):
+            if isinstance(rid, bytes):
+                rid_hex = rid.hex()
+            else:
+                rid_hex = str(rid)
 
-        # Note: topics[1] is the mech, not the requester.
-        # Requester address would need to be extracted from the transaction.
-        return MechRequest(
-            request_id=request_id,
-            data=data,
-            prompt=prompt,
-            tool=tool,
-            extra_params=extra,
-        )
+            data = request_datas[i] if i < len(request_datas) else b""
+            if isinstance(data, str):
+                data = data.encode()
+
+            prompt, tool, extra = self._parse_request_data(data)
+            results.append(
+                MechRequest(
+                    request_id=rid_hex,
+                    data=data,
+                    prompt=prompt,
+                    tool=tool,
+                    extra_params=extra,
+                )
+            )
+
+        return results
 
     @staticmethod
     def _parse_request_data(data: bytes) -> tuple[str, str, dict]:
         """Extract prompt, tool, and params from request data.
 
-        Request data is typically an IPFS CID pointing to a JSON payload:
+        Request data is typically a JSON payload:
         {"prompt": "...", "tool": "...", "nonce": ...}
         """
         prompt = ""
@@ -195,7 +201,6 @@ class EventListener:
                     logger.error("Callback failed for {}: {}", req.request_id, e)
                     all_ok = False
 
-            # Only advance block pointer if all callbacks succeeded
             if all_ok:
                 self.advance_block()
 

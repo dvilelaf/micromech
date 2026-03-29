@@ -1,6 +1,7 @@
 """Delivery manager — submits tool results on-chain.
 
-Batch-delivers executed responses via deliverToMarketplace().
+Calls deliverToMarketplace(requestIds[], datas[]) on the mech contract
+via the mech service's Safe multisig.
 """
 
 import asyncio
@@ -32,10 +33,29 @@ class DeliveryManager:
         self.bridge = bridge
         self._running = False
         self._delivered_count = 0
+        self._mech_contract: Optional[Any] = None
 
     @property
     def delivered_count(self) -> int:
         return self._delivered_count
+
+    def _get_mech_contract(self) -> Any:
+        """Lazy-load the mech contract instance."""
+        if self._mech_contract is None:
+            mech_addr = self.config.mech.mech_address
+            if not mech_addr:
+                msg = "mech_address not configured"
+                raise ValueError(msg)
+
+            web3 = self.bridge.web3
+            from micromech.runtime.contracts import load_mech_abi
+
+            abi = load_mech_abi()
+            self._mech_contract = web3.eth.contract(
+                address=web3.to_checksum_address(mech_addr),
+                abi=abi,
+            )
+        return self._mech_contract
 
     async def deliver_batch(self) -> int:
         """Deliver a batch of undelivered responses. Returns count delivered."""
@@ -79,24 +99,64 @@ class DeliveryManager:
             return None
 
         result_data = record.result.output.encode("utf-8")
+        request_id = record.request.request_id
 
-        tx_hash = await asyncio.to_thread(
-            self._submit_delivery,
-            record.request.request_id,
-            result_data,
-        )
+        tx_hash = await asyncio.to_thread(self._submit_delivery, request_id, result_data)
         return tx_hash
 
     def _submit_delivery(self, request_id: str, data: bytes) -> str:
-        """Submit delivery transaction on-chain (sync, runs in thread).
+        """Submit deliverToMarketplace transaction on-chain (sync, runs in thread).
 
-        TODO: Implement actual on-chain delivery via iwa.
-        Currently raises NotImplementedError — callers must handle.
+        Calls mech.deliverToMarketplace([requestId], [data]) via direct transaction.
+        In production with Safe, this would go through iwa's Safe service.
         """
-        raise NotImplementedError(
-            "On-chain delivery not yet implemented. "
-            "Requires mech contract ABI and Safe transaction flow."
+        mech_contract = self._get_mech_contract()
+
+        # Convert request_id to bytes32
+        if request_id.startswith("0x"):
+            req_id_bytes = bytes.fromhex(request_id[2:])
+        else:
+            req_id_bytes = bytes.fromhex(request_id)
+        req_id_bytes = req_id_bytes.ljust(32, b"\x00")[:32]
+
+        # Build transaction
+        tx = mech_contract.functions.deliverToMarketplace(
+            [req_id_bytes],
+            [data],
+        ).build_transaction(
+            {
+                "from": self.bridge.web3.to_checksum_address(self.config.mech.mech_address),
+                "gas": 500_000,
+                "gasPrice": self.bridge.web3.eth.gas_price,
+                "nonce": self.bridge.web3.eth.get_transaction_count(
+                    self.bridge.web3.to_checksum_address(self.config.mech.mech_address)
+                ),
+            }
         )
+
+        # Send via iwa wallet or directly
+        signed = self.bridge.web3.eth.account.sign_transaction(
+            tx, private_key=self._get_signer_key()
+        )
+        tx_hash = self.bridge.web3.eth.send_raw_transaction(signed.raw_transaction)
+        receipt = self.bridge.web3.eth.wait_for_transaction_receipt(tx_hash)
+
+        if receipt["status"] != 1:
+            msg = f"Delivery transaction reverted: {tx_hash.hex()}"
+            raise RuntimeError(msg)
+
+        return tx_hash.hex()
+
+    def _get_signer_key(self) -> str:
+        """Get the private key for signing delivery transactions."""
+        # Use iwa wallet to get the key for the mech account
+        account_tag = self.config.mech.account_tag
+        try:
+            account = self.bridge.wallet.account_service.resolve_account(account_tag)
+            return account.key.hex()
+        except Exception:
+            msg = f"Cannot resolve signer key for account tag '{account_tag}'"
+            raise ValueError(msg)
 
     async def run(self) -> None:
         """Run the delivery loop."""

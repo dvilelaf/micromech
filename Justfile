@@ -29,6 +29,23 @@ test-unit:
 test-integration:
     uv run pytest tests/integration/ -v -s
 
+# Run Anvil E2E test (requires Anvil fork running on port 18545)
+test-anvil:
+    #!/usr/bin/env bash
+    set -e
+    RPC_URL=$(grep -m1 'gnosis_rpc=' /media/david/DATA/repos/triton/secrets.env | cut -d= -f2 | cut -d, -f1)
+    if [ -z "$RPC_URL" ]; then
+        echo "No gnosis_rpc found"
+        exit 1
+    fi
+    ~/.foundry/bin/anvil --fork-url "$RPC_URL" --port 18545 --auto-impersonate --silent &
+    ANVIL_PID=$!
+    trap "kill $ANVIL_PID 2>/dev/null" EXIT
+    sleep 3
+    echo "Anvil running (PID $ANVIL_PID)"
+    ANVIL_URL=http://localhost:18545 uv run pytest tests/integration/test_anvil_e2e.py -v -s
+    echo "Anvil E2E tests passed"
+
 # Build package
 build:
     uv build

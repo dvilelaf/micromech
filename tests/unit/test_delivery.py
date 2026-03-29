@@ -65,7 +65,8 @@ class TestDeliveryWithBridge:
 
         record = queue.get_by_id("r1")
         assert record.request.status == "failed"
-        assert "not yet implemented" in record.request.error.lower()
+        assert "failed" == record.request.status
+        assert record.request.error is not None
 
 
 class TestDeliveryWithBridgeMultiple:
