@@ -71,7 +71,7 @@ def create_web_app(
     async def management_action(action: str, body: dict = {}) -> dict:
         """Execute a management action (stake, unstake, claim, checkpoint)."""
         try:
-            from micromech.management.lifecycle import MechLifecycle
+            from micromech.management import MechLifecycle
 
             config = MicromechConfig.load()
             lc = MechLifecycle(config)

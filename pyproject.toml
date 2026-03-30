@@ -23,7 +23,6 @@ dependencies = [
     "loguru>=0.7.0",
     "pyyaml>=6.0.3",
     "aiohttp>=3.9.0",
-    "multiformats>=0.3.0",
 ]
 
 [project.urls]

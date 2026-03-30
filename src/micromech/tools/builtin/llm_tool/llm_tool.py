@@ -11,35 +11,31 @@ from typing import Any, Optional
 
 from loguru import logger
 
-try:
-    from huggingface_hub import hf_hub_download
-    from llama_cpp import Llama
-except ImportError as e:
-    raise ImportError(
-        "LLM tool requires llama-cpp-python and huggingface-hub. "
-        "Install with: pip install micromech[llm]"
-    ) from e
+from micromech.core.constants import (
+    DEFAULT_LLM_CONTEXT_SIZE,
+    DEFAULT_LLM_FILE,
+    DEFAULT_LLM_MAX_TOKENS,
+    DEFAULT_LLM_MODEL,
+)
 
 ALLOWED_TOOLS = ["llm"]
 
-DEFAULT_MODEL_REPO = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
-DEFAULT_MODEL_FILE = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
-DEFAULT_MAX_TOKENS = 256
-DEFAULT_CONTEXT_SIZE = 2048
-
-_llm_instance: Optional[Llama] = None
+_llm_instance: Optional[Any] = None
 _llm_lock = threading.Lock()
 
 
 def _get_llm(
-    model_repo: str = DEFAULT_MODEL_REPO,
-    model_file: str = DEFAULT_MODEL_FILE,
-) -> Llama:
+    model_repo: str = DEFAULT_LLM_MODEL,
+    model_file: str = DEFAULT_LLM_FILE,
+) -> Any:
     """Get or create the singleton LLM instance (thread-safe)."""
     global _llm_instance
     if _llm_instance is None:
         with _llm_lock:
             if _llm_instance is None:
+                from huggingface_hub import hf_hub_download
+                from llama_cpp import Llama
+
                 models_dir = Path.home() / ".micromech" / "models"
                 models_dir.mkdir(parents=True, exist_ok=True)
                 model_path = models_dir / model_file
@@ -53,7 +49,7 @@ def _get_llm(
                 logger.info("Loading LLM from {}", model_path)
                 _llm_instance = Llama(
                     model_path=str(model_path),
-                    n_ctx=DEFAULT_CONTEXT_SIZE,
+                    n_ctx=DEFAULT_LLM_CONTEXT_SIZE,
                     n_threads=4,
                     verbose=False,
                 )
@@ -72,7 +68,7 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
     """
     prompt = kwargs.get("prompt", "")
     system_prompt = kwargs.get("system_prompt", "You are a helpful assistant.")
-    max_tokens = kwargs.get("max_tokens", DEFAULT_MAX_TOKENS)
+    max_tokens = kwargs.get("max_tokens", DEFAULT_LLM_MAX_TOKENS)
     temperature = kwargs.get("temperature", 0.3)
     counter_callback = kwargs.get("counter_callback")
 
@@ -93,7 +89,7 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
     result = json.dumps(
         {
             "result": content,
-            "model": DEFAULT_MODEL_REPO,
+            "model": DEFAULT_LLM_MODEL,
             "tokens": usage.get("total_tokens", 0),
         }
     )

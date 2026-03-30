@@ -87,7 +87,3 @@ class Tool:
             )
         except asyncio.TimeoutError:
             raise ToolExecutionError(self.metadata.id, f"Timed out after {self.metadata.timeout}s")
-
-    def run(self, **kwargs: Any) -> MechResponse:
-        """Direct Valory-compatible call."""
-        return self._run_fn(**kwargs)

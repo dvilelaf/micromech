@@ -1,7 +1,6 @@
 """Tool registry: discover, load, and manage tools."""
 
 import importlib
-from typing import Optional
 
 from loguru import logger
 
@@ -37,10 +36,6 @@ class ToolRegistry:
         if tool is None:
             raise ToolNotFoundError(tool_id)
         return tool
-
-    def get_optional(self, tool_id: str) -> Optional[Tool]:
-        """Get a registered tool by ID, or None."""
-        return self._tools.get(tool_id)
 
     def list_tools(self) -> list[Tool]:
         """List all registered tools."""

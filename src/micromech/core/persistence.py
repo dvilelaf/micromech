@@ -1,7 +1,7 @@
 """Persistent request queue backed by SQLite via Peewee.
 
-Guarantees: no lost requests across restarts. Uses WAL mode with synchronous=FULL
-for crash safety and concurrent read access.
+Guarantees: no lost requests across restarts. Uses WAL mode with synchronous=NORMAL
+for crash safety (WAL+NORMAL protects against process crashes) and concurrent read access.
 """
 
 import json
@@ -54,6 +54,7 @@ class RequestRow(pw.Model):
 
     class Meta:
         table_name = "requests"
+        indexes = ((("status", "created_at"), False),)
 
 
 class PersistentQueue:
@@ -71,7 +72,7 @@ class PersistentQueue:
             pragmas={
                 "journal_mode": "wal",
                 "cache_size": -64 * 1024,  # 64MB
-                "synchronous": "full",
+                "synchronous": "normal",
             },
         )
         RequestRow.bind(self._db)

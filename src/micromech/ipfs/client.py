@@ -5,18 +5,21 @@ Pull uses any public IPFS gateway (read-only HTTP GET).
 CID computation is pure (no network needed).
 """
 
+import base64
 import hashlib
 import json
 from typing import Any, Optional
 
 import aiohttp
 from loguru import logger
-from multiformats import CID
 
 from micromech.core.constants import IPFS_GATEWAY
 
 # Multihash prefix for sha2-256: function code (0x12) + digest length (0x20)
 _SHA256_MULTIHASH_PREFIX = bytes([0x12, 0x20])
+
+# CIDv1 prefix: version(1) + codec(raw=0x55) + multihash(sha256=0x12, len=0x20)
+_CIDV1_RAW_SHA256_PREFIX = bytes([0x01, 0x55, 0x12, 0x20])
 
 
 def compute_cid(data: bytes) -> str:
@@ -25,8 +28,9 @@ def compute_cid(data: bytes) -> str:
     Returns a bafkrei... CID (raw codec, sha2-256).
     """
     digest = hashlib.sha256(data).digest()
-    cid = CID("base32", 1, "raw", ("sha2-256", digest))
-    return str(cid)
+    cid_bytes = _CIDV1_RAW_SHA256_PREFIX + digest
+    b32 = base64.b32encode(cid_bytes).decode().lower().rstrip("=")
+    return "b" + b32
 
 
 def compute_cid_hex(data: bytes) -> str:
@@ -35,8 +39,8 @@ def compute_cid_hex(data: bytes) -> str:
     This is the format used internally by iwa and the OLAS contracts.
     """
     digest = hashlib.sha256(data).digest()
-    cid = CID("base16", 1, "raw", ("sha2-256", digest))
-    return str(cid)
+    cid_bytes = _CIDV1_RAW_SHA256_PREFIX + digest
+    return "f" + cid_bytes.hex()
 
 
 def cid_hex_to_multihash_bytes(cid_hex: str) -> bytes:
@@ -65,8 +69,9 @@ def multihash_to_cid(data: bytes) -> str:
         msg = f"Invalid multihash: expected 34 bytes starting with 0x1220, got {len(data)} bytes"
         raise ValueError(msg)
     digest = data[2:34]
-    cid = CID("base32", 1, "raw", ("sha2-256", digest))
-    return str(cid)
+    cid_bytes = _CIDV1_RAW_SHA256_PREFIX + digest
+    b32 = base64.b32encode(cid_bytes).decode().lower().rstrip("=")
+    return "b" + b32
 
 
 async def fetch_from_ipfs(

@@ -20,7 +20,7 @@ except ImportError as e:
         "HTTP server requires fastapi. Install with: pip install micromech[web]"
     ) from e
 
-from micromech.core.constants import ETH_ADDRESS_RE
+from micromech.core.constants import validate_eth_address
 from micromech.core.models import MechRequest
 
 MAX_PROMPT_LENGTH = 10_000
@@ -77,7 +77,10 @@ def create_app(
         request_id = payload.request_id or f"http-{uuid.uuid4().hex[:12]}"
         sender = payload.sender or ""
 
-        if sender and not ETH_ADDRESS_RE.match(sender):
+        try:
+            if sender:
+                validate_eth_address(sender)
+        except ValueError:
             raise HTTPException(status_code=400, detail="Invalid sender address")
 
         req = MechRequest(

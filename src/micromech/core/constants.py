@@ -1,10 +1,21 @@
 """Default constants for micromech."""
 
 import re
-from typing import Final
+from typing import Final, Optional
 
 # Ethereum address validation
 ETH_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+
+
+def validate_eth_address(v: Optional[str]) -> Optional[str]:
+    """Validate an Ethereum address. Returns the value or raises ValueError."""
+    if v is None:
+        return v
+    if not ETH_ADDRESS_RE.match(v):
+        msg = f"Invalid Ethereum address: {v}"
+        raise ValueError(msg)
+    return v
+
 
 # Gnosis chain defaults
 DEFAULT_CHAIN = "gnosis"

@@ -1927,7 +1927,6 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "loguru" },
-    { name = "multiformats" },
     { name = "peewee" },
     { name = "pydantic" },
     { name = "pyyaml" },
@@ -1966,7 +1965,6 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.0" },
     { name = "llama-cpp-python", marker = "extra == 'llm'", specifier = ">=0.2.0" },
     { name = "loguru", specifier = ">=0.7.0" },
-    { name = "multiformats", specifier = ">=0.3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.0.0" },
     { name = "peewee", specifier = ">=3.17.0" },
     { name = "pydantic", specifier = ">=2.0.0" },

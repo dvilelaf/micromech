@@ -6,13 +6,34 @@ via the mech service's Safe multisig.
 
 import asyncio
 import json
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from loguru import logger
 
 from micromech.core.config import MicromechConfig
 from micromech.core.models import RequestRecord
 from micromech.core.persistence import PersistentQueue
+
+
+def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
+    """Wait for transaction receipt and return hex hash. Raises on revert."""
+    receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
+    if receipt["status"] != 1:
+        msg = f"{error_prefix} transaction reverted: {tx_hash.hex()}"
+        raise RuntimeError(msg)
+    return tx_hash.hex()
+
+
+def _try_submit(
+    impersonated_fn: Callable[[], str],
+    signed_fn: Callable[[], str],
+) -> str:
+    """Try impersonation first (Anvil), fall back to signed transaction."""
+    try:
+        return impersonated_fn()
+    except Exception as imp_err:
+        logger.debug("Impersonation failed ({}), trying signed tx", imp_err)
+    return signed_fn()
 
 
 class DeliveryManager:
@@ -155,15 +176,10 @@ class DeliveryManager:
             req_id_bytes = bytes.fromhex(request_id)
         req_id_bytes = req_id_bytes.ljust(32, b"\x00")[:32]
 
-        # Try impersonation first (works on Anvil with --auto-impersonate)
-        try:
-            tx_hash = self._submit_impersonated(mech_contract, from_addr, req_id_bytes, data)
-            return tx_hash
-        except Exception as imp_err:
-            logger.debug("Impersonation failed ({}), trying signed tx", imp_err)
-
-        # Fall back to signed transaction via iwa wallet
-        return self._submit_signed(mech_contract, from_addr, req_id_bytes, data)
+        return _try_submit(
+            lambda: self._submit_impersonated(mech_contract, from_addr, req_id_bytes, data),
+            lambda: self._submit_signed(mech_contract, from_addr, req_id_bytes, data),
+        )
 
     def _submit_offchain_delivery(self, record: RequestRecord, delivery_data: bytes) -> str:
         """Submit deliverMarketplaceWithSignatures for off-chain (HTTP) requests.
@@ -195,27 +211,23 @@ class DeliveryManager:
         delivery_rates = [self.config.mech.delivery_rate]
         payment_data = b""
 
-        # Try impersonation first (Anvil), then signed tx
-        try:
-            tx_hash = self._submit_offchain_impersonated(
+        return _try_submit(
+            lambda: self._submit_offchain_impersonated(
                 mech_contract,
                 from_addr,
                 requester,
                 deliver_with_sigs,
                 delivery_rates,
                 payment_data,
-            )
-            return tx_hash
-        except Exception as imp_err:
-            logger.debug("Impersonation failed ({}), trying signed tx", imp_err)
-
-        return self._submit_offchain_signed(
-            mech_contract,
-            from_addr,
-            requester,
-            deliver_with_sigs,
-            delivery_rates,
-            payment_data,
+            ),
+            lambda: self._submit_offchain_signed(
+                mech_contract,
+                from_addr,
+                requester,
+                deliver_with_sigs,
+                delivery_rates,
+                payment_data,
+            ),
         )
 
     def _submit_offchain_impersonated(
@@ -239,11 +251,7 @@ class DeliveryManager:
                 "gas": 500_000,
             }
         )
-        receipt = self.bridge.web3.eth.wait_for_transaction_receipt(tx_hash)
-        if receipt["status"] != 1:
-            msg = f"Offchain delivery transaction reverted: {tx_hash.hex()}"
-            raise RuntimeError(msg)
-        return tx_hash.hex()
+        return _wait_and_check_receipt(self.bridge.web3, tx_hash, "Offchain delivery")
 
     def _submit_offchain_signed(
         self,
@@ -272,12 +280,7 @@ class DeliveryManager:
         private_key = self._get_signer_key()
         signed = self.bridge.web3.eth.account.sign_transaction(tx, private_key=private_key)
         tx_hash = self.bridge.web3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = self.bridge.web3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt["status"] != 1:
-            msg = f"Offchain delivery transaction reverted: {tx_hash.hex()}"
-            raise RuntimeError(msg)
-        return tx_hash.hex()
+        return _wait_and_check_receipt(self.bridge.web3, tx_hash, "Offchain delivery")
 
     def _submit_impersonated(
         self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
@@ -292,11 +295,7 @@ class DeliveryManager:
                 "gas": 500_000,
             }
         )
-        receipt = self.bridge.web3.eth.wait_for_transaction_receipt(tx_hash)
-        if receipt["status"] != 1:
-            msg = f"Delivery transaction reverted: {tx_hash.hex()}"
-            raise RuntimeError(msg)
-        return tx_hash.hex()
+        return _wait_and_check_receipt(self.bridge.web3, tx_hash, "Delivery")
 
     def _submit_signed(
         self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
@@ -317,12 +316,7 @@ class DeliveryManager:
         private_key = self._get_signer_key()
         signed = self.bridge.web3.eth.account.sign_transaction(tx, private_key=private_key)
         tx_hash = self.bridge.web3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = self.bridge.web3.eth.wait_for_transaction_receipt(tx_hash)
-
-        if receipt["status"] != 1:
-            msg = f"Delivery transaction reverted: {tx_hash.hex()}"
-            raise RuntimeError(msg)
-        return tx_hash.hex()
+        return _wait_and_check_receipt(self.bridge.web3, tx_hash, "Delivery")
 
     def _get_signer_key(self) -> str:
         """Get the private key for signing delivery transactions."""

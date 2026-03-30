@@ -177,7 +177,7 @@ class TestMetadataPushCommand:
 
 
 class TestCreateServiceCommand:
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_create_service_success(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -190,7 +190,7 @@ class TestCreateServiceCommand:
         assert result.exit_code == 0
         assert "42" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_create_service_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -205,7 +205,7 @@ class TestCreateServiceCommand:
 
 
 class TestDeployMechCommand:
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_deploy_full_success(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -222,7 +222,7 @@ class TestDeployMechCommand:
         assert "Safe deployed" in result.output
         assert "Mech created" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_deploy_activation_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -235,7 +235,7 @@ class TestDeployMechCommand:
         assert result.exit_code == 1
         assert "Activation failed" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_deploy_registration_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -249,7 +249,7 @@ class TestDeployMechCommand:
         assert result.exit_code == 1
         assert "Registration failed" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_deploy_safe_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -264,7 +264,7 @@ class TestDeployMechCommand:
         assert result.exit_code == 1
         assert "Deploy failed" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_deploy_mech_creation_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -282,7 +282,7 @@ class TestDeployMechCommand:
 
 
 class TestStakeCommand:
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_stake_success(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -295,7 +295,7 @@ class TestStakeCommand:
         assert result.exit_code == 0
         assert "Staked successfully" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_stake_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -310,7 +310,7 @@ class TestStakeCommand:
 
 
 class TestUnstakeCommand:
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_unstake_success(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -323,7 +323,7 @@ class TestUnstakeCommand:
         assert result.exit_code == 0
         assert "Unstaked successfully" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_unstake_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -338,7 +338,7 @@ class TestUnstakeCommand:
 
 
 class TestClaimCommand:
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_claim_success(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -351,7 +351,7 @@ class TestClaimCommand:
         assert result.exit_code == 0
         assert "Rewards claimed" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_claim_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -366,7 +366,7 @@ class TestClaimCommand:
 
 
 class TestMechStatusCommand:
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_mech_status_success(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -379,7 +379,7 @@ class TestMechStatusCommand:
         assert result.exit_code == 0
         assert "42" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_mech_status_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -394,7 +394,7 @@ class TestMechStatusCommand:
 
 
 class TestMetadataUpdateCommand:
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_metadata_update_success(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)
@@ -410,7 +410,7 @@ class TestMetadataUpdateCommand:
         assert result.exit_code == 0
         assert "Metadata updated" in result.output
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     def test_metadata_update_failure(self, mock_lc_cls, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
         MicromechConfig().save(config_path)

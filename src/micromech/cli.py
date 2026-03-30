@@ -61,7 +61,7 @@ def run(
     # Try to load iwa bridge
     bridge = None
     try:
-        from micromech.integration.iwa_bridge import IwaBridge
+        from micromech.core.bridge import IwaBridge
 
         bridge = IwaBridge(chain_name=cfg.mech.chain)
         logger.info("iwa bridge loaded for chain: {}", cfg.mech.chain)
@@ -264,7 +264,7 @@ def create_service(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Create a new OLAS service on-chain."""
-    from micromech.management.lifecycle import MechLifecycle
+    from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
     lc = MechLifecycle(cfg)
@@ -282,7 +282,7 @@ def deploy_mech(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Deploy mech: activate → register → deploy Safe → create mech on marketplace."""
-    from micromech.management.lifecycle import MechLifecycle
+    from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
     lc = MechLifecycle(cfg)
@@ -320,7 +320,7 @@ def stake_cmd(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Stake the service in a supply staking contract."""
-    from micromech.management.lifecycle import MechLifecycle
+    from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
     lc = MechLifecycle(cfg)
@@ -338,7 +338,7 @@ def unstake_cmd(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Unstake the service."""
-    from micromech.management.lifecycle import MechLifecycle
+    from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
     lc = MechLifecycle(cfg)
@@ -355,7 +355,7 @@ def claim_cmd(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Claim staking rewards."""
-    from micromech.management.lifecycle import MechLifecycle
+    from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
     lc = MechLifecycle(cfg)
@@ -374,7 +374,7 @@ def mech_status_cmd(
     """Show mech service and staking status."""
     import json
 
-    from micromech.management.lifecycle import MechLifecycle
+    from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
     lc = MechLifecycle(cfg)
@@ -392,7 +392,7 @@ def metadata_update(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Update mech metadata hash on-chain."""
-    from micromech.management.lifecycle import MechLifecycle
+    from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
     lc = MechLifecycle(cfg)

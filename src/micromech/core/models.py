@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field, field_validator
 
 from micromech.core.constants import (
     DELIVERY_MARKETPLACE,
-    ETH_ADDRESS_RE,
     STATUS_PENDING,
+    validate_eth_address,
 )
 
 StatusType = Literal["pending", "executing", "executed", "delivered", "failed"]
@@ -47,9 +47,8 @@ class MechRequest(BaseModel):
     @field_validator("sender")
     @classmethod
     def validate_sender(cls, v: str) -> str:
-        if v and not ETH_ADDRESS_RE.match(v):
-            msg = f"Invalid sender address: {v}"
-            raise ValueError(msg)
+        if v:
+            validate_eth_address(v)
         return v
 
 

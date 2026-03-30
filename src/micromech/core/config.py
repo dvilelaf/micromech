@@ -23,22 +23,12 @@ from micromech.core.constants import (
     DEFAULT_MAX_CONCURRENT,
     DEFAULT_PORT,
     DEFAULT_REQUEST_TIMEOUT,
-    ETH_ADDRESS_RE,
     MECH_MARKETPLACE_ADDRESS,
+    validate_eth_address,
 )
 
 DEFAULT_CONFIG_DIR = Path.home() / ".micromech"
 DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.yaml"
-
-
-def _validate_eth_address(v: Optional[str]) -> Optional[str]:
-    """Shared Ethereum address validator."""
-    if v is None:
-        return v
-    if not ETH_ADDRESS_RE.match(v):
-        msg = f"Invalid Ethereum address: {v}"
-        raise ValueError(msg)
-    return v
 
 
 class RuntimeConfig(BaseModel):
@@ -78,8 +68,8 @@ class MechConfig(BaseModel):
 
     @field_validator("mech_address", "multisig_address", "marketplace_address")
     @classmethod
-    def validate_eth_address(cls, v: Optional[str]) -> Optional[str]:
-        return _validate_eth_address(v)
+    def check_eth_address(cls, v: Optional[str]) -> Optional[str]:
+        return validate_eth_address(v)
 
 
 class PersistenceConfig(BaseModel):

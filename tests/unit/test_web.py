@@ -107,7 +107,7 @@ class TestAPIEndpoints:
 class TestManagementAPI:
     """Test the /api/management/{action} endpoint."""
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
     def test_stake_action(self, mock_cfg_cls, mock_lc_cls, web_client: TestClient):
         mock_lc = MagicMock()
@@ -123,7 +123,7 @@ class TestManagementAPI:
         assert data["success"] is True
         assert data["action"] == "stake"
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
     def test_unstake_action(self, mock_cfg_cls, mock_lc_cls, web_client: TestClient):
         mock_lc = MagicMock()
@@ -137,7 +137,7 @@ class TestManagementAPI:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
     def test_claim_action(self, mock_cfg_cls, mock_lc_cls, web_client: TestClient):
         mock_lc = MagicMock()
@@ -152,7 +152,7 @@ class TestManagementAPI:
         assert resp.json()["success"] is True
         assert resp.json()["action"] == "claim"
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
     def test_checkpoint_action(self, mock_cfg_cls, mock_lc_cls, web_client: TestClient):
         mock_lc = MagicMock()
@@ -166,7 +166,7 @@ class TestManagementAPI:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
     def test_status_action(self, mock_cfg_cls, mock_lc_cls, web_client: TestClient):
         mock_lc = MagicMock()
@@ -182,7 +182,7 @@ class TestManagementAPI:
         assert data["success"] is True
         assert data["data"]["service_id"] == 42
 
-    @patch("micromech.management.lifecycle.MechLifecycle")
+    @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
     def test_unknown_action(self, mock_cfg_cls, mock_lc_cls, web_client: TestClient):
         resp = web_client.post(
