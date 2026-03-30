@@ -25,10 +25,16 @@ def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
 
 
 def _try_submit(
+    safe_fn: Optional[Callable[[], str]],
     impersonated_fn: Callable[[], str],
     signed_fn: Callable[[], str],
 ) -> str:
-    """Try impersonation first (Anvil), fall back to signed transaction."""
+    """Try Safe TX first (production), then impersonation (Anvil), then signed."""
+    if safe_fn is not None:
+        try:
+            return safe_fn()
+        except Exception as safe_err:
+            logger.debug("Safe TX failed ({}), trying impersonation", safe_err)
     try:
         return impersonated_fn()
     except Exception as imp_err:
@@ -60,6 +66,20 @@ class DeliveryManager:
     @property
     def delivered_count(self) -> int:
         return self._delivered_count
+
+    @property
+    def _has_safe(self) -> bool:
+        """Check if bridge has Safe service available (production path)."""
+        return (
+            self.bridge is not None
+            and hasattr(self.bridge, "wallet")
+            and hasattr(self.bridge.wallet, "safe_service")
+        )
+
+    @property
+    def _chain_name(self) -> str:
+        """Derive chain name from mech config."""
+        return self.config.mech.chain
 
     def _get_mech_contract(self) -> Any:
         """Lazy-load the mech contract instance."""
@@ -161,8 +181,8 @@ class DeliveryManager:
         """Submit deliverToMarketplace transaction on-chain (sync, runs in thread).
 
         Calls mech.deliverToMarketplace([requestId], [data]).
-        Tries impersonation first (Anvil auto-impersonate mode), then falls
-        back to signed transaction via iwa wallet for real deployments.
+        Tries Safe TX first (production), then impersonation (Anvil),
+        then signed transaction as last resort.
         """
         mech_contract = self._get_mech_contract()
         # deliverToMarketplace must be called from the service multisig
@@ -176,7 +196,16 @@ class DeliveryManager:
             req_id_bytes = bytes.fromhex(request_id)
         req_id_bytes = req_id_bytes.ljust(32, b"\x00")[:32]
 
+        safe_fn: Optional[Callable[[], str]] = None
+        if self._has_safe:
+
+            def _safe() -> str:
+                return self._submit_via_safe(mech_contract, from_addr, req_id_bytes, data)
+
+            safe_fn = _safe
+
         return _try_submit(
+            safe_fn,
             lambda: self._submit_impersonated(mech_contract, from_addr, req_id_bytes, data),
             lambda: self._submit_signed(mech_contract, from_addr, req_id_bytes, data),
         )
@@ -211,7 +240,23 @@ class DeliveryManager:
         delivery_rates = [self.config.mech.delivery_rate]
         payment_data = b""
 
+        safe_fn: Optional[Callable[[], str]] = None
+        if self._has_safe:
+
+            def _safe_offchain() -> str:
+                return self._submit_offchain_via_safe(
+                    mech_contract,
+                    from_addr,
+                    requester,
+                    deliver_with_sigs,
+                    delivery_rates,
+                    payment_data,
+                )
+
+            safe_fn = _safe_offchain
+
         return _try_submit(
+            safe_fn,
             lambda: self._submit_offchain_impersonated(
                 mech_contract,
                 from_addr,
@@ -229,6 +274,54 @@ class DeliveryManager:
                 payment_data,
             ),
         )
+
+    def _submit_via_safe(
+        self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
+    ) -> str:
+        """Submit deliverToMarketplace via Gnosis Safe (production path)."""
+        mech_address = self.bridge.web3.to_checksum_address(self.config.mech.mech_address)
+        call_data = contract.functions.deliverToMarketplace(
+            [req_id_bytes],
+            [data],
+        ).build_transaction({"from": from_addr})["data"]
+
+        tx_hash = self.bridge.wallet.safe_service.execute_safe_transaction(
+            safe_address_or_tag=from_addr,
+            to=mech_address,
+            value=0,
+            chain_name=self._chain_name,
+            data=call_data,
+        )
+        logger.info("Safe TX submitted: {}", tx_hash)
+        return tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
+
+    def _submit_offchain_via_safe(
+        self,
+        contract: Any,
+        from_addr: str,
+        requester: str,
+        deliver_with_sigs: list[tuple[bytes, bytes, bytes]],
+        delivery_rates: list[int],
+        payment_data: bytes,
+    ) -> str:
+        """Submit deliverMarketplaceWithSignatures via Gnosis Safe (production path)."""
+        mech_address = self.bridge.web3.to_checksum_address(self.config.mech.mech_address)
+        call_data = contract.functions.deliverMarketplaceWithSignatures(
+            requester,
+            deliver_with_sigs,
+            delivery_rates,
+            payment_data,
+        ).build_transaction({"from": from_addr})["data"]
+
+        tx_hash = self.bridge.wallet.safe_service.execute_safe_transaction(
+            safe_address_or_tag=from_addr,
+            to=mech_address,
+            value=0,
+            chain_name=self._chain_name,
+            data=call_data,
+        )
+        logger.info("Safe TX (offchain) submitted: {}", tx_hash)
+        return tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
 
     def _submit_offchain_impersonated(
         self,

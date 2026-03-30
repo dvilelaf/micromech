@@ -220,9 +220,9 @@ class TestGetMechContract:
 
 class TestSubmitDelivery:
     def test_impersonation_path(self, queue: PersistentQueue):
-        """When impersonation succeeds, returns tx hash without trying signed."""
+        """When impersonation succeeds (no Safe), returns tx hash without trying signed."""
         config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
-        bridge = MagicMock()
+        bridge = MagicMock(spec=["web3"])  # No wallet → _has_safe=False
         dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
@@ -234,9 +234,9 @@ class TestSubmitDelivery:
         dm._submit_signed.assert_not_called()
 
     def test_fallback_to_signed(self, queue: PersistentQueue):
-        """When impersonation fails, falls back to signed."""
+        """When impersonation fails (no Safe), falls back to signed."""
         config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
-        bridge = MagicMock()
+        bridge = MagicMock(spec=["web3"])  # No wallet → _has_safe=False
         dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
@@ -249,7 +249,7 @@ class TestSubmitDelivery:
     def test_request_id_hex_prefix(self, queue: PersistentQueue):
         """Request IDs with 0x prefix are handled correctly."""
         config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
-        bridge = MagicMock()
+        bridge = MagicMock(spec=["web3"])  # No wallet → _has_safe=False
         dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
@@ -257,6 +257,80 @@ class TestSubmitDelivery:
 
         result = dm._submit_delivery("0x" + "bb" * 32, b"data")
         assert result == "0xtx"
+
+
+class TestSubmitViaSafe:
+    def test_safe_path_success(self, queue: PersistentQueue):
+        """When Safe is available and succeeds, uses Safe TX."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        # Ensure _has_safe returns True
+        bridge.wallet.safe_service.execute_safe_transaction.return_value = "0xsafe_hash"
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+
+        dm._get_mech_contract = MagicMock()
+        dm._submit_via_safe = MagicMock(return_value="0xsafe_hash")
+        dm._submit_impersonated = MagicMock()
+        dm._submit_signed = MagicMock()
+
+        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
+        assert result == "0xsafe_hash"
+        dm._submit_impersonated.assert_not_called()
+        dm._submit_signed.assert_not_called()
+
+    def test_safe_fallback_to_impersonation(self, queue: PersistentQueue):
+        """When Safe fails, falls back to impersonation."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock()
+        bridge.wallet.safe_service.execute_safe_transaction.side_effect = RuntimeError("no safe")
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+
+        dm._get_mech_contract = MagicMock()
+        dm._submit_via_safe = MagicMock(side_effect=RuntimeError("no safe"))
+        dm._submit_impersonated = MagicMock(return_value="0ximpersonated")
+        dm._submit_signed = MagicMock()
+
+        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
+        assert result == "0ximpersonated"
+        dm._submit_signed.assert_not_called()
+
+    def test_no_safe_skips_to_impersonation(self, queue: PersistentQueue):
+        """When bridge has no Safe service, skips directly to impersonation."""
+        config = MicromechConfig(mech={"mech_address": "0x" + "ab" * 20})
+        bridge = MagicMock(spec=["web3"])  # No wallet attr
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+
+        assert not dm._has_safe
+
+        dm._get_mech_contract = MagicMock()
+        dm._submit_impersonated = MagicMock(return_value="0ximp")
+        dm._submit_signed = MagicMock()
+
+        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
+        assert result == "0ximp"
+
+    def test_has_safe_property(self, queue: PersistentQueue):
+        """_has_safe returns True only when bridge.wallet.safe_service exists."""
+        config = MicromechConfig()
+
+        # No bridge
+        dm = DeliveryManager(config=config, queue=queue, bridge=None)
+        assert not dm._has_safe
+
+        # Bridge without wallet
+        bridge = MagicMock(spec=["web3"])
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+        assert not dm._has_safe
+
+        # Bridge with wallet and safe_service
+        bridge = MagicMock()
+        dm = DeliveryManager(config=config, queue=queue, bridge=bridge)
+        assert dm._has_safe
+
+    def test_chain_name_property(self, queue: PersistentQueue):
+        config = MicromechConfig(mech={"chain": "gnosis"})
+        dm = DeliveryManager(config=config, queue=queue, bridge=None)
+        assert dm._chain_name == "gnosis"
 
 
 class TestDeliveryLifecycle:
