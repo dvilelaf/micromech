@@ -97,7 +97,7 @@ class TestMicromechOffchainE2E:
     """
 
     @pytest.mark.asyncio
-    async def test_http_request_to_execution(self, tmp_path):
+    async def test_tool_execution_result_format(self, tmp_path):
         """Submit requests internally, verify result contains valid prediction JSON."""
         from micromech.core.config import MicromechConfig, PersistenceConfig, RuntimeConfig
         from micromech.core.constants import STATUS_EXECUTED
@@ -175,109 +175,183 @@ class TestMicromechOffchainE2E:
             server.shutdown()
 
 
+class TestFailurePaths:
+    """Test error handling: unknown tools and tool exceptions."""
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_fails(self, tmp_path):
+        """Submit request with unknown tool, verify STATUS_FAILED in DB."""
+        from micromech.core.config import MicromechConfig, PersistenceConfig, RuntimeConfig
+        from micromech.core.constants import STATUS_FAILED
+        from micromech.runtime.server import MechServer
+
+        config = MicromechConfig(
+            persistence=PersistenceConfig(db_path=tmp_path / "fail.db"),
+            runtime=RuntimeConfig(
+                port=18998,
+                max_concurrent=5,
+                delivery_interval=1,
+                event_poll_interval=1,
+            ),
+        )
+
+        server = MechServer(config)
+        server_task = asyncio.create_task(server.run(with_http=False))
+
+        try:
+            await asyncio.sleep(0.5)
+
+            from micromech.core.models import MechRequest
+
+            req = MechRequest(
+                request_id="fail-unknown-tool",
+                prompt="Should fail",
+                tool="nonexistent",
+                is_offchain=True,
+            )
+            await server._on_new_request(req)
+
+            # Wait for execution
+            await asyncio.sleep(2.0)
+
+            record = server.queue.get_by_id("fail-unknown-tool")
+            assert record is not None, "Request not found in DB"
+            assert record.request.status == STATUS_FAILED, (
+                f"Expected 'failed', got '{record.request.status}'"
+            )
+            assert record.result is not None
+            assert "nonexistent" in record.result.error.lower()
+        finally:
+            server.stop()
+            try:
+                await asyncio.wait_for(server_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_tool_exception_does_not_crash_server(self, tmp_path):
+        """Submit request that triggers tool failure, verify server continues running."""
+        from micromech.core.config import MicromechConfig, PersistenceConfig, RuntimeConfig
+        from micromech.core.constants import STATUS_EXECUTED, STATUS_FAILED
+        from micromech.runtime.server import MechServer
+
+        config = MicromechConfig(
+            persistence=PersistenceConfig(db_path=tmp_path / "crash.db"),
+            runtime=RuntimeConfig(
+                port=18997,
+                max_concurrent=5,
+                delivery_interval=1,
+                event_poll_interval=1,
+            ),
+        )
+
+        server = MechServer(config)
+        server_task = asyncio.create_task(server.run(with_http=False))
+
+        try:
+            await asyncio.sleep(0.5)
+
+            from micromech.core.models import MechRequest
+
+            # First: a bad request (unknown tool)
+            bad_req = MechRequest(
+                request_id="crash-test-bad",
+                prompt="Should fail",
+                tool="nonexistent",
+                is_offchain=True,
+            )
+            await server._on_new_request(bad_req)
+            await asyncio.sleep(1.5)
+
+            # Second: a good request AFTER the failure
+            good_req = MechRequest(
+                request_id="crash-test-good",
+                prompt="Should succeed after failure",
+                tool="echo",
+                is_offchain=True,
+            )
+            await server._on_new_request(good_req)
+            await asyncio.sleep(2.0)
+
+            # Server must still be running and process the good request
+            bad_record = server.queue.get_by_id("crash-test-bad")
+            good_record = server.queue.get_by_id("crash-test-good")
+
+            assert bad_record is not None
+            assert bad_record.request.status == STATUS_FAILED
+
+            assert good_record is not None, "Server stopped processing after tool failure"
+            assert good_record.request.status == STATUS_EXECUTED, (
+                f"Expected 'executed', got '{good_record.request.status}'"
+            )
+        finally:
+            server.stop()
+            try:
+                await asyncio.wait_for(server_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            server.shutdown()
+
+
+class TestDuplicateDetection:
+    """Test that duplicate request IDs are not processed twice."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_request_not_processed_twice(self, tmp_path):
+        """Submit same request_id twice, verify only 1 record in DB."""
+        from micromech.core.config import MicromechConfig, PersistenceConfig, RuntimeConfig
+        from micromech.core.constants import STATUS_EXECUTED
+        from micromech.runtime.server import MechServer
+
+        config = MicromechConfig(
+            persistence=PersistenceConfig(db_path=tmp_path / "dedup.db"),
+            runtime=RuntimeConfig(
+                port=18996,
+                max_concurrent=5,
+                delivery_interval=1,
+                event_poll_interval=1,
+            ),
+        )
+
+        server = MechServer(config)
+        server_task = asyncio.create_task(server.run(with_http=False))
+
+        try:
+            await asyncio.sleep(0.5)
+
+            from micromech.core.models import MechRequest
+
+            for _ in range(2):
+                req = MechRequest(
+                    request_id="dedup-test-1",
+                    prompt="Duplicate question",
+                    tool="echo",
+                    is_offchain=True,
+                )
+                await server._on_new_request(req)
+
+            await asyncio.sleep(2.0)
+
+            record = server.queue.get_by_id("dedup-test-1")
+            assert record is not None
+            assert record.request.status == STATUS_EXECUTED
+
+            # Verify only 1 record with this ID exists (get_recent returns all)
+            all_records = server.queue.get_recent(limit=100)
+            matching = [r for r in all_records if r.request.request_id == "dedup-test-1"]
+            assert len(matching) == 1, f"Expected 1 record for dedup-test-1, got {len(matching)}"
+        finally:
+            server.stop()
+            try:
+                await asyncio.wait_for(server_task, timeout=3.0)
+            except (asyncio.CancelledError, asyncio.TimeoutError):
+                pass
+            server.shutdown()
+
+
 class TestMicromechOnchainE2E:
-    """Test on-chain interactions: send marketplace requests, detect and deliver."""
-
-    def test_send_marketplace_request_and_deliver(self, w3):
-        """Send a request via marketplace, then deliver using mech contract."""
-        marketplace = w3.eth.contract(
-            address=w3.to_checksum_address(MARKETPLACE_ADDR),
-            abi=_load_abi("mech_marketplace.json"),
-        )
-        mech = w3.eth.contract(
-            address=w3.to_checksum_address(MECH_ADDR),
-            abi=_load_abi("mech_new.json"),
-        )
-
-        # Get mech's service multisig (needed for delivery)
-        from iwa.plugins.olas.constants import OLAS_CONTRACTS
-
-        registry = w3.eth.contract(
-            address=w3.to_checksum_address(OLAS_CONTRACTS["gnosis"]["OLAS_SERVICE_REGISTRY"]),
-            abi=_load_abi("service_registry.json"),
-        )
-        svc_info = registry.functions.getService(MECH_SERVICE_ID).call()
-        mech_multisig = svc_info[1]
-        print(f"\n  Mech multisig: {mech_multisig}")
-
-        # Baseline counters
-        base_deliveries = marketplace.functions.mapMechDeliveryCounts(
-            w3.to_checksum_address(MECH_ADDR)
-        ).call()
-        print(f"  Baseline deliveries: {base_deliveries}")
-
-        # Step 1: Send a request from a rich account
-        print("\n--- Step 1: Send marketplace request ---")
-        w3.provider.make_request("anvil_impersonateAccount", [RICH_ACCOUNT])
-
-        fee = marketplace.functions.fee().call()
-        value = MECH_DELIVERY_RATE + fee
-
-        request_data = json.dumps(
-            {
-                "prompt": "Will ETH hit 10k by 2027?",
-                "tool": "echo",
-            }
-        ).encode()
-
-        tx = marketplace.functions.request(
-            request_data,
-            MECH_DELIVERY_RATE,
-            PAYMENT_TYPE_NATIVE,
-            w3.to_checksum_address(MECH_ADDR),
-            300,
-            b"",
-        ).transact(
-            {
-                "from": RICH_ACCOUNT,
-                "value": value,
-                "gas": 500_000,
-            }
-        )
-        receipt = w3.eth.wait_for_transaction_receipt(tx)
-        assert receipt["status"] == 1, "Request tx reverted"
-
-        # Extract request ID from event
-        logs = marketplace.events.MarketplaceRequest().process_receipt(receipt)
-        assert len(logs) > 0, "No MarketplaceRequest event"
-        request_ids = logs[0]["args"]["requestIds"]
-        print(f"  ✓ Request submitted, ID: {request_ids[0].hex()[:16]}...")
-
-        w3.provider.make_request("anvil_stopImpersonatingAccount", [RICH_ACCOUNT])
-
-        # Step 2: Deliver response (impersonating mech multisig)
-        print("\n--- Step 2: Deliver response via mech ---")
-        # Fund the multisig with xDAI for gas
-        w3.provider.make_request("anvil_setBalance", [mech_multisig, hex(10 * 10**18)])
-        w3.provider.make_request("anvil_impersonateAccount", [mech_multisig])
-
-        response_data = json.dumps(
-            {
-                "result": '{"p_yes": 0.6, "p_no": 0.4}',
-                "tool": "echo",
-            }
-        ).encode()
-
-        tx = mech.functions.deliverToMarketplace(
-            request_ids,
-            [response_data],
-        ).transact(
-            {
-                "from": mech_multisig,
-                "gas": 500_000,
-            }
-        )
-        receipt = w3.eth.wait_for_transaction_receipt(tx)
-        assert receipt["status"] == 1, "Delivery tx reverted"
-
-        w3.provider.make_request("anvil_stopImpersonatingAccount", [mech_multisig])
-
-        # Step 3: Verify delivery counted
-        new_deliveries = marketplace.functions.mapMechDeliveryCounts(
-            w3.to_checksum_address(MECH_ADDR)
-        ).call()
-        assert new_deliveries > base_deliveries
-        print(f"  ✓ Deliveries: {base_deliveries} → {new_deliveries}")
+    """Test on-chain interactions: detect marketplace requests via EventListener."""
 
     def test_event_listener_detects_request(self, w3):
         """Send a marketplace request and verify EventListener can detect it."""
@@ -426,138 +500,6 @@ class TestIpfsCidComputation:
         assert "fingerprint" in updated
         assert updated["fingerprint"]["test_tool.py"] == fps["test_tool.py"]
         print(f"\n  Fingerprints: {fps}")
-
-
-class TestMicromechFullServerLoop:
-    """Test the full micromech server loop: listen → execute → verify.
-
-    Sends a marketplace request, then runs the micromech server which should:
-    1. Detect the request via EventListener
-    2. Execute the echo tool
-    3. Store the result in the DB
-    """
-
-    @pytest.mark.asyncio
-    async def test_server_detects_and_executes(self, w3, tmp_path):
-        """Full server integration: on-chain request → detection → execution."""
-        from micromech.core.config import (
-            IpfsConfig,
-            MechConfig,
-            MicromechConfig,
-            PersistenceConfig,
-            RuntimeConfig,
-        )
-        from micromech.core.constants import STATUS_EXECUTED, STATUS_FAILED
-        from micromech.runtime.server import MechServer
-
-        marketplace = w3.eth.contract(
-            address=w3.to_checksum_address(MARKETPLACE_ADDR),
-            abi=_load_abi("mech_marketplace.json"),
-        )
-
-        # Record block before request
-        block_before = w3.eth.block_number
-
-        # Send a marketplace request
-        w3.provider.make_request("anvil_impersonateAccount", [RICH_ACCOUNT])
-        fee = marketplace.functions.fee().call()
-        value = MECH_DELIVERY_RATE + fee
-
-        request_data = json.dumps(
-            {
-                "prompt": "Server loop test: will BTC hit 100k?",
-                "tool": "echo",
-            }
-        ).encode()
-
-        tx = marketplace.functions.request(
-            request_data,
-            MECH_DELIVERY_RATE,
-            PAYMENT_TYPE_NATIVE,
-            w3.to_checksum_address(MECH_ADDR),
-            300,
-            b"",
-        ).transact(
-            {
-                "from": RICH_ACCOUNT,
-                "value": value,
-                "gas": 500_000,
-            }
-        )
-        receipt = w3.eth.wait_for_transaction_receipt(tx)
-        assert receipt["status"] == 1
-        w3.provider.make_request("anvil_stopImpersonatingAccount", [RICH_ACCOUNT])
-        print(f"\n  Request sent at block {w3.eth.block_number}")
-
-        # Create AnvilBridge
-        class AnvilBridge:
-            def __init__(self, web3):
-                self.web3 = web3
-
-            def with_retry(self, fn, **kwargs):
-                return fn()
-
-        config = MicromechConfig(
-            persistence=PersistenceConfig(db_path=tmp_path / "server_loop.db"),
-            mech=MechConfig(
-                mech_address=MECH_ADDR,
-                marketplace_address=MARKETPLACE_ADDR,
-            ),
-            runtime=RuntimeConfig(
-                event_poll_interval=1,
-                event_lookback_blocks=100,
-                delivery_interval=1,
-                max_concurrent=5,
-            ),
-            ipfs=IpfsConfig(enabled=False),
-        )
-
-        bridge = AnvilBridge(w3)
-        server = MechServer(config, bridge=bridge)
-
-        # Set listener to start from before our request
-        server.listener._last_block = block_before
-
-        # Run server briefly
-        async def stop_after_processing():
-            # Wait for listener to detect + executor to process
-            for _ in range(20):
-                await asyncio.sleep(0.5)
-                counts = server.queue.count_by_status()
-                executed = counts.get("executed", 0) + counts.get("failed", 0)
-                if executed > 0:
-                    break
-            server.stop()
-
-        asyncio.create_task(stop_after_processing())
-
-        try:
-            await asyncio.wait_for(server.run(with_http=False), timeout=15.0)
-        except (asyncio.CancelledError, asyncio.TimeoutError):
-            pass
-
-        # Verify request was detected and processed
-        recent = server.queue.get_recent(limit=10)
-        print(f"  Queue has {len(recent)} records")
-
-        executed_records = [
-            r for r in recent if r.request.status in (STATUS_EXECUTED, STATUS_FAILED)
-        ]
-        assert len(executed_records) >= 1, (
-            f"Expected at least 1 executed request, got {len(executed_records)}. "
-            f"Statuses: {[r.request.status for r in recent]}"
-        )
-
-        for r in executed_records:
-            print(
-                f"  ✓ {r.request.request_id[:16]}... "
-                f"status={r.request.status} tool={r.request.tool}"
-            )
-            if r.result:
-                print(f"    result: {r.result.output[:80]}")
-
-        server.shutdown()
-        print("  ✓ Full server loop completed")
 
 
 class TestFullServerCycleE2E:
@@ -1322,11 +1264,9 @@ class TestOffchainHTTPE2E:
             ).call()
             print(f"  Deliveries: {base_deliveries} -> {new_deliveries}")
 
-            # At least some should have been delivered on-chain
-            # (deliverMarketplaceWithSignatures may or may not increment this
-            # counter depending on the contract version, so we check DB state
-            # as the primary assertion)
-            assert delivered_count > 0, f"No requests were delivered. Statuses: {counts}"
+            assert delivered_count == n_requests, (
+                f"Expected {n_requests} delivered, got {delivered_count}. Statuses: {counts}"
+            )
             print(f"  {delivered_count}/{n_requests} requests delivered on-chain")
 
         finally:
