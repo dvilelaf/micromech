@@ -110,54 +110,23 @@ class MechLifecycle:
         factory_address: Optional[str] = None,
         delivery_rate: Optional[int] = None,
     ) -> Optional[str]:
-        """Create a mech on the marketplace.
-
-        Calls marketplace.create(serviceId, factory, deliveryRate).
-        Uses addresses from chain_config. Returns the mech contract address or None.
-        """
+        """Create a mech on the marketplace. Delegates to iwa's MechSupplyMixin."""
         mgr = _get_service_manager(self.config, service_key)
         factory = factory_address or self.chain_config.factory_address
         rate = delivery_rate or self.chain_config.delivery_rate
-
         try:
-            bridge = mgr.wallet
-            web3 = bridge.chain_interfaces.get(self.chain_name).web3
-            from micromech.runtime.contracts import load_marketplace_abi
+            from iwa.plugins.olas.service_manager.mech import MechSupplyMixin
 
-            marketplace = web3.eth.contract(
-                address=web3.to_checksum_address(self.chain_config.marketplace_address),
-                abi=load_marketplace_abi(),
+            # Attach mixin method to the manager instance
+            return MechSupplyMixin.create_mech_on_marketplace(
+                mgr,
+                chain_name=self.chain_name,
+                factory_address=factory,
+                delivery_rate=rate,
+                marketplace_address=self.chain_config.marketplace_address,
             )
-
-            service_id = mgr.service.service_id if mgr.service else None
-            if not service_id:
-                logger.error("No service ID found")
-                return None
-
-            tx = marketplace.functions.create(
-                service_id,
-                web3.to_checksum_address(factory),
-                rate,
-            ).transact(
-                {
-                    "from": web3.to_checksum_address(str(mgr.service.owner_address)),
-                    "gas": 10_000_000,
-                }
-            )
-            receipt = web3.eth.wait_for_transaction_receipt(tx)
-            if receipt["status"] != 1:
-                logger.error("Mech creation TX reverted on {}", self.chain_name)
-                return None
-
-            # Extract mech address from CreateMech event
-            logs = receipt.get("logs", [])
-            for log in logs:
-                if len(log.get("topics", [])) >= 2:
-                    mech_addr = "0x" + log["topics"][1].hex()[-40:]
-                    logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
-                    return mech_addr
-
-            logger.warning("Mech created on {} but address not found in logs", self.chain_name)
+        except ImportError:
+            logger.error("iwa MechSupplyMixin not available")
             return None
         except Exception as e:
             logger.error("Failed to create mech on {}: {}", self.chain_name, e)
@@ -234,48 +203,19 @@ class MechLifecycle:
         service_key: str,
         metadata_hash: str,
     ) -> Optional[str]:
-        """Update mech metadata hash on-chain via changeHash()."""
-        from micromech.runtime.contracts import (
-            COMPLEMENTARY_SERVICE_METADATA_ABI,
-            COMPLEMENTARY_SERVICE_METADATA_ADDRESS,
-        )
-
+        """Update mech metadata hash on-chain. Delegates to iwa's MechSupplyMixin."""
         mgr = _get_service_manager(self.config, service_key)
         try:
-            contract_addr = COMPLEMENTARY_SERVICE_METADATA_ADDRESS.get(self.chain_name)
-            if not contract_addr:
-                logger.error("No metadata contract for chain {}", self.chain_name)
-                return None
+            from iwa.plugins.olas.service_manager.mech import MechSupplyMixin
 
-            web3 = mgr.wallet.chain_interfaces.get(self.chain_name).web3
-            contract = web3.eth.contract(
-                address=web3.to_checksum_address(contract_addr),
-                abi=COMPLEMENTARY_SERVICE_METADATA_ABI,
-            )
-
-            service_id = mgr.service.service_id if mgr.service else None
-            if not service_id:
-                logger.error("No service ID")
-                return None
-
-            hash_bytes = (
-                bytes.fromhex(metadata_hash[2:])
-                if metadata_hash.startswith("0x")
-                else bytes.fromhex(metadata_hash)
-            )
-
-            # Execute via Safe
-            tx_hash = mgr.wallet.safe_service.execute_safe_transaction(
-                safe_address_or_tag=str(mgr.service.multisig_address),
-                to=contract_addr,
-                value=0,
+            return MechSupplyMixin.update_mech_metadata(
+                mgr,
                 chain_name=self.chain_name,
-                data=contract.functions.changeHash(service_id, hash_bytes).build_transaction(
-                    {"from": str(mgr.service.multisig_address)}
-                )["data"],
+                metadata_hash=metadata_hash,
             )
-            logger.info("Metadata updated on {}: {}", self.chain_name, tx_hash)
-            return tx_hash
+        except ImportError:
+            logger.error("iwa MechSupplyMixin not available")
+            return None
         except Exception as e:
             logger.error("Failed to update metadata on {}: {}", self.chain_name, e)
             return None

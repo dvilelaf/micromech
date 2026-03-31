@@ -118,10 +118,15 @@ def load_marketplace_abi() -> list[dict]:
     return MARKETPLACE_REQUEST_ABI
 
 
-# ComplementaryServiceMetadata contract — stores mech metadata hash on-chain
-COMPLEMENTARY_SERVICE_METADATA_ADDRESS = {
-    "gnosis": "0x0598081D48FB80B0A7E52FAD2905AE9beCd6fC69",
-}
+# ComplementaryServiceMetadata contract — import from iwa or fallback
+try:
+    from iwa.plugins.olas.constants import (
+        COMPLEMENTARY_SERVICE_METADATA as COMPLEMENTARY_SERVICE_METADATA_ADDRESS,
+    )
+except ImportError:
+    COMPLEMENTARY_SERVICE_METADATA_ADDRESS = {
+        "gnosis": "0x0598081D48FB80B0A7E52FAD2905AE9beCd6fC69",
+    }
 
 COMPLEMENTARY_SERVICE_METADATA_ABI = [
     {

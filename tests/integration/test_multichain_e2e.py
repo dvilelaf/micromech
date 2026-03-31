@@ -32,7 +32,8 @@ from micromech.core.config import ChainConfig, MicromechConfig, RuntimeConfig
 from micromech.core.constants import CHAIN_DEFAULTS
 
 # --- Per-chain infrastructure addresses ---
-# Sources: autonolas-registries/docs/configuration.json, iwa constants, coingecko
+# Test-specific infra (balance slots, rich accounts, Safe impls) that iwa doesn't track.
+# Contract addresses (service_registry, etc.) are verified against iwa's OLAS_CONTRACTS.
 
 CHAIN_INFRA: dict[str, dict[str, Any]] = {
     "gnosis": {
