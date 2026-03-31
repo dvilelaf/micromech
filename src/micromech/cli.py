@@ -82,13 +82,30 @@ def init(
         wallet = Wallet()
         wallet_address = wallet.address
         typer.echo(f"  Wallet found: {wallet_address}")
+
+        # Show mnemonic if just created
+        try:
+            mnemonic = wallet.key_storage.get_pending_mnemonic()
+            if mnemonic:
+                typer.echo("\n  NEW WALLET — write down your recovery phrase:")
+                typer.echo(f"\n  {mnemonic}\n")
+                if not yes:
+                    typer.confirm("  Have you saved your recovery phrase?", abort=True)
+        except Exception:
+            pass
+
     except ImportError:
         typer.echo("  iwa not installed. Install with: pip install micromech[chain]")
         raise typer.Exit(1)
-    except Exception:
-        typer.echo("  No wallet found. Creating a new one...")
-        typer.echo("  (You'll need the iwa wallet setup: run 'iwa wallet create')")
-        typer.echo("  Then re-run: micromech init")
+    except Exception as e:
+        err = str(e).lower()
+        if "password" in err or "none" in err or "secret" in err:
+            typer.echo("  Wallet found but locked. Set wallet_password env var:")
+            typer.echo("    export wallet_password=YOUR_PASSWORD")
+            typer.echo("  Then re-run: micromech init")
+        else:
+            typer.echo(f"  Wallet error: {e}")
+            typer.echo("  Re-run: micromech init")
         raise typer.Exit(1)
 
     # --- Step 2: Chain Selection ---

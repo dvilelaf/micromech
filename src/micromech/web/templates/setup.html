@@ -266,8 +266,48 @@
             <!-- Step 1: Wallet -->
             <div class="step" id="step-1">
                 <h2>Wallet</h2>
-                <p>Checking for an existing iwa wallet...</p>
+                <p id="wallet-desc">Checking for an existing wallet...</p>
                 <div id="wallet-status"></div>
+                <!-- Password form (shown when needed) -->
+                <div id="wallet-password-form" style="display: none;">
+                    <div style="margin-bottom: 1rem;">
+                        <label style="display: block; color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;" id="password-label">
+                            Choose a password to encrypt your wallet
+                        </label>
+                        <input type="password" id="wallet-password"
+                            placeholder="Password (min 4 characters)"
+                            style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--glass-border);
+                            background: rgba(0,0,0,0.3); color: var(--text-color); font-family: var(--font-mono);
+                            font-size: 0.9rem; outline: none;"
+                        >
+                    </div>
+                    <button class="btn btn-accent" id="btn-wallet-create" onclick="createOrUnlockWallet()">
+                        Create Wallet
+                    </button>
+                </div>
+                <!-- Mnemonic display (shown after creation) -->
+                <div id="wallet-mnemonic" style="display: none; margin-top: 1rem;">
+                    <div style="background: rgba(231,76,60,0.1); border: 1px solid rgba(231,76,60,0.3);
+                        border-radius: 8px; padding: 1rem; margin-bottom: 1rem;">
+                        <p style="color: var(--error); font-weight: 600; margin-bottom: 0.5rem;">
+                            Write down your recovery phrase!</p>
+                        <p style="color: var(--text-muted); font-size: 0.85rem;">
+                            This is the only way to recover your wallet. Store it safely offline.</p>
+                    </div>
+                    <div id="mnemonic-words" style="background: rgba(0,0,0,0.3); border-radius: 8px;
+                        padding: 1rem; font-family: var(--font-mono); font-size: 0.85rem;
+                        line-height: 1.8; word-spacing: 0.5rem; filter: blur(5px); cursor: pointer;
+                        user-select: none; transition: filter 0.2s;"
+                        onclick="this.style.filter = this.style.filter === 'none' ? 'blur(5px)' : 'none'; this.style.userSelect = this.style.filter === 'none' ? 'text' : 'none';"
+                    ></div>
+                    <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.5rem; text-align: center;">
+                        Click to reveal / hide. Do not screenshot.</p>
+                    <label style="display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem;
+                        color: var(--text-muted); font-size: 0.85rem; cursor: pointer;">
+                        <input type="checkbox" id="mnemonic-saved" onchange="checkMnemonicSaved()">
+                        I have saved my recovery phrase
+                    </label>
+                </div>
                 <div class="btn-row">
                     <span></span>
                     <button class="btn btn-primary" id="btn-wallet-next" disabled>Next</button>
@@ -288,7 +328,10 @@
             <!-- Step 3: Fund Wallet -->
             <div class="step" id="step-3">
                 <h2>Fund Your Wallet</h2>
-                <p>Send funds to your wallet address. Your mech needs gas tokens and OLAS for the staking bond.</p>
+                <p>Send the following to your wallet address:</p>
+                <div style="margin-bottom: 1rem; padding: 0.75rem; background: rgba(0,210,255,0.08); border-radius: 8px; font-size: 0.9rem;">
+                    <span id="fund-requirements">~0.1 xDAI (gas) + 10,000 OLAS (staking bond)</span>
+                </div>
                 <div class="address-box">
                     <span id="fund-address">...</span>
                     <button class="copy-btn" onclick="copyAddress()">Copy</button>
@@ -403,64 +446,152 @@
             else if (i === n) el.classList.add('active');
         }
 
-        if (n === 3) startBalancePoll();
-        else stopBalancePoll();
+        if (n === 3) {
+            startBalancePoll();
+            // Update fund requirements text for selected chain
+            const sym = NATIVE_SYMBOLS[selectedChain] || 'ETH';
+            const reqEl = document.getElementById('fund-requirements');
+            if (reqEl) reqEl.textContent = `~0.1 ${sym} (gas) + 10,000 OLAS (staking bond)`;
+        } else {
+            stopBalancePoll();
+        }
+
+        // Clear mnemonic from DOM when leaving step 1 (security)
+        if (currentStep !== 1) {
+            const mnDiv = document.getElementById('mnemonic-words');
+            if (mnDiv) mnDiv.textContent = '';
+            const mnWrap = document.getElementById('wallet-mnemonic');
+            if (mnWrap) mnWrap.style.display = 'none';
+        }
     }
 
-    // --- Step 1: Check wallet ---
+    // --- Step 1: Wallet ---
     async function checkWallet() {
+        const desc = document.getElementById('wallet-desc');
+        const el = document.getElementById('wallet-status');
+        const form = document.getElementById('wallet-password-form');
+
         try {
             const res = await fetch('/api/setup/state');
             const data = await res.json();
 
-            const el = document.getElementById('wallet-status');
             if (data.wallet_exists) {
-                walletAddress = data.wallet_address;
-                // Build DOM safely — use textContent for address (no innerHTML injection)
-                const box = document.createElement('div');
-                box.className = 'address-box';
-                const addrSpan = document.createElement('span');
-                addrSpan.textContent = walletAddress;
-                box.appendChild(addrSpan);
-                const status = document.createElement('p');
-                status.style.cssText = 'color: var(--success); font-size: 0.9rem;';
-                status.textContent = 'Wallet found';
-                el.innerHTML = '';
-                el.appendChild(box);
-                el.appendChild(status);
-
-                document.getElementById('btn-wallet-next').disabled = false;
-
-                // If already complete, skip to done
-                if (data.step === 'complete') {
-                    goStep(6);
-                    return;
-                }
+                showWalletFound(data.wallet_address);
+                if (data.step === 'complete') { goStep(6); return; }
+            } else if (data.needs_password) {
+                // Wallet file exists but needs password to unlock
+                desc.textContent = 'Wallet found but locked. Enter your password to unlock it.';
+                document.getElementById('password-label').textContent = 'Enter your wallet password';
+                document.getElementById('btn-wallet-create').textContent = 'Unlock Wallet';
+                form.style.display = 'block';
             } else {
-                const err = document.createElement('p');
-                err.style.color = 'var(--error)';
-                err.textContent = 'No wallet found.';
-                const hint = document.createElement('p');
-                hint.style.cssText = 'color: var(--text-muted); margin-top: 0.5rem;';
-                hint.appendChild(document.createTextNode('Create a wallet first: '));
-                const code = document.createElement('code');
-                code.style.fontFamily = 'var(--font-mono)';
-                code.textContent = 'iwa wallet create';
-                hint.appendChild(code);
-                hint.appendChild(document.createElement('br'));
-                hint.appendChild(document.createTextNode('Then refresh this page.'));
-                el.innerHTML = '';
-                el.appendChild(err);
-                el.appendChild(hint);
+                // No wallet at all — offer to create
+                desc.textContent = 'No wallet found. Create one to get started.';
+                document.getElementById('password-label').textContent = 'Choose a password to encrypt your wallet';
+                document.getElementById('btn-wallet-create').textContent = 'Create Wallet';
+                form.style.display = 'block';
             }
         } catch (e) {
-            const errEl = document.getElementById('wallet-status');
-            const p = document.createElement('p');
-            p.style.color = 'var(--error)';
-            p.textContent = 'Cannot connect to backend: ' + e.message;
-            errEl.innerHTML = '';
-            errEl.appendChild(p);
+            el.textContent = 'Cannot connect to backend: ' + e.message;
+            el.style.color = 'var(--error)';
         }
+    }
+
+    function showWalletFound(address) {
+        walletAddress = address;
+        const el = document.getElementById('wallet-status');
+        const desc = document.getElementById('wallet-desc');
+        document.getElementById('wallet-password-form').style.display = 'none';
+
+        desc.textContent = 'Wallet ready.';
+        el.innerHTML = '';
+        const box = document.createElement('div');
+        box.className = 'address-box';
+        const addrSpan = document.createElement('span');
+        addrSpan.textContent = walletAddress;
+        box.appendChild(addrSpan);
+        const copyBtn = document.createElement('button');
+        copyBtn.className = 'copy-btn';
+        copyBtn.textContent = 'Copy';
+        copyBtn.onclick = () => {
+            navigator.clipboard.writeText(walletAddress);
+            copyBtn.textContent = 'Copied!';
+            setTimeout(() => copyBtn.textContent = 'Copy', 2000);
+        };
+        box.appendChild(copyBtn);
+        el.appendChild(box);
+
+        document.getElementById('btn-wallet-next').disabled = false;
+    }
+
+    function showInlineError(msg) {
+        const el = document.getElementById('wallet-status');
+        // Remove previous inline error if any
+        const prev = el.querySelector('.inline-error');
+        if (prev) prev.remove();
+        const err = document.createElement('p');
+        err.className = 'inline-error';
+        err.style.cssText = 'color: var(--error); font-size: 0.85rem; margin-top: 0.5rem;';
+        err.textContent = msg;
+        el.appendChild(err);
+    }
+
+    async function createOrUnlockWallet() {
+        const password = document.getElementById('wallet-password').value;
+        if (!password || password.length < 4) {
+            showInlineError('Password must be at least 4 characters');
+            return;
+        }
+
+        const btn = document.getElementById('btn-wallet-create');
+        const origText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Working...';
+
+        try {
+            const res = await fetch('/api/setup/wallet', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Micromech-Action': 'wallet',
+                },
+                body: JSON.stringify({ password }),
+            });
+            const data = await res.json();
+
+            if (data.error) {
+                showInlineError(data.error);
+                btn.disabled = false;
+                btn.textContent = origText;
+                return;
+            }
+
+            // Show mnemonic if this was a new wallet
+            if (data.mnemonic) {
+                const mnemonicDiv = document.getElementById('wallet-mnemonic');
+                const wordsDiv = document.getElementById('mnemonic-words');
+                wordsDiv.textContent = data.mnemonic;
+                mnemonicDiv.style.display = 'block';
+                document.getElementById('wallet-password-form').style.display = 'none';
+                // Don't enable Next until mnemonic is confirmed saved
+            }
+
+            showWalletFound(data.address);
+
+            // If mnemonic shown, disable Next until checkbox
+            if (data.mnemonic) {
+                document.getElementById('btn-wallet-next').disabled = true;
+            }
+        } catch (e) {
+            showInlineError('Connection error: ' + e.message);
+            btn.disabled = false;
+            btn.textContent = origText;
+        }
+    }
+
+    function checkMnemonicSaved() {
+        const checked = document.getElementById('mnemonic-saved').checked;
+        document.getElementById('btn-wallet-next').disabled = !checked;
     }
 
     // --- Step 2: Chain selection ---
@@ -482,7 +613,7 @@
                 div.onclick = () => selectChain(c.name);
                 const nameEl = document.createElement('div');
                 nameEl.className = 'chain-name';
-                nameEl.textContent = c.name;
+                nameEl.textContent = c.name.charAt(0).toUpperCase() + c.name.slice(1);
                 div.appendChild(nameEl);
                 if (labels[c.name]) {
                     const badge = document.createElement('div');
@@ -544,16 +675,35 @@
     function copyAddress() {
         if (walletAddress) {
             navigator.clipboard.writeText(walletAddress);
-            const btn = document.querySelector('.copy-btn');
-            btn.textContent = 'Copied!';
-            setTimeout(() => btn.textContent = 'Copy', 2000);
+            // Target the copy button inside step-3 specifically
+            const btn = document.querySelector('#step-3 .copy-btn');
+            if (btn) {
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy', 2000);
+            }
         }
     }
 
     // --- Step 5: Deploy ---
+    let lastRunningStep = 0;
+
     async function startDeploy() {
         goStep(5);
         document.getElementById('btn-deploy').disabled = true;
+        // Hide retry button if visible from previous attempt
+        const retryBtn = document.getElementById('btn-deploy-retry');
+        if (retryBtn) retryBtn.style.display = 'none';
+        // Reset all deploy step icons
+        for (let i = 1; i <= 6; i++) {
+            const icon = document.querySelector(`#ds-${i} .deploy-icon`);
+            if (icon) { icon.className = 'deploy-icon pending'; icon.textContent = i; }
+            const msg = document.querySelector(`#ds-${i} .deploy-msg`);
+            if (msg) msg.classList.add('muted');
+        }
+        lastRunningStep = 0;
+
+        // Mark step 1 as running
+        markStepRunning(1);
 
         try {
             const res = await fetch('/api/setup/deploy', {
@@ -582,26 +732,54 @@
                     try {
                         const evt = JSON.parse(line.slice(6));
                         handleDeployEvent(evt);
-                    } catch (e) { /* skip */ }
+                    } catch (e) { /* skip parse errors */ }
                 }
             }
         } catch (e) {
-            const errStep = document.querySelector('.deploy-icon.running') ||
-                            document.querySelector('.deploy-icon.pending');
-            if (errStep) {
-                errStep.className = 'deploy-icon error';
-                errStep.textContent = '!';
-            }
+            showDeployError('Connection lost. Click Retry to resume.');
         }
+    }
+
+    function markStepRunning(n) {
+        lastRunningStep = n;
+        const icon = document.querySelector(`#ds-${n} .deploy-icon`);
+        if (icon) { icon.className = 'deploy-icon running'; icon.textContent = n; }
+        const msg = document.querySelector(`#ds-${n} .deploy-msg`);
+        if (msg) msg.classList.remove('muted');
+    }
+
+    function showDeployError(message) {
+        // Show retry button
+        let retryBtn = document.getElementById('btn-deploy-retry');
+        if (!retryBtn) {
+            retryBtn = document.createElement('button');
+            retryBtn.id = 'btn-deploy-retry';
+            retryBtn.className = 'btn btn-primary';
+            retryBtn.textContent = 'Retry';
+            retryBtn.style.marginTop = '1.5rem';
+            retryBtn.onclick = startDeploy;
+            document.getElementById('deploy-progress').appendChild(retryBtn);
+        }
+        retryBtn.style.display = 'inline-block';
+
+        // Show error message
+        let errMsg = document.getElementById('deploy-error-msg');
+        if (!errMsg) {
+            errMsg = document.createElement('p');
+            errMsg.id = 'deploy-error-msg';
+            errMsg.style.cssText = 'color: var(--error); font-size: 0.85rem; margin-top: 0.75rem;';
+            document.getElementById('deploy-progress').appendChild(errMsg);
+        }
+        errMsg.textContent = message;
     }
 
     function handleDeployEvent(evt) {
         if (evt.step === 'done') {
-            // Mark all as done and go to success
             document.querySelectorAll('.deploy-icon').forEach(el => {
                 el.className = 'deploy-icon done';
                 el.innerHTML = '&#10003;';
             });
+            document.querySelectorAll('.deploy-msg').forEach(el => el.classList.remove('muted'));
             setTimeout(() => goStep(6), 1000);
             return;
         }
@@ -611,8 +789,8 @@
             if (running) {
                 running.className = 'deploy-icon error';
                 running.textContent = '!';
-                running.parentElement.querySelector('.deploy-msg').textContent = evt.message;
             }
+            showDeployError(evt.message || 'Deployment failed. Click Retry to resume.');
             return;
         }
 
@@ -620,26 +798,27 @@
             // Mark previous steps as done
             for (let i = 1; i < evt.step; i++) {
                 const icon = document.querySelector(`#ds-${i} .deploy-icon`);
-                if (icon) { icon.className = 'deploy-icon done'; icon.innerHTML = '&#10003;'; }
+                if (icon && !icon.classList.contains('done')) {
+                    icon.className = 'deploy-icon done';
+                    icon.innerHTML = '&#10003;';
+                }
                 const msg = document.querySelector(`#ds-${i} .deploy-msg`);
                 if (msg) msg.classList.remove('muted');
             }
 
-            // Mark current step
             const curIcon = document.querySelector(`#ds-${evt.step} .deploy-icon`);
             const curMsg = document.querySelector(`#ds-${evt.step} .deploy-msg`);
-            if (curIcon) {
-                if (evt.success) {
-                    curIcon.className = 'deploy-icon done';
-                    curIcon.innerHTML = '&#10003;';
-                } else {
-                    curIcon.className = 'deploy-icon error';
-                    curIcon.textContent = '!';
-                }
-            }
-            if (curMsg) {
-                curMsg.textContent = evt.message;
-                curMsg.classList.remove('muted');
+
+            if (evt.success) {
+                // Step completed successfully — mark done, set next as running
+                if (curIcon) { curIcon.className = 'deploy-icon done'; curIcon.innerHTML = '&#10003;'; }
+                if (curMsg) { curMsg.textContent = evt.message; curMsg.classList.remove('muted'); }
+                // Mark next step as running (if not last)
+                if (evt.step < 6) markStepRunning(evt.step + 1);
+            } else {
+                // Step failed
+                if (curIcon) { curIcon.className = 'deploy-icon error'; curIcon.textContent = '!'; }
+                if (curMsg) { curMsg.textContent = evt.message; curMsg.classList.remove('muted'); }
             }
         }
     }

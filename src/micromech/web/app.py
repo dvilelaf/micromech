@@ -108,6 +108,10 @@ def create_web_app(
     @app.get("/api/setup/state")
     async def setup_state() -> dict:
         """Get current setup state."""
+        wallet_exists = False
+        wallet_address = None
+        needs_password = False
+
         try:
             import micromech.core.bridge as _bridge
 
@@ -116,9 +120,11 @@ def create_web_app(
                 _bridge._cached_wallet = Wallet()
             wallet_exists = True
             wallet_address = _bridge._cached_wallet.address
-        except Exception:
-            wallet_exists = False
-            wallet_address = None
+        except Exception as e:
+            err_msg = str(e).lower()
+            # Distinguish "no password" from "no iwa"
+            if "password" in err_msg or "secret" in err_msg or "none" in err_msg:
+                needs_password = True
 
         config_exists = DEFAULT_CONFIG_PATH.exists()
         chains_deployed: dict[str, dict] = {}
@@ -149,10 +155,69 @@ def create_web_app(
         return {
             "wallet_exists": wallet_exists,
             "wallet_address": wallet_address,
+            "needs_password": needs_password,
             "config_exists": config_exists,
             "chains": chains_deployed,
             "step": step,
         }
+
+    @app.post("/api/setup/wallet")
+    async def setup_wallet(
+        request: Request,
+        x_micromech_action: Optional[str] = Header(None),
+    ) -> dict:
+        """Create or unlock wallet. Body: {password: str}.
+
+        If no wallet exists, creates a new one and returns address + mnemonic.
+        If wallet exists but locked, unlocks it and returns address.
+        """
+        if not x_micromech_action:
+            return JSONResponse(
+                {"error": "Missing X-Micromech-Action header"}, 403
+            )
+
+        body = await request.json()
+        password = body.get("password", "")
+        if not password or len(password) < 4:
+            return {"error": "Password must be at least 4 characters"}
+
+        def _create_or_unlock():
+            import os
+
+            # Set password temporarily for Wallet init, then clear
+            os.environ["wallet_password"] = password
+            try:
+                from iwa.core.wallet import Wallet
+
+                import micromech.core.bridge as _bridge
+
+                wallet = Wallet()
+                _bridge._cached_wallet = wallet
+
+                # Check if mnemonic is pending (= just created)
+                mnemonic = None
+                try:
+                    pending = wallet.key_storage.get_pending_mnemonic()
+                    if pending:
+                        mnemonic = pending
+                except Exception:
+                    pass
+
+                return {
+                    "address": wallet.address,
+                    "mnemonic": mnemonic,
+                    "created": mnemonic is not None,
+                }
+            finally:
+                # Don't leave password in env longer than necessary
+                os.environ.pop("wallet_password", None)
+
+        try:
+            result = await asyncio.to_thread(_create_or_unlock)
+            return result
+        except Exception:
+            logger.exception("Wallet creation/unlock failed")
+            return {"error": "Failed to create or unlock wallet. Check password."}
 
     @app.get("/api/setup/balance")
     async def setup_balance(chain: str = "gnosis") -> dict:
