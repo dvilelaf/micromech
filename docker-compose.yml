@@ -1,0 +1,14 @@
+services:
+  micromech:
+    image: dvilela/micromech:latest
+    user: "1000:1000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Europe/Madrid
+    env_file:
+      - ./secrets.env
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    command: ["python", "-m", "micromech", "run"]

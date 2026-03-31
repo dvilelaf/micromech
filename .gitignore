@@ -6,6 +6,7 @@ dist/
 build/
 .venv/
 .env
+secrets.env
 *.db
 .pytest_cache/
 .mypy_cache/
