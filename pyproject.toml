@@ -30,7 +30,7 @@ Repository = "https://github.com/dvilelaf/micromech"
 
 [project.optional-dependencies]
 chain = [
-    "iwa>=0.5.5",
+    "iwa>=0.6.0",
 ]
 llm = [
     "llama-cpp-python>=0.2.0",
