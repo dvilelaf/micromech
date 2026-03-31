@@ -2,13 +2,15 @@
 
 Wraps iwa's ServiceManager to provide the full mech lifecycle:
 create → activate → register → deploy → create_mech → stake → run → claim → unstake
+
+Each MechLifecycle targets a specific chain via ChainConfig.
 """
 
 from typing import Any, Optional
 
 from loguru import logger
 
-from micromech.core.config import MicromechConfig
+from micromech.core.config import ChainConfig, MicromechConfig
 
 
 def _get_service_manager(config: MicromechConfig, service_key: Optional[str] = None) -> Any:
@@ -27,14 +29,19 @@ def _get_service_manager(config: MicromechConfig, service_key: Optional[str] = N
 
 
 class MechLifecycle:
-    """Full mech lifecycle management.
+    """Full mech lifecycle management for a specific chain.
 
     Wraps iwa's ServiceManager with mech-specific operations.
     Each method is idempotent where possible.
     """
 
-    def __init__(self, config: MicromechConfig):
+    def __init__(self, config: MicromechConfig, chain_name: str):
         self.config = config
+        self.chain_name = chain_name
+        if chain_name not in config.chains:
+            msg = f"Chain '{chain_name}' not found in config. Available: {list(config.chains)}"
+            raise ValueError(msg)
+        self.chain_config: ChainConfig = config.chains[chain_name]
 
     def create_service(
         self,
@@ -55,10 +62,10 @@ class MechLifecycle:
                 bond_olas=bond_olas,
                 threshold=threshold,
             )
-            logger.info("Service created: {}", service_id)
+            logger.info("Service created on {}: {}", self.chain_name, service_id)
             return service_id
         except Exception as e:
-            logger.error("Failed to create service: {}", e)
+            logger.error("Failed to create service on {}: {}", self.chain_name, e)
             return None
 
     def activate(self, service_key: str) -> bool:
@@ -66,10 +73,10 @@ class MechLifecycle:
         mgr = _get_service_manager(self.config, service_key)
         try:
             result = mgr.activate_registration()
-            logger.info("Service activated: {}", result)
+            logger.info("Service activated on {}: {}", self.chain_name, result)
             return result
         except Exception as e:
-            logger.error("Failed to activate: {}", e)
+            logger.error("Failed to activate on {}: {}", self.chain_name, e)
             return False
 
     def register_agent(self, service_key: str) -> bool:
@@ -77,10 +84,10 @@ class MechLifecycle:
         mgr = _get_service_manager(self.config, service_key)
         try:
             result = mgr.register_agent()
-            logger.info("Agent registered: {}", result)
+            logger.info("Agent registered on {}: {}", self.chain_name, result)
             return result
         except Exception as e:
-            logger.error("Failed to register agent: {}", e)
+            logger.error("Failed to register agent on {}: {}", self.chain_name, e)
             return False
 
     def deploy(self, service_key: str) -> Optional[str]:
@@ -91,10 +98,10 @@ class MechLifecycle:
         mgr = _get_service_manager(self.config, service_key)
         try:
             multisig = mgr.deploy()
-            logger.info("Service deployed, multisig: {}", multisig)
+            logger.info("Service deployed on {}, multisig: {}", self.chain_name, multisig)
             return multisig
         except Exception as e:
-            logger.error("Failed to deploy: {}", e)
+            logger.error("Failed to deploy on {}: {}", self.chain_name, e)
             return None
 
     def create_mech(
@@ -106,25 +113,19 @@ class MechLifecycle:
         """Create a mech on the marketplace.
 
         Calls marketplace.create(serviceId, factory, deliveryRate).
-        Returns the mech contract address or None.
+        Uses addresses from chain_config. Returns the mech contract address or None.
         """
-        from micromech.core.constants import (
-            DEFAULT_DELIVERY_RATE,
-            MECH_FACTORY_FIXED_PRICE_NATIVE,
-            MECH_MARKETPLACE_ADDRESS,
-        )
-
         mgr = _get_service_manager(self.config, service_key)
-        factory = factory_address or MECH_FACTORY_FIXED_PRICE_NATIVE
-        rate = delivery_rate or DEFAULT_DELIVERY_RATE
+        factory = factory_address or self.chain_config.factory_address
+        rate = delivery_rate or self.chain_config.delivery_rate
 
         try:
             bridge = mgr.wallet
-            web3 = bridge.chain_interfaces.get(self.config.mech.chain).web3
+            web3 = bridge.chain_interfaces.get(self.chain_name).web3
             from micromech.runtime.contracts import load_marketplace_abi
 
             marketplace = web3.eth.contract(
-                address=web3.to_checksum_address(MECH_MARKETPLACE_ADDRESS),
+                address=web3.to_checksum_address(self.chain_config.marketplace_address),
                 abi=load_marketplace_abi(),
             )
 
@@ -133,8 +134,6 @@ class MechLifecycle:
                 logger.error("No service ID found")
                 return None
 
-            # marketplace.create(serviceId, factory, deliveryRate)
-            # This must be called from the service owner
             tx = marketplace.functions.create(
                 service_id,
                 web3.to_checksum_address(factory),
@@ -147,7 +146,7 @@ class MechLifecycle:
             )
             receipt = web3.eth.wait_for_transaction_receipt(tx)
             if receipt["status"] != 1:
-                logger.error("Mech creation TX reverted")
+                logger.error("Mech creation TX reverted on {}", self.chain_name)
                 return None
 
             # Extract mech address from CreateMech event
@@ -155,41 +154,37 @@ class MechLifecycle:
             for log in logs:
                 if len(log.get("topics", [])) >= 2:
                     mech_addr = "0x" + log["topics"][1].hex()[-40:]
-                    logger.info("Mech created: {}", mech_addr)
+                    logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
                     return mech_addr
 
-            logger.warning("Mech created but address not found in logs")
+            logger.warning("Mech created on {} but address not found in logs", self.chain_name)
             return None
         except Exception as e:
-            logger.error("Failed to create mech: {}", e)
+            logger.error("Failed to create mech on {}: {}", self.chain_name, e)
             return None
 
     def stake(self, service_key: str, staking_contract: Optional[str] = None) -> bool:
         """Stake the service in a supply staking contract."""
-        from micromech.core.constants import SUPPLY_STAKING_ALPHA
-
-        contract = staking_contract or SUPPLY_STAKING_ALPHA
+        contract = staking_contract or self.chain_config.staking_address
         mgr = _get_service_manager(self.config, service_key)
         try:
             result = mgr.stake(staking_contract=contract)
-            logger.info("Staked in {}: {}", contract, result)
+            logger.info("Staked on {} in {}: {}", self.chain_name, contract[:16], result)
             return result
         except Exception as e:
-            logger.error("Failed to stake: {}", e)
+            logger.error("Failed to stake on {}: {}", self.chain_name, e)
             return False
 
     def unstake(self, service_key: str, staking_contract: Optional[str] = None) -> bool:
         """Unstake the service."""
-        from micromech.core.constants import SUPPLY_STAKING_ALPHA
-
-        contract = staking_contract or SUPPLY_STAKING_ALPHA
+        contract = staking_contract or self.chain_config.staking_address
         mgr = _get_service_manager(self.config, service_key)
         try:
             result = mgr.unstake(staking_contract=contract)
-            logger.info("Unstaked from {}: {}", contract, result)
+            logger.info("Unstaked on {} from {}: {}", self.chain_name, contract[:16], result)
             return result
         except Exception as e:
-            logger.error("Failed to unstake: {}", e)
+            logger.error("Failed to unstake on {}: {}", self.chain_name, e)
             return False
 
     def claim_rewards(self, service_key: str) -> bool:
@@ -197,10 +192,10 @@ class MechLifecycle:
         mgr = _get_service_manager(self.config, service_key)
         try:
             result = mgr.claim_rewards()
-            logger.info("Rewards claimed: {}", result)
+            logger.info("Rewards claimed on {}: {}", self.chain_name, result)
             return result
         except Exception as e:
-            logger.error("Failed to claim rewards: {}", e)
+            logger.error("Failed to claim rewards on {}: {}", self.chain_name, e)
             return False
 
     def get_status(self, service_key: str) -> Optional[dict]:
@@ -210,6 +205,7 @@ class MechLifecycle:
             staking = mgr.get_staking_status(force_refresh=True)
             if staking:
                 return {
+                    "chain": self.chain_name,
                     "service_id": staking.service_id,
                     "staking_state": staking.staking_state,
                     "is_staked": staking.is_staked,
@@ -217,9 +213,9 @@ class MechLifecycle:
                     "requests_this_epoch": getattr(staking, "mech_requests_this_epoch", 0),
                     "required_requests": getattr(staking, "required_mech_requests", 0),
                 }
-            return {"status": "not_staked"}
+            return {"chain": self.chain_name, "status": "not_staked"}
         except Exception as e:
-            logger.error("Failed to get status: {}", e)
+            logger.error("Failed to get status on {}: {}", self.chain_name, e)
             return None
 
     def checkpoint(self, service_key: str) -> bool:
@@ -227,10 +223,10 @@ class MechLifecycle:
         mgr = _get_service_manager(self.config, service_key)
         try:
             result = mgr.call_checkpoint()
-            logger.info("Checkpoint: {}", result)
+            logger.info("Checkpoint on {}: {}", self.chain_name, result)
             return result
         except Exception as e:
-            logger.error("Failed to checkpoint: {}", e)
+            logger.error("Failed to checkpoint on {}: {}", self.chain_name, e)
             return False
 
     def update_metadata_onchain(
@@ -238,14 +234,7 @@ class MechLifecycle:
         service_key: str,
         metadata_hash: str,
     ) -> Optional[str]:
-        """Update mech metadata hash on-chain via changeHash().
-
-        Args:
-            service_key: The service key in iwa config.
-            metadata_hash: The 0x-prefixed hash from metadata-push.
-
-        Returns tx hash or None.
-        """
+        """Update mech metadata hash on-chain via changeHash()."""
         from micromech.runtime.contracts import (
             COMPLEMENTARY_SERVICE_METADATA_ABI,
             COMPLEMENTARY_SERVICE_METADATA_ADDRESS,
@@ -253,13 +242,12 @@ class MechLifecycle:
 
         mgr = _get_service_manager(self.config, service_key)
         try:
-            chain = self.config.mech.chain
-            contract_addr = COMPLEMENTARY_SERVICE_METADATA_ADDRESS.get(chain)
+            contract_addr = COMPLEMENTARY_SERVICE_METADATA_ADDRESS.get(self.chain_name)
             if not contract_addr:
-                logger.error("No metadata contract for chain {}", chain)
+                logger.error("No metadata contract for chain {}", self.chain_name)
                 return None
 
-            web3 = mgr.wallet.chain_interfaces.get(chain).web3
+            web3 = mgr.wallet.chain_interfaces.get(self.chain_name).web3
             contract = web3.eth.contract(
                 address=web3.to_checksum_address(contract_addr),
                 abi=COMPLEMENTARY_SERVICE_METADATA_ABI,
@@ -281,13 +269,13 @@ class MechLifecycle:
                 safe_address_or_tag=str(mgr.service.multisig_address),
                 to=contract_addr,
                 value=0,
-                chain_name=chain,
+                chain_name=self.chain_name,
                 data=contract.functions.changeHash(service_id, hash_bytes).build_transaction(
                     {"from": str(mgr.service.multisig_address)}
                 )["data"],
             )
-            logger.info("Metadata updated on-chain: {}", tx_hash)
+            logger.info("Metadata updated on {}: {}", self.chain_name, tx_hash)
             return tx_hash
         except Exception as e:
-            logger.error("Failed to update metadata: {}", e)
+            logger.error("Failed to update metadata on {}: {}", self.chain_name, e)
             return None

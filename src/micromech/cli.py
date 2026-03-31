@@ -58,17 +58,21 @@ def run(
 
     from micromech.runtime.server import MechServer
 
-    # Try to load iwa bridge
-    bridge = None
+    # Create bridges for all enabled chains
+    bridges: dict = {}
     try:
         from micromech.core.bridge import IwaBridge
 
-        bridge = IwaBridge(chain_name=cfg.mech.chain)
-        logger.info("iwa bridge loaded for chain: {}", cfg.mech.chain)
-    except Exception as e:
-        logger.warning("iwa bridge not available: {}. Running without chain access.", e)
+        for chain_name in cfg.enabled_chains:
+            try:
+                bridges[chain_name] = IwaBridge(chain_name=chain_name)
+                logger.info("Bridge loaded for chain: {}", chain_name)
+            except Exception as e:
+                logger.warning("Bridge failed for {}: {}", chain_name, e)
+    except ImportError:
+        logger.warning("iwa not available. Running without chain access.")
 
-    server = MechServer(cfg, bridge=bridge)
+    server = MechServer(cfg, bridges=bridges)
     try:
         asyncio.run(server.run(with_http=not no_http))
     except KeyboardInterrupt:
@@ -87,12 +91,18 @@ def status(
 
     queue = PersistentQueue(cfg.persistence.db_path)
     counts = queue.count_by_status()
+    by_chain = queue.count_by_chain()
     recent = queue.get_recent(limit=5)
     queue.close()
 
     typer.echo("Queue Status:")
     for status_name, count in counts.items():
         typer.echo(f"  {status_name}: {count}")
+
+    if by_chain:
+        typer.echo("\nBy Chain:")
+        for chain_name, count in by_chain.items():
+            typer.echo(f"  {chain_name}: {count}")
 
     if recent:
         typer.echo("\nRecent Requests:")
@@ -179,17 +189,19 @@ def web(
         return {
             "status": "dashboard",
             "queue": queue.count_by_status(),
+            "queue_by_chain": queue.count_by_chain(),
+            "chains": list(cfg.enabled_chains.keys()),
             "tools": reg.tool_ids,
             "delivered_total": 0,
         }
 
-    def get_recent(limit):
-        return queue.get_recent(limit)
+    def get_recent(limit, chain=None):
+        return queue.get_recent(limit, chain=chain)
 
     def get_tools():
         return [{"id": t.metadata.id, "version": t.metadata.version} for t in reg.list_tools()]
 
-    web_app = create_web_app(get_status, get_recent, get_tools, noop_on_request)
+    web_app = create_web_app(get_status, get_recent, get_tools, noop_on_request, queue=queue)
     typer.echo(f"Dashboard at http://{host}:{port}")
     uvicorn.run(web_app, host=host, port=port)
 
@@ -218,7 +230,7 @@ def metadata_build() -> None:
         scan_tool_packages,
     )
 
-    tools_dir = Path(__file__).parent / "tools" / "builtin"
+    tools_dir = Path(__file__).parent / "tools"
     tools = scan_tool_packages(tools_dir)
     metadata = build_metadata(tools)
     tools_hash = build_tools_to_package_hash(tools)
@@ -239,7 +251,7 @@ def metadata_push(
         scan_tool_packages,
     )
 
-    tools_dir = Path(__file__).parent / "tools" / "builtin"
+    tools_dir = Path(__file__).parent / "tools"
     tools = scan_tool_packages(tools_dir)
     metadata = build_metadata(tools)
 
@@ -261,13 +273,14 @@ def metadata_push(
 def create_service(
     agent_id: int = typer.Option(40, help="Agent ID for the service"),
     bond: int = typer.Option(10000, help="Bond amount in OLAS"),
+    chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Create a new OLAS service on-chain."""
     from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
-    lc = MechLifecycle(cfg)
+    lc = MechLifecycle(cfg, chain_name=chain)
     service_id = lc.create_service(agent_id=agent_id, bond_olas=bond)
     if service_id:
         typer.echo(f"Service created: {service_id}")
@@ -279,13 +292,14 @@ def create_service(
 @app.command(name="deploy-mech")
 def deploy_mech(
     service_key: str = typer.Argument(help="Service key from iwa config"),
+    chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Deploy mech: activate → register → deploy Safe → create mech on marketplace."""
     from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
-    lc = MechLifecycle(cfg)
+    lc = MechLifecycle(cfg, chain_name=chain)
 
     typer.echo("Activating registration...")
     if not lc.activate(service_key):
@@ -316,6 +330,7 @@ def deploy_mech(
 @app.command(name="stake")
 def stake_cmd(
     service_key: str = typer.Argument(help="Service key from iwa config"),
+    chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     contract: Optional[str] = typer.Option(None, "--contract", help="Staking contract address"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
@@ -323,7 +338,7 @@ def stake_cmd(
     from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
-    lc = MechLifecycle(cfg)
+    lc = MechLifecycle(cfg, chain_name=chain)
     if lc.stake(service_key, staking_contract=contract):
         typer.echo("Staked successfully")
     else:
@@ -334,6 +349,7 @@ def stake_cmd(
 @app.command(name="unstake")
 def unstake_cmd(
     service_key: str = typer.Argument(help="Service key from iwa config"),
+    chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     contract: Optional[str] = typer.Option(None, "--contract"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
@@ -341,7 +357,7 @@ def unstake_cmd(
     from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
-    lc = MechLifecycle(cfg)
+    lc = MechLifecycle(cfg, chain_name=chain)
     if lc.unstake(service_key, staking_contract=contract):
         typer.echo("Unstaked successfully")
     else:
@@ -352,13 +368,14 @@ def unstake_cmd(
 @app.command(name="claim")
 def claim_cmd(
     service_key: str = typer.Argument(help="Service key from iwa config"),
+    chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Claim staking rewards."""
     from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
-    lc = MechLifecycle(cfg)
+    lc = MechLifecycle(cfg, chain_name=chain)
     if lc.claim_rewards(service_key):
         typer.echo("Rewards claimed")
     else:
@@ -369,6 +386,7 @@ def claim_cmd(
 @app.command(name="mech-status")
 def mech_status_cmd(
     service_key: str = typer.Argument(help="Service key from iwa config"),
+    chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Show mech service and staking status."""
@@ -377,7 +395,7 @@ def mech_status_cmd(
     from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
-    lc = MechLifecycle(cfg)
+    lc = MechLifecycle(cfg, chain_name=chain)
     status = lc.get_status(service_key)
     if status:
         typer.echo(json.dumps(status, indent=2))
@@ -389,13 +407,14 @@ def mech_status_cmd(
 def metadata_update(
     service_key: str = typer.Argument(help="Service key from iwa config"),
     metadata_hash: str = typer.Argument(help="0x-prefixed hash from metadata-push"),
+    chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Update mech metadata hash on-chain."""
     from micromech.management import MechLifecycle
 
     cfg = _load_config(config_path)
-    lc = MechLifecycle(cfg)
+    lc = MechLifecycle(cfg, chain_name=chain)
     tx = lc.update_metadata_onchain(service_key, metadata_hash)
     if tx:
         typer.echo(f"Metadata updated: {tx}")

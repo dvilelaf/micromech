@@ -2,15 +2,24 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from micromech.core.config import MicromechConfig
 from micromech.management import MechLifecycle
+
+CHAIN_NAME = "gnosis"
 
 
 class TestMechLifecycleInit:
     def test_creates_instance(self):
         cfg = MicromechConfig()
-        lc = MechLifecycle(cfg)
+        lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
         assert lc.config is cfg
+
+    def test_unknown_chain_raises(self):
+        cfg = MicromechConfig()
+        with pytest.raises(ValueError, match="not found in config"):
+            MechLifecycle(cfg, chain_name="unknown_chain")
 
 
 class TestMechLifecycleWithMocks:
@@ -23,7 +32,7 @@ class TestMechLifecycleWithMocks:
         mock_get_mgr.return_value = mock_mgr
 
         cfg = MicromechConfig()
-        lc = MechLifecycle(cfg)
+        lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
         result = lc.create_service(agent_id=40, bond_olas=10000)
         assert result == 42
         mock_mgr.create.assert_called_once()
@@ -34,7 +43,7 @@ class TestMechLifecycleWithMocks:
         mock_mgr.activate_registration.return_value = True
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.activate("svc-1") is True
 
     @patch("micromech.management._get_service_manager")
@@ -43,7 +52,7 @@ class TestMechLifecycleWithMocks:
         mock_mgr.register_agent.return_value = True
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.register_agent("svc-1") is True
 
     @patch("micromech.management._get_service_manager")
@@ -52,7 +61,7 @@ class TestMechLifecycleWithMocks:
         mock_mgr.deploy.return_value = "0x" + "ab" * 20
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.deploy("svc-1")
         assert result == "0x" + "ab" * 20
 
@@ -62,7 +71,7 @@ class TestMechLifecycleWithMocks:
         mock_mgr.stake.return_value = True
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.stake("svc-1") is True
 
     @patch("micromech.management._get_service_manager")
@@ -71,7 +80,7 @@ class TestMechLifecycleWithMocks:
         mock_mgr.unstake.return_value = True
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.unstake("svc-1") is True
 
     @patch("micromech.management._get_service_manager")
@@ -80,7 +89,7 @@ class TestMechLifecycleWithMocks:
         mock_mgr.claim_rewards.return_value = True
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.claim_rewards("svc-1") is True
 
     @patch("micromech.management._get_service_manager")
@@ -89,7 +98,7 @@ class TestMechLifecycleWithMocks:
         mock_mgr.call_checkpoint.return_value = True
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.checkpoint("svc-1") is True
 
     @patch("micromech.management._get_service_manager")
@@ -105,7 +114,7 @@ class TestMechLifecycleWithMocks:
         mock_mgr.get_staking_status.return_value = mock_status
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         status = lc.get_status("svc-1")
         assert status["service_id"] == 42
         assert status["is_staked"] is True
@@ -144,7 +153,7 @@ class TestCreateMech:
         }
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.create_mech("svc-1")
         assert result is not None
         assert mech_addr_hex in result
@@ -157,7 +166,7 @@ class TestCreateMech:
         mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.create_mech("svc-1")
         assert result is None
 
@@ -171,7 +180,7 @@ class TestCreateMech:
         mock_web3.eth.wait_for_transaction_receipt.return_value = {"status": 0}
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.create_mech("svc-1")
         assert result is None
 
@@ -188,7 +197,7 @@ class TestCreateMech:
         }
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.create_mech("svc-1")
         assert result is None
 
@@ -198,7 +207,7 @@ class TestCreateMech:
         mock_mgr.wallet.chain_interfaces.get.side_effect = RuntimeError("rpc error")
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.create_mech("svc-1")
         assert result is None
 
@@ -214,7 +223,7 @@ class TestUpdateMetadataOnchain:
         mock_mgr.wallet.safe_service.execute_safe_transaction.return_value = "0xtxhash"
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.update_metadata_onchain("svc-1", "0x" + "12" * 34)
         assert result == "0xtxhash"
 
@@ -226,19 +235,15 @@ class TestUpdateMetadataOnchain:
         mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.update_metadata_onchain("svc-1", "0x1234")
         assert result is None
 
-    @patch("micromech.management._get_service_manager")
-    def test_update_metadata_unknown_chain(self, mock_get_mgr):
-        mock_mgr = MagicMock()
-        mock_get_mgr.return_value = mock_mgr
-
-        cfg = MicromechConfig(mech={"chain": "unknown_chain"})
-        lc = MechLifecycle(cfg)
-        result = lc.update_metadata_onchain("svc-1", "0x1234")
-        assert result is None
+    def test_update_metadata_unknown_chain(self):
+        """Creating MechLifecycle with unknown chain raises ValueError."""
+        cfg = MicromechConfig()
+        with pytest.raises(ValueError, match="not found in config"):
+            MechLifecycle(cfg, chain_name="unknown_chain")
 
     @patch("micromech.management._get_service_manager")
     def test_update_metadata_exception(self, mock_get_mgr):
@@ -246,7 +251,7 @@ class TestUpdateMetadataOnchain:
         mock_mgr.wallet.chain_interfaces.get.side_effect = RuntimeError("fail")
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.update_metadata_onchain("svc-1", "0x1234")
         assert result is None
 
@@ -261,7 +266,7 @@ class TestUpdateMetadataOnchain:
         mock_mgr.wallet.safe_service.execute_safe_transaction.return_value = "0xtxhash"
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.update_metadata_onchain("svc-1", "12" * 34)
         assert result == "0xtxhash"
 
@@ -275,9 +280,8 @@ class TestGetServiceManager:
         ):
             with patch("micromech.management._get_service_manager") as mock_fn:
                 mock_fn.side_effect = ImportError("iwa is required")
-                import pytest as pt
 
-                with pt.raises(ImportError, match="iwa is required"):
+                with pytest.raises(ImportError, match="iwa is required"):
                     mock_fn(MicromechConfig())
 
 
@@ -288,9 +292,9 @@ class TestGetStatusEdgeCases:
         mock_mgr.get_staking_status.return_value = None
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         status = lc.get_status("svc-1")
-        assert status == {"status": "not_staked"}
+        assert status == {"status": "not_staked", "chain": CHAIN_NAME}
 
     @patch("micromech.management._get_service_manager")
     def test_get_status_failure(self, mock_get_mgr):
@@ -298,7 +302,7 @@ class TestGetStatusEdgeCases:
         mock_mgr.get_staking_status.side_effect = RuntimeError("rpc error")
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.get_status("svc-1")
         assert result is None
 
@@ -312,7 +316,7 @@ class TestMechLifecycleErrorHandling:
         mock_mgr.create.side_effect = RuntimeError("rpc error")
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.create_service() is None
 
     @patch("micromech.management._get_service_manager")
@@ -321,7 +325,7 @@ class TestMechLifecycleErrorHandling:
         mock_mgr.activate_registration.side_effect = RuntimeError("fail")
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.activate("svc") is False
 
     @patch("micromech.management._get_service_manager")
@@ -330,7 +334,7 @@ class TestMechLifecycleErrorHandling:
         mock_mgr.stake.side_effect = RuntimeError("fail")
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.stake("svc") is False
 
     @patch("micromech.management._get_service_manager")
@@ -339,7 +343,7 @@ class TestMechLifecycleErrorHandling:
         mock_mgr.unstake.side_effect = RuntimeError("fail")
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.unstake("svc") is False
 
     @patch("micromech.management._get_service_manager")
@@ -348,5 +352,5 @@ class TestMechLifecycleErrorHandling:
         mock_mgr.claim_rewards.side_effect = RuntimeError("fail")
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig())
+        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         assert lc.claim_rewards("svc") is False

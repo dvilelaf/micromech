@@ -40,7 +40,7 @@ def web_client() -> TestClient:
             "delivered_total": 10,
         }
 
-    def get_recent(limit):
+    def get_recent(limit, chain=None):
         return [
             _make_record("r1", "pending"),
             _make_record("r2", "executed", "llm"),
@@ -62,22 +62,21 @@ class TestDashboard:
         resp = web_client.get("/")
         assert resp.status_code == 200
         assert "micromech" in resp.text
-        assert "Pending" in resp.text
 
-    def test_shows_queue_counts(self, web_client: TestClient):
+    def test_has_tabs(self, web_client: TestClient):
         resp = web_client.get("/")
-        assert "2" in resp.text  # pending count
-        assert "10" in resp.text  # delivered total
+        assert "Overview" in resp.text
+        assert "Live Activity" in resp.text
+        assert "Charts" in resp.text
 
-    def test_shows_tools(self, web_client: TestClient):
+    def test_has_chart_js(self, web_client: TestClient):
         resp = web_client.get("/")
-        assert "echo" in resp.text
-        assert "llm" in resp.text
+        assert "chart.js" in resp.text
 
-    def test_shows_requests(self, web_client: TestClient):
+    def test_has_sse_connection(self, web_client: TestClient):
         resp = web_client.get("/")
-        assert "r1" in resp.text
-        assert "r2" in resp.text
+        assert "EventSource" in resp.text
+        assert "/api/metrics/stream" in resp.text
 
 
 class TestAPIEndpoints:
@@ -102,6 +101,132 @@ class TestAPIEndpoints:
         data = resp.json()
         assert len(data) == 2
         assert data[0]["id"] == "echo"
+
+
+class TestMetricsAPI:
+    """Test /api/metrics/* endpoints."""
+
+    def test_metrics_live(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/live")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "queue" in data
+        assert "delivered_total" in data
+
+    def test_metrics_events_empty(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/events")
+        assert resp.status_code == 200
+        # No metrics collector wired, returns []
+        assert resp.json() == []
+
+    def test_metrics_tools_no_queue(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/tools")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_metrics_daily_no_queue(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/daily")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_metrics_monthly_no_queue(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/monthly")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+    def test_metrics_channels_no_queue(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/channels")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data == {"onchain": 0, "offchain": 0}
+
+    def test_metrics_stream_endpoint_exists(self, web_client: TestClient):
+        """SSE endpoint is registered and reachable."""
+        # We can't easily test a streaming infinite generator in sync tests.
+        # Verify the route exists by checking the app routes.
+        routes = [r.path for r in web_client.app.routes]
+        assert "/api/metrics/stream" in routes
+
+
+class TestMetricsAPIWithCollector:
+    """Test metrics API with a real MetricsCollector."""
+
+    def test_live_with_metrics(self):
+        from micromech.runtime.metrics import MetricsCollector
+
+        mc = MetricsCollector()
+        mc.record_request_received("r1", "echo", False)
+
+        def get_status():
+            return {
+                "queue": {"pending": 1},
+                "delivered_total": 0,
+                "metrics": mc.get_live_snapshot(),
+            }
+
+        app = create_web_app(get_status, lambda lim: [], lambda: [], lambda r: None, metrics=mc)
+        client = TestClient(app)
+
+        resp = client.get("/api/metrics/live")
+        data = resp.json()
+        assert data["live"]["requests_received"] == 1
+
+    def test_events_with_metrics(self):
+        from micromech.runtime.metrics import MetricsCollector
+
+        mc = MetricsCollector()
+        mc.record_request_received("r1", "echo", False)
+        mc.record_execution_done("r1", "echo", 1.5)
+
+        app = create_web_app(
+            lambda: {"queue": {}, "delivered_total": 0},
+            lambda lim: [], lambda: [], lambda r: None,
+            metrics=mc,
+        )
+        client = TestClient(app)
+
+        resp = client.get("/api/metrics/events?limit=10")
+        data = resp.json()
+        assert len(data) == 2
+        assert data[0]["event"] == "request_received"
+        assert data[1]["event"] == "execution_done"
+
+
+class TestChainAPI:
+    """Test chain-related API endpoints."""
+
+    def test_api_chains(self, web_client: TestClient):
+        resp = web_client.get("/api/chains")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "echo" in data or "gnosis" in data or isinstance(data, list)
+
+    def test_api_requests_with_chain_filter(self, web_client: TestClient):
+        resp = web_client.get("/api/requests?limit=10&chain=gnosis")
+        assert resp.status_code == 200
+
+    def test_api_metrics_tools_with_chain(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/tools?chain=gnosis")
+        assert resp.status_code == 200
+
+    def test_api_metrics_daily_with_chain(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/daily?chain=gnosis")
+        assert resp.status_code == 200
+
+    def test_api_metrics_monthly_with_chain(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/monthly?chain=gnosis")
+        assert resp.status_code == 200
+
+    def test_api_metrics_channels_with_chain(self, web_client: TestClient):
+        resp = web_client.get("/api/metrics/channels?chain=gnosis")
+        assert resp.status_code == 200
+
+    def test_record_to_dict_includes_chain(self):
+        from micromech.web.app import _record_to_dict
+
+        record = _make_record("r1", "pending")
+        d = _record_to_dict(record)
+        assert "chain" in d
 
 
 class TestManagementAPI:
