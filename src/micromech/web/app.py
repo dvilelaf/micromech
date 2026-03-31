@@ -2,16 +2,18 @@
 
 import asyncio
 import json
+import queue as stdlib_queue
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi import FastAPI, Header, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from loguru import logger
 
-from micromech.core.config import MicromechConfig
+from micromech.core.config import DEFAULT_CONFIG_PATH, MicromechConfig
 
 if TYPE_CHECKING:
     from micromech.core.persistence import PersistentQueue
@@ -19,6 +21,51 @@ if TYPE_CHECKING:
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
+
+# CSRF header required on state-changing endpoints (browsers won't send
+# this in simple cross-origin requests)
+CSRF_HEADER = "X-Micromech-Action"
+
+_setup_needed: Optional[bool] = None
+
+# Deploy concurrency guard
+_deploy_lock = asyncio.Lock()
+
+
+def _needs_setup() -> bool:
+    """Check if micromech needs initial setup (no config or no deployed service).
+
+    Cached after first check — cleared when setup completes via _clear_setup_cache().
+    """
+    global _setup_needed  # noqa: PLW0603
+    if _setup_needed is not None:
+        return _setup_needed
+    try:
+        if not DEFAULT_CONFIG_PATH.exists():
+            _setup_needed = True
+            return True
+        cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
+        for chain_cfg in cfg.chains.values():
+            if chain_cfg.setup_complete:
+                _setup_needed = False
+                return False
+        _setup_needed = True
+        return True
+    except Exception:
+        _setup_needed = True
+        return True
+
+
+def _clear_setup_cache() -> None:
+    """Clear the setup-needed cache (call after successful deployment)."""
+    global _setup_needed  # noqa: PLW0603
+    _setup_needed = None
+
+
+def _valid_chain(chain_name: str) -> bool:
+    """Check if chain_name is a known chain."""
+    from micromech.core.constants import CHAIN_DEFAULTS
+    return chain_name in CHAIN_DEFAULTS
 
 
 def create_web_app(
@@ -47,8 +94,191 @@ def create_web_app(
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
     @app.get("/", response_class=HTMLResponse)
-    async def dashboard(request: Request) -> HTMLResponse:
+    async def dashboard(request: Request):
+        if _needs_setup():
+            return RedirectResponse(url="/setup", status_code=302)
         return templates.TemplateResponse(request=request, name="dashboard.html")
+
+    @app.get("/setup", response_class=HTMLResponse)
+    async def setup_page(request: Request) -> HTMLResponse:
+        return templates.TemplateResponse(request=request, name="setup.html")
+
+    # --- Setup API ---
+
+    @app.get("/api/setup/state")
+    async def setup_state() -> dict:
+        """Get current setup state."""
+        try:
+            import micromech.core.bridge as _bridge
+
+            if _bridge._cached_wallet is None:
+                from iwa.core.wallet import Wallet
+                _bridge._cached_wallet = Wallet()
+            wallet_exists = True
+            wallet_address = _bridge._cached_wallet.address
+        except Exception:
+            wallet_exists = False
+            wallet_address = None
+
+        config_exists = DEFAULT_CONFIG_PATH.exists()
+        chains_deployed: dict[str, dict] = {}
+
+        if config_exists:
+            try:
+                cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
+                for name, chain_cfg in cfg.chains.items():
+                    chains_deployed[name] = {
+                        "state": chain_cfg.detect_setup_state(),
+                        "complete": chain_cfg.setup_complete,
+                        "service_id": chain_cfg.service_id,
+                        "mech_address": chain_cfg.mech_address,
+                    }
+            except Exception:
+                pass
+
+        any_complete = any(c["complete"] for c in chains_deployed.values())
+        if not wallet_exists:
+            step = "wallet"
+        elif not any_complete and not chains_deployed:
+            step = "config"
+        elif not any_complete:
+            step = "deploy"
+        else:
+            step = "complete"
+
+        return {
+            "wallet_exists": wallet_exists,
+            "wallet_address": wallet_address,
+            "config_exists": config_exists,
+            "chains": chains_deployed,
+            "step": step,
+        }
+
+    @app.get("/api/setup/balance")
+    async def setup_balance(chain: str = "gnosis") -> dict:
+        """Check wallet balances for setup funding."""
+        if not _valid_chain(chain):
+            return {"error": "Unknown chain", "sufficient": False}
+        try:
+            from micromech.core.bridge import check_balances
+            from micromech.core.constants import MIN_NATIVE_WEI, MIN_OLAS_WHOLE
+
+            native, olas = check_balances(chain)
+            min_native = MIN_NATIVE_WEI.get(chain, 0.1) / 1e18
+            return {
+                "native_balance": native,
+                "olas_balance": olas,
+                "native_required": min_native,
+                "olas_required": MIN_OLAS_WHOLE,
+                "native_sufficient": native >= min_native,
+                "olas_sufficient": olas >= MIN_OLAS_WHOLE,
+                "sufficient": native >= min_native and olas >= MIN_OLAS_WHOLE,
+            }
+        except Exception:
+            logger.exception("Balance check failed for {}", chain)
+            return {"error": "Balance check failed", "sufficient": False}
+
+    @app.post("/api/setup/deploy")
+    async def setup_deploy(
+        request: Request,
+        x_micromech_action: Optional[str] = Header(None),
+    ):
+        """Deploy service via real-time SSE stream.
+
+        Requires X-Micromech-Action header (CSRF protection).
+        Only one deploy at a time (concurrency guard).
+        """
+        if not x_micromech_action:
+            return JSONResponse(
+                {"error": "Missing X-Micromech-Action header"}, 403
+            )
+
+        body = await request.json() if request.headers.get("content-type") else {}
+        chain_name = body.get("chain", "gnosis")
+
+        if not _valid_chain(chain_name):
+            return JSONResponse({"error": f"Unknown chain: {chain_name}"}, 400)
+
+        if _deploy_lock.locked():
+            return JSONResponse(
+                {"error": "Deploy already in progress"}, 409
+            )
+
+        progress_q: stdlib_queue.Queue[dict] = stdlib_queue.Queue()
+
+        def _run_deploy() -> dict:
+            """Run full_deploy in a thread, pushing events to queue."""
+            from micromech.core.config import ChainConfig
+            from micromech.core.constants import CHAIN_DEFAULTS
+            from micromech.management import MechLifecycle
+
+            if DEFAULT_CONFIG_PATH.exists():
+                cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
+            else:
+                cfg = MicromechConfig()
+            defaults = CHAIN_DEFAULTS.get(chain_name, {})
+
+            if chain_name not in cfg.chains:
+                cfg.chains[chain_name] = ChainConfig(
+                    chain=chain_name,
+                    marketplace_address=defaults.get("marketplace", ""),
+                    factory_address=defaults.get("factory", ""),
+                    staking_address=defaults.get("staking", ""),
+                )
+
+            def on_progress(step, total, msg, success=True):
+                progress_q.put({
+                    "step": step, "total": total,
+                    "message": msg, "success": success,
+                })
+
+            lc = MechLifecycle(cfg, chain_name=chain_name)
+            result = lc.full_deploy(on_progress=on_progress)
+
+            # Update config with results
+            cfg.chains[chain_name].apply_deploy_result(result)
+            cfg.save(DEFAULT_CONFIG_PATH)
+
+            return result
+
+        async def deploy_stream():
+            async with _deploy_lock:
+                loop = asyncio.get_event_loop()
+                future = loop.run_in_executor(None, _run_deploy)
+                try:
+                    while not future.done():
+                        await asyncio.sleep(0.5)
+                        while not progress_q.empty():
+                            evt = progress_q.get_nowait()
+                            yield f"data: {json.dumps(evt)}\n\n"
+
+                    result = future.result()
+                    # Drain remaining events
+                    while not progress_q.empty():
+                        evt = progress_q.get_nowait()
+                        yield f"data: {json.dumps(evt)}\n\n"
+
+                    _clear_setup_cache()
+                    yield f"data: {json.dumps({'step': 'done', 'result': result})}\n\n"
+                except Exception:
+                    logger.exception("Deploy failed for {}", chain_name)
+                    err = {"step": "error", "message": "Deployment failed. Check server logs."}
+                    yield f"data: {json.dumps(err)}\n\n"
+
+        return StreamingResponse(
+            deploy_stream(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        )
+
+    @app.get("/api/setup/chains")
+    async def setup_chains() -> list[dict]:
+        """Available chains for setup."""
+        from micromech.core.constants import CHAIN_DEFAULTS
+        return [
+            {"name": name, "contracts": contracts}
+            for name, contracts in CHAIN_DEFAULTS.items()
+        ]
 
     # --- Status API ---
 
@@ -169,12 +399,82 @@ def create_web_app(
             },
         )
 
+    # --- Staking & Health API (Phase 4) ---
+
+    @app.get("/api/staking/status")
+    async def staking_status(chain: Optional[str] = None) -> dict:
+        """Get staking status for all configured chains (or one)."""
+        def _get_staking() -> dict:
+            from micromech.management import MechLifecycle
+
+            config = MicromechConfig.load()
+            results = {}
+            chains_to_check = (
+                {chain: config.chains[chain]}
+                if chain and chain in config.chains
+                else config.enabled_chains
+            )
+            for name, cfg in chains_to_check.items():
+                if not cfg.service_key:
+                    results[name] = {"status": "not_configured"}
+                    continue
+                try:
+                    lc = MechLifecycle(config, chain_name=name)
+                    status = lc.get_status(cfg.service_key)
+                    results[name] = status or {"status": "unknown"}
+                except Exception:
+                    results[name] = {"status": "error"}
+            return results
+
+        try:
+            return await asyncio.to_thread(_get_staking)
+        except Exception:
+            logger.exception("Staking status check failed")
+            return {"error": "Staking status check failed"}
+
+    @app.get("/api/health")
+    async def health_check() -> dict:
+        """Health check with per-chain RPC status."""
+        health: dict[str, Any] = {
+            "status": "ok",
+            "timestamp": time.time(),
+        }
+
+        if metrics:
+            health["uptime"] = metrics.uptime_seconds
+            health["requests_received"] = metrics.requests_received
+            health["deliveries_completed"] = metrics.deliveries_completed
+
+        # Per-chain health
+        chain_health: dict[str, Any] = {}
+        status_data = get_status()
+        for chain_name in status_data.get("chains", []):
+            chain_health[chain_name] = {"status": "listening"}
+        health["chains"] = chain_health
+
+        return health
+
     # --- Management API ---
 
     @app.post("/api/management/{action}")
-    async def management_action(action: str, body: dict = {}) -> dict:
-        """Execute a management action (stake, unstake, claim, checkpoint)."""
-        try:
+    async def management_action(
+        action: str,
+        request: Request,
+        x_micromech_action: Optional[str] = Header(None),
+    ) -> dict:
+        """Execute a management action (stake, unstake, claim, checkpoint).
+
+        Requires X-Micromech-Action header (CSRF protection).
+        """
+        if not x_micromech_action:
+            return JSONResponse(
+                {"success": False, "error": "Missing X-Micromech-Action header"},
+                403,
+            )
+
+        body = await request.json() if request.headers.get("content-type") else {}
+
+        def _run_action() -> dict:
             from micromech.management import MechLifecycle
 
             config = MicromechConfig.load()
@@ -199,8 +499,12 @@ def create_web_app(
                 return {"success": True, "data": status}
             else:
                 return {"success": False, "error": f"Unknown action: {action}"}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+
+        try:
+            return await asyncio.to_thread(_run_action)
+        except Exception:
+            logger.exception("Management action '{}' failed", action)
+            return {"success": False, "error": "Action failed. Check server logs."}
 
     return app
 

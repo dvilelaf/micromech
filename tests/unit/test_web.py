@@ -58,25 +58,41 @@ def web_client() -> TestClient:
 
 
 class TestDashboard:
-    def test_renders_html(self, web_client: TestClient):
+    @patch("micromech.web.app._needs_setup", return_value=False)
+    def test_renders_html(self, mock_setup, web_client: TestClient):
         resp = web_client.get("/")
         assert resp.status_code == 200
         assert "micromech" in resp.text
 
-    def test_has_tabs(self, web_client: TestClient):
+    @patch("micromech.web.app._needs_setup", return_value=False)
+    def test_has_tabs(self, mock_setup, web_client: TestClient):
         resp = web_client.get("/")
         assert "Overview" in resp.text
         assert "Live Activity" in resp.text
         assert "Charts" in resp.text
 
-    def test_has_chart_js(self, web_client: TestClient):
+    @patch("micromech.web.app._needs_setup", return_value=False)
+    def test_has_chart_js(self, mock_setup, web_client: TestClient):
         resp = web_client.get("/")
         assert "chart.js" in resp.text
 
-    def test_has_sse_connection(self, web_client: TestClient):
+    @patch("micromech.web.app._needs_setup", return_value=False)
+    def test_has_sse_connection(self, mock_setup, web_client: TestClient):
         resp = web_client.get("/")
         assert "EventSource" in resp.text
         assert "/api/metrics/stream" in resp.text
+
+    def test_redirects_to_setup_when_not_configured(self, web_client: TestClient):
+        with patch("micromech.web.app._needs_setup", return_value=True):
+            resp = web_client.get("/", follow_redirects=False)
+            assert resp.status_code == 302
+            assert "/setup" in resp.headers["location"]
+
+    def test_setup_page_renders(self, web_client: TestClient):
+        resp = web_client.get("/setup")
+        assert resp.status_code == 200
+        assert "setup" in resp.text.lower()
+        assert "micromech" in resp.text.lower()
 
 
 class TestAPIEndpoints:
@@ -232,6 +248,8 @@ class TestChainAPI:
 class TestManagementAPI:
     """Test the /api/management/{action} endpoint."""
 
+    CSRF = {"X-Micromech-Action": "test"}
+
     @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
     def test_stake_action(self, mock_cfg_cls, mock_lc_cls, web_client: TestClient):
@@ -242,6 +260,7 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/stake",
             json={"service_key": "svc-1"},
+            headers=self.CSRF,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -258,6 +277,7 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/unstake",
             json={"service_key": "svc-1"},
+            headers=self.CSRF,
         )
         assert resp.status_code == 200
         assert resp.json()["success"] is True
@@ -272,6 +292,7 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/claim",
             json={"service_key": "svc-1"},
+            headers=self.CSRF,
         )
         assert resp.status_code == 200
         assert resp.json()["success"] is True
@@ -287,6 +308,7 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/checkpoint",
             json={"service_key": "svc-1"},
+            headers=self.CSRF,
         )
         assert resp.status_code == 200
         assert resp.json()["success"] is True
@@ -301,6 +323,7 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/status",
             json={"service_key": "svc-1"},
+            headers=self.CSRF,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -313,6 +336,7 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/bogus",
             json={"service_key": "svc-1"},
+            headers=self.CSRF,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -326,11 +350,21 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/stake",
             json={"service_key": "svc-1"},
+            headers=self.CSRF,
         )
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is False
-        assert "config error" in data["error"]
+        # Error message is sanitized — no raw exception in response
+        assert "server logs" in data["error"].lower() or "failed" in data["error"].lower()
+
+    def test_management_csrf_required(self, web_client: TestClient):
+        """Requests without X-Micromech-Action header are rejected."""
+        resp = web_client.post(
+            "/api/management/stake",
+            json={"service_key": "svc-1"},
+        )
+        assert resp.status_code == 403
 
 
 class TestRecordToDict:
@@ -384,3 +418,38 @@ class TestRecordToDict:
         )
         d = _record_to_dict(record)
         assert d["tx_hash"] == "0xdeadbeef"
+
+
+class TestSetupAPI:
+    def test_setup_state(self, web_client: TestClient):
+        mock_wallet = MagicMock()
+        mock_wallet.address = "0x" + "11" * 20
+        mock_module = MagicMock(Wallet=MagicMock(return_value=mock_wallet))
+        with (
+            patch("micromech.web.app.DEFAULT_CONFIG_PATH") as mock_path,
+            patch.dict("sys.modules", {"iwa.core.wallet": mock_module}),
+            patch("micromech.core.bridge._cached_wallet", None),
+        ):
+            mock_path.exists.return_value = False
+            resp = web_client.get("/api/setup/state")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "wallet_exists" in data
+        assert "step" in data
+
+    def test_setup_chains(self, web_client: TestClient):
+        resp = web_client.get("/api/setup/chains")
+        assert resp.status_code == 200
+        chains = resp.json()
+        assert isinstance(chains, list)
+        assert len(chains) >= 1
+        assert chains[0]["name"] == "gnosis"
+
+
+class TestHealthAPI:
+    def test_health_check(self, web_client: TestClient):
+        resp = web_client.get("/api/health")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert "timestamp" in data

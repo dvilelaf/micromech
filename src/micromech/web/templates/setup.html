@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>micromech — setup</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0c0e14;
+            --card-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --primary-color: #5865f2;
+            --primary-hover: #4752c4;
+            --accent-color: #00d2ff;
+            --text-color: #f1f3f5;
+            --text-muted: #adb5bd;
+            --success: #2ecc71;
+            --error: #e74c3c;
+            --warning: #f1c40f;
+            --font-main: "Outfit", sans-serif;
+            --font-mono: "JetBrains Mono", monospace;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: var(--font-main);
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .background-blobs { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; filter: blur(80px); opacity: 0.4; }
+        .blob { position: absolute; border-radius: 50%; }
+        .blob-1 { width: 500px; height: 500px; background: var(--primary-color); top: -100px; right: -100px; }
+        .blob-2 { width: 400px; height: 400px; background: var(--accent-color); bottom: -100px; left: -100px; }
+        .blob-3 { width: 300px; height: 300px; background: #9b59b6; top: 40%; left: 30%; }
+
+        .wizard {
+            width: 100%;
+            max-width: 640px;
+            padding: 2rem;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .logo h1 {
+            font-size: 2rem;
+            font-weight: 600;
+        }
+        .logo h1 span { font-weight: 300; color: var(--text-muted); }
+        .logo p { color: var(--text-muted); margin-top: 0.5rem; font-size: 0.95rem; }
+
+        .glass {
+            background: var(--card-bg);
+            backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 2rem;
+        }
+
+        /* Progress bar */
+        .progress-bar {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+        }
+        .progress-step {
+            flex: 1;
+            height: 4px;
+            border-radius: 2px;
+            background: rgba(255,255,255,0.1);
+            transition: background 0.3s;
+        }
+        .progress-step.active { background: var(--accent-color); }
+        .progress-step.done { background: var(--success); }
+
+        /* Step content */
+        .step { display: none; }
+        .step.active { display: block; }
+        .step h2 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        .step p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            margin-bottom: 1.5rem;
+            line-height: 1.5;
+        }
+
+        /* Address display */
+        .address-box {
+            background: rgba(0,0,0,0.3);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            padding: 1rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            word-break: break-all;
+        }
+        .copy-btn {
+            background: var(--primary-color);
+            border: none;
+            color: white;
+            padding: 0.4rem 0.8rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: var(--font-main);
+            font-size: 0.8rem;
+            white-space: nowrap;
+            margin-left: 1rem;
+        }
+        .copy-btn:hover { background: var(--primary-hover); }
+
+        /* Balance display */
+        .balance-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .balance-label { color: var(--text-muted); font-size: 0.85rem; }
+        .balance-value {
+            font-family: var(--font-mono);
+            font-size: 0.9rem;
+        }
+        .balance-ok { color: var(--success); }
+        .balance-waiting { color: var(--warning); }
+
+        /* Chain selector */
+        .chain-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+        }
+        .chain-option {
+            background: rgba(255,255,255,0.03);
+            border: 2px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .chain-option:hover { border-color: var(--accent-color); background: rgba(255,255,255,0.06); }
+        .chain-option.selected { border-color: var(--accent-color); background: rgba(0,210,255,0.1); }
+        .chain-option .chain-name { font-weight: 600; font-size: 0.95rem; }
+        .chain-option .chain-badge {
+            display: inline-block;
+            font-size: 0.7rem;
+            color: var(--accent-color);
+            margin-top: 0.3rem;
+        }
+
+        /* Deploy progress */
+        .deploy-step {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.6rem 0;
+        }
+        .deploy-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            flex-shrink: 0;
+        }
+        .deploy-icon.pending { background: rgba(255,255,255,0.1); color: var(--text-muted); }
+        .deploy-icon.running { background: rgba(0,210,255,0.2); color: var(--accent-color); animation: pulse-icon 1.5s infinite; }
+        .deploy-icon.done { background: rgba(46,204,113,0.2); color: var(--success); }
+        .deploy-icon.error { background: rgba(231,76,60,0.2); color: var(--error); }
+        @keyframes pulse-icon {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .deploy-msg { font-size: 0.9rem; }
+        .deploy-msg.muted { color: var(--text-muted); }
+
+        /* Buttons */
+        .btn {
+            display: inline-block;
+            padding: 0.75rem 2rem;
+            border-radius: 10px;
+            font-family: var(--font-main);
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+        .btn-primary { background: var(--primary-color); color: white; }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-accent { background: var(--accent-color); color: #0c0e14; }
+        .btn-accent:hover { opacity: 0.9; }
+        .btn-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 1.5rem;
+        }
+
+        /* Success screen */
+        .success-icon {
+            width: 64px;
+            height: 64px;
+            border-radius: 50%;
+            background: rgba(46,204,113,0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2rem;
+            margin: 0 auto 1.5rem;
+        }
+        .success-text { text-align: center; }
+        .success-text h2 { margin-bottom: 0.5rem; }
+        .success-text .cmd {
+            background: rgba(0,0,0,0.3);
+            border-radius: 8px;
+            padding: 0.75rem 1rem;
+            font-family: var(--font-mono);
+            font-size: 0.85rem;
+            margin: 1rem 0;
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+
+    <div class="wizard">
+        <div class="logo">
+            <h1>micromech <span>setup</span></h1>
+            <p>Get your mech earning OLAS rewards in 3 minutes</p>
+        </div>
+
+        <div class="glass">
+            <div class="progress-bar">
+                <div class="progress-step" id="prog-1"></div>
+                <div class="progress-step" id="prog-2"></div>
+                <div class="progress-step" id="prog-3"></div>
+                <div class="progress-step" id="prog-4"></div>
+                <div class="progress-step" id="prog-5"></div>
+            </div>
+
+            <!-- Step 1: Wallet -->
+            <div class="step" id="step-1">
+                <h2>Wallet</h2>
+                <p>Checking for an existing iwa wallet...</p>
+                <div id="wallet-status"></div>
+                <div class="btn-row">
+                    <span></span>
+                    <button class="btn btn-primary" id="btn-wallet-next" disabled>Next</button>
+                </div>
+            </div>
+
+            <!-- Step 2: Chain Selection -->
+            <div class="step" id="step-2">
+                <h2>Select Chain</h2>
+                <p>Choose which blockchain to deploy your mech on. Gnosis is recommended — it has the lowest gas fees.</p>
+                <div class="chain-grid" id="chain-grid"></div>
+                <div class="btn-row">
+                    <button class="btn btn-primary" onclick="goStep(1)">Back</button>
+                    <button class="btn btn-primary" id="btn-chain-next" disabled>Next</button>
+                </div>
+            </div>
+
+            <!-- Step 3: Fund Wallet -->
+            <div class="step" id="step-3">
+                <h2>Fund Your Wallet</h2>
+                <p>Send funds to your wallet address. Your mech needs gas tokens and OLAS for the staking bond.</p>
+                <div class="address-box">
+                    <span id="fund-address">...</span>
+                    <button class="copy-btn" onclick="copyAddress()">Copy</button>
+                </div>
+                <div id="balance-display">
+                    <div class="balance-row">
+                        <span class="balance-label" id="native-label">Native</span>
+                        <span class="balance-value balance-waiting" id="native-bal">checking...</span>
+                    </div>
+                    <div class="balance-row">
+                        <span class="balance-label">OLAS</span>
+                        <span class="balance-value balance-waiting" id="olas-bal">checking...</span>
+                    </div>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-primary" onclick="goStep(2)">Back</button>
+                    <button class="btn btn-primary" id="btn-fund-next" disabled>Next</button>
+                </div>
+            </div>
+
+            <!-- Step 4: Tools -->
+            <div class="step" id="step-4">
+                <h2>Tools</h2>
+                <p>Your mech will use these tools to respond to on-chain requests.</p>
+                <div style="margin-bottom: 1rem;">
+                    <div class="balance-row">
+                        <span>echo</span>
+                        <span style="color: var(--success);">enabled</span>
+                    </div>
+                    <div class="balance-row">
+                        <span>llm (Qwen 0.5B, CPU)</span>
+                        <span style="color: var(--success);">enabled</span>
+                    </div>
+                </div>
+                <p style="font-size: 0.8rem;">Edit <code style="font-family: var(--font-mono);">~/.micromech/config.yaml</code> to customize tools later.</p>
+                <div class="btn-row">
+                    <button class="btn btn-primary" onclick="goStep(3)">Back</button>
+                    <button class="btn btn-accent" id="btn-deploy" onclick="startDeploy()">Deploy</button>
+                </div>
+            </div>
+
+            <!-- Step 5: Deploy -->
+            <div class="step" id="step-5">
+                <h2>Deploying to OLAS Protocol</h2>
+                <p>Executing on-chain transactions. This may take a minute...</p>
+                <div id="deploy-progress">
+                    <div class="deploy-step" id="ds-1">
+                        <div class="deploy-icon pending">1</div>
+                        <span class="deploy-msg muted">Create service</span>
+                    </div>
+                    <div class="deploy-step" id="ds-2">
+                        <div class="deploy-icon pending">2</div>
+                        <span class="deploy-msg muted">Activate registration</span>
+                    </div>
+                    <div class="deploy-step" id="ds-3">
+                        <div class="deploy-icon pending">3</div>
+                        <span class="deploy-msg muted">Register agent</span>
+                    </div>
+                    <div class="deploy-step" id="ds-4">
+                        <div class="deploy-icon pending">4</div>
+                        <span class="deploy-msg muted">Deploy Safe multisig</span>
+                    </div>
+                    <div class="deploy-step" id="ds-5">
+                        <div class="deploy-icon pending">5</div>
+                        <span class="deploy-msg muted">Create mech on marketplace</span>
+                    </div>
+                    <div class="deploy-step" id="ds-6">
+                        <div class="deploy-icon pending">6</div>
+                        <span class="deploy-msg muted">Stake service</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 6: Done -->
+            <div class="step" id="step-6">
+                <div class="success-icon">&#10003;</div>
+                <div class="success-text">
+                    <h2>Your mech is ready!</h2>
+                    <p>Start earning OLAS rewards by running:</p>
+                    <div class="cmd">micromech run</div>
+                    <p style="margin-top: 1rem;">
+                        <a href="/" class="btn btn-accent">Go to Dashboard</a>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // State
+    let currentStep = 1;
+    let selectedChain = 'gnosis';
+    let walletAddress = null;
+    let balancePollId = null;
+
+    const NATIVE_SYMBOLS = {
+        gnosis: 'xDAI', base: 'ETH', ethereum: 'ETH',
+        polygon: 'POL', optimism: 'ETH', arbitrum: 'ETH', celo: 'CELO'
+    };
+
+    // --- Navigation ---
+    function goStep(n) {
+        document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+        document.getElementById('step-' + n).classList.add('active');
+        currentStep = n;
+
+        // Update progress bar
+        for (let i = 1; i <= 5; i++) {
+            const el = document.getElementById('prog-' + i);
+            el.classList.remove('active', 'done');
+            if (i < n) el.classList.add('done');
+            else if (i === n) el.classList.add('active');
+        }
+
+        if (n === 3) startBalancePoll();
+        else stopBalancePoll();
+    }
+
+    // --- Step 1: Check wallet ---
+    async function checkWallet() {
+        try {
+            const res = await fetch('/api/setup/state');
+            const data = await res.json();
+
+            const el = document.getElementById('wallet-status');
+            if (data.wallet_exists) {
+                walletAddress = data.wallet_address;
+                // Build DOM safely — use textContent for address (no innerHTML injection)
+                const box = document.createElement('div');
+                box.className = 'address-box';
+                const addrSpan = document.createElement('span');
+                addrSpan.textContent = walletAddress;
+                box.appendChild(addrSpan);
+                const status = document.createElement('p');
+                status.style.cssText = 'color: var(--success); font-size: 0.9rem;';
+                status.textContent = 'Wallet found';
+                el.innerHTML = '';
+                el.appendChild(box);
+                el.appendChild(status);
+
+                document.getElementById('btn-wallet-next').disabled = false;
+
+                // If already complete, skip to done
+                if (data.step === 'complete') {
+                    goStep(6);
+                    return;
+                }
+            } else {
+                const err = document.createElement('p');
+                err.style.color = 'var(--error)';
+                err.textContent = 'No wallet found.';
+                const hint = document.createElement('p');
+                hint.style.cssText = 'color: var(--text-muted); margin-top: 0.5rem;';
+                hint.appendChild(document.createTextNode('Create a wallet first: '));
+                const code = document.createElement('code');
+                code.style.fontFamily = 'var(--font-mono)';
+                code.textContent = 'iwa wallet create';
+                hint.appendChild(code);
+                hint.appendChild(document.createElement('br'));
+                hint.appendChild(document.createTextNode('Then refresh this page.'));
+                el.innerHTML = '';
+                el.appendChild(err);
+                el.appendChild(hint);
+            }
+        } catch (e) {
+            const errEl = document.getElementById('wallet-status');
+            const p = document.createElement('p');
+            p.style.color = 'var(--error)';
+            p.textContent = 'Cannot connect to backend: ' + e.message;
+            errEl.innerHTML = '';
+            errEl.appendChild(p);
+        }
+    }
+
+    // --- Step 2: Chain selection ---
+    async function loadChains() {
+        try {
+            const res = await fetch('/api/setup/chains');
+            const chains = await res.json();
+            const grid = document.getElementById('chain-grid');
+            grid.innerHTML = '';
+
+            const labels = {
+                gnosis: 'Recommended', base: '', ethereum: 'Expensive gas',
+                polygon: '', optimism: '', arbitrum: '', celo: ''
+            };
+
+            chains.forEach(c => {
+                const div = document.createElement('div');
+                div.className = 'chain-option' + (c.name === selectedChain ? ' selected' : '');
+                div.onclick = () => selectChain(c.name);
+                const nameEl = document.createElement('div');
+                nameEl.className = 'chain-name';
+                nameEl.textContent = c.name;
+                div.appendChild(nameEl);
+                if (labels[c.name]) {
+                    const badge = document.createElement('div');
+                    badge.className = 'chain-badge';
+                    badge.textContent = labels[c.name];
+                    div.appendChild(badge);
+                }
+                grid.appendChild(div);
+            });
+
+            document.getElementById('btn-chain-next').disabled = false;
+        } catch (e) {
+            console.error('Failed to load chains:', e);
+        }
+    }
+
+    function selectChain(name) {
+        selectedChain = name;
+        document.querySelectorAll('.chain-option').forEach(el => {
+            el.classList.toggle('selected', el.querySelector('.chain-name').textContent === name);
+        });
+        document.getElementById('btn-chain-next').disabled = false;
+    }
+
+    // --- Step 3: Balance polling ---
+    function startBalancePoll() {
+        document.getElementById('fund-address').textContent = walletAddress || '...';
+        document.getElementById('native-label').textContent = NATIVE_SYMBOLS[selectedChain] || 'Native';
+        pollBalance();
+        balancePollId = setInterval(pollBalance, 10000);
+    }
+
+    function stopBalancePoll() {
+        if (balancePollId) { clearInterval(balancePollId); balancePollId = null; }
+    }
+
+    async function pollBalance() {
+        try {
+            const res = await fetch(`/api/setup/balance?chain=${selectedChain}`);
+            const data = await res.json();
+
+            if (data.error) return;
+
+            const nativeEl = document.getElementById('native-bal');
+            const olasEl = document.getElementById('olas-bal');
+
+            nativeEl.textContent = `${data.native_balance.toFixed(4)} / ${data.native_required} needed`;
+            nativeEl.className = 'balance-value ' + (data.native_sufficient ? 'balance-ok' : 'balance-waiting');
+
+            olasEl.textContent = `${data.olas_balance.toLocaleString()} / ${data.olas_required.toLocaleString()} needed`;
+            olasEl.className = 'balance-value ' + (data.olas_sufficient ? 'balance-ok' : 'balance-waiting');
+
+            document.getElementById('btn-fund-next').disabled = !data.sufficient;
+        } catch (e) {
+            console.error('Balance poll error:', e);
+        }
+    }
+
+    function copyAddress() {
+        if (walletAddress) {
+            navigator.clipboard.writeText(walletAddress);
+            const btn = document.querySelector('.copy-btn');
+            btn.textContent = 'Copied!';
+            setTimeout(() => btn.textContent = 'Copy', 2000);
+        }
+    }
+
+    // --- Step 5: Deploy ---
+    async function startDeploy() {
+        goStep(5);
+        document.getElementById('btn-deploy').disabled = true;
+
+        try {
+            const res = await fetch('/api/setup/deploy', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-Micromech-Action': 'deploy',
+                },
+                body: JSON.stringify({ chain: selectedChain })
+            });
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        const evt = JSON.parse(line.slice(6));
+                        handleDeployEvent(evt);
+                    } catch (e) { /* skip */ }
+                }
+            }
+        } catch (e) {
+            const errStep = document.querySelector('.deploy-icon.running') ||
+                            document.querySelector('.deploy-icon.pending');
+            if (errStep) {
+                errStep.className = 'deploy-icon error';
+                errStep.textContent = '!';
+            }
+        }
+    }
+
+    function handleDeployEvent(evt) {
+        if (evt.step === 'done') {
+            // Mark all as done and go to success
+            document.querySelectorAll('.deploy-icon').forEach(el => {
+                el.className = 'deploy-icon done';
+                el.innerHTML = '&#10003;';
+            });
+            setTimeout(() => goStep(6), 1000);
+            return;
+        }
+
+        if (evt.step === 'error') {
+            const running = document.querySelector('.deploy-icon.running');
+            if (running) {
+                running.className = 'deploy-icon error';
+                running.textContent = '!';
+                running.parentElement.querySelector('.deploy-msg').textContent = evt.message;
+            }
+            return;
+        }
+
+        if (typeof evt.step === 'number') {
+            // Mark previous steps as done
+            for (let i = 1; i < evt.step; i++) {
+                const icon = document.querySelector(`#ds-${i} .deploy-icon`);
+                if (icon) { icon.className = 'deploy-icon done'; icon.innerHTML = '&#10003;'; }
+                const msg = document.querySelector(`#ds-${i} .deploy-msg`);
+                if (msg) msg.classList.remove('muted');
+            }
+
+            // Mark current step
+            const curIcon = document.querySelector(`#ds-${evt.step} .deploy-icon`);
+            const curMsg = document.querySelector(`#ds-${evt.step} .deploy-msg`);
+            if (curIcon) {
+                if (evt.success) {
+                    curIcon.className = 'deploy-icon done';
+                    curIcon.innerHTML = '&#10003;';
+                } else {
+                    curIcon.className = 'deploy-icon error';
+                    curIcon.textContent = '!';
+                }
+            }
+            if (curMsg) {
+                curMsg.textContent = evt.message;
+                curMsg.classList.remove('muted');
+            }
+        }
+    }
+
+    // --- Init ---
+    document.getElementById('btn-wallet-next').onclick = () => goStep(2);
+    document.getElementById('btn-chain-next').onclick = () => goStep(3);
+    document.getElementById('btn-fund-next').onclick = () => goStep(4);
+
+    goStep(1);
+    checkWallet();
+    loadChains();
+    </script>
+</body>
+</html>
