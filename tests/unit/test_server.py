@@ -4,7 +4,8 @@ import asyncio
 
 import pytest
 
-from micromech.core.config import MicromechConfig, PersistenceConfig
+from micromech.core.config import ChainConfig, MicromechConfig, PersistenceConfig
+from micromech.core.constants import CHAIN_DEFAULTS
 from micromech.core.models import MechRequest, ToolResult
 from micromech.core.persistence import PersistentQueue
 from micromech.runtime.server import MechServer
@@ -23,8 +24,8 @@ class TestMechServerInit:
         assert server.queue is not None
         assert server.registry is not None
         assert server.executor is not None
-        assert server.listener is not None
-        assert server.delivery is not None
+        assert server.listeners["gnosis"] is not None
+        assert server.deliveries["gnosis"] is not None
         server.shutdown()
 
     def test_load_tools(self, server_config: MicromechConfig):
@@ -224,4 +225,73 @@ class TestMechServerRun:
         await asyncio.wait_for(server.run(with_http=False), timeout=3.0)
 
         assert server.registry.has("echo")
+        server.shutdown()
+
+
+class TestMultiChainServer:
+    """Test multi-chain listener/delivery creation."""
+
+    def test_multi_chain_creates_per_chain_components(self, tmp_path):
+        gnosis = CHAIN_DEFAULTS["gnosis"]
+        base = CHAIN_DEFAULTS["base"]
+        config = MicromechConfig(
+            persistence=PersistenceConfig(db_path=tmp_path / "mc.db"),
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    marketplace_address=gnosis["marketplace"],
+                    factory_address=gnosis["factory"],
+                    staking_address=gnosis["staking"],
+                ),
+                "base": ChainConfig(
+                    chain="base",
+                    marketplace_address=base["marketplace"],
+                    factory_address=base["factory"],
+                    staking_address=base["staking"],
+                ),
+            },
+        )
+        server = MechServer(config)
+        assert len(server.listeners) == 2
+        assert len(server.deliveries) == 2
+        assert "gnosis" in server.listeners
+        assert "base" in server.listeners
+        server.shutdown()
+
+    def test_disabled_chain_excluded(self, tmp_path):
+        gnosis = CHAIN_DEFAULTS["gnosis"]
+        base = CHAIN_DEFAULTS["base"]
+        config = MicromechConfig(
+            persistence=PersistenceConfig(db_path=tmp_path / "mc.db"),
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    marketplace_address=gnosis["marketplace"],
+                    factory_address=gnosis["factory"],
+                    staking_address=gnosis["staking"],
+                ),
+                "base": ChainConfig(
+                    chain="base",
+                    enabled=False,
+                    marketplace_address=base["marketplace"],
+                    factory_address=base["factory"],
+                    staking_address=base["staking"],
+                ),
+            },
+        )
+        server = MechServer(config)
+        assert len(server.listeners) == 1
+        assert "gnosis" in server.listeners
+        assert "base" not in server.listeners
+        server.shutdown()
+
+    def test_get_status_includes_chains(self, tmp_path):
+        config = MicromechConfig(
+            persistence=PersistenceConfig(db_path=tmp_path / "mc.db"),
+        )
+        server = MechServer(config)
+        status = server.get_status()
+        assert "chains" in status
+        assert "gnosis" in status["chains"]
+        assert "queue_by_chain" in status
         server.shutdown()

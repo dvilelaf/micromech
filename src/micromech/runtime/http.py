@@ -31,6 +31,7 @@ class RequestPayload(BaseModel):
 
     prompt: str = Field(max_length=MAX_PROMPT_LENGTH)
     tool: str = "echo"
+    chain: str = "gnosis"
     request_id: Optional[str] = None
     sender: Optional[str] = None
     signature: Optional[str] = None  # hex-encoded signature for off-chain delivery
@@ -77,6 +78,15 @@ def create_app(
         request_id = payload.request_id or f"http-{uuid.uuid4().hex[:12]}"
         sender = payload.sender or ""
 
+        # Validate chain
+        status = get_status()
+        valid_chains = status.get("chains", [])
+        if valid_chains and payload.chain not in valid_chains:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unknown chain: {payload.chain}. Available: {valid_chains}",
+            )
+
         try:
             if sender:
                 validate_eth_address(sender)
@@ -85,6 +95,7 @@ def create_app(
 
         req = MechRequest(
             request_id=request_id,
+            chain=payload.chain,
             sender=sender,
             prompt=payload.prompt,
             tool=payload.tool,

@@ -7,12 +7,30 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from micromech.core.config import MicromechConfig, RuntimeConfig
+from micromech.core.config import ChainConfig, MicromechConfig, RuntimeConfig
 from micromech.core.models import MechRequest
 from micromech.runtime.listener import EventListener
 
 MECH_ADDR = "0x" + "ab" * 20
 OTHER_MECH = "0x" + "cd" * 20
+
+# Reusable ChainConfig for tests
+CHAIN_CFG = ChainConfig(
+    chain="gnosis",
+    marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+    factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+    staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+    mech_address="0x77af31De935740567Cf4fF1986D04B2c964A786a",
+)
+
+# ChainConfig with MECH_ADDR for tests that filter by mech address
+CHAIN_CFG_MECH = ChainConfig(
+    chain="gnosis",
+    marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+    factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+    staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+    mech_address=MECH_ADDR,
+)
 
 
 def _make_event(
@@ -40,7 +58,7 @@ def _make_event(
 
 class TestParseRequestData:
     def test_parse_json_payload(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         data = json.dumps({"prompt": "Will ETH hit 10k?", "tool": "llm"}).encode()
         prompt, tool, extra = listener._parse_request_data(data)
         assert prompt == "Will ETH hit 10k?"
@@ -48,7 +66,7 @@ class TestParseRequestData:
         assert extra == {}
 
     def test_parse_json_with_extra_params(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         data = json.dumps(
             {
                 "prompt": "test",
@@ -63,19 +81,19 @@ class TestParseRequestData:
         assert extra == {"model": "qwen", "nonce": 42}
 
     def test_parse_empty_data(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         prompt, tool, extra = listener._parse_request_data(b"")
         assert prompt == ""
         assert tool == ""
 
     def test_parse_invalid_json(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         prompt, tool, extra = listener._parse_request_data(b"not json")
         assert prompt == ""
         assert tool == ""
 
     def test_parse_binary_data(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         prompt, tool, extra = listener._parse_request_data(bytes(range(256)))
         assert prompt == ""
         assert tool == ""
@@ -83,8 +101,7 @@ class TestParseRequestData:
 
 class TestParseMarketplaceEvent:
     def test_parse_valid_event(self):
-        config = MicromechConfig(mech={"mech_address": MECH_ADDR})
-        listener = EventListener(config)
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH)
         data = json.dumps({"prompt": "hello", "tool": "echo"}).encode()
         event = _make_event(MECH_ADDR, request_datas=[data])
 
@@ -94,19 +111,19 @@ class TestParseMarketplaceEvent:
         assert reqs[0].tool == "echo"
 
     def test_filters_other_mech(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         event = _make_event(OTHER_MECH)
         reqs = listener._parse_marketplace_event(event, MECH_ADDR)
         assert reqs == []
 
     def test_accepts_when_no_mech_filter(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         event = _make_event(MECH_ADDR)
         reqs = listener._parse_marketplace_event(event, None)
         assert len(reqs) == 1
 
     def test_request_id_from_bytes(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         rid = b"\xee" * 32
         event = _make_event(MECH_ADDR, request_ids=[rid])
         reqs = listener._parse_marketplace_event(event, None)
@@ -114,7 +131,7 @@ class TestParseMarketplaceEvent:
         assert reqs[0].request_id == "ee" * 32
 
     def test_multiple_requests_in_event(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         data1 = json.dumps({"prompt": "q1", "tool": "echo"}).encode()
         data2 = json.dumps({"prompt": "q2", "tool": "llm"}).encode()
         event = _make_event(
@@ -130,7 +147,6 @@ class TestParseMarketplaceEvent:
 
 class TestFetchEvents:
     def test_fetch_with_mock_contract(self):
-        config = MicromechConfig(mech={"mech_address": MECH_ADDR})
         bridge = MagicMock()
         data = json.dumps({"prompt": "q1", "tool": "echo"}).encode()
 
@@ -138,7 +154,7 @@ class TestFetchEvents:
         mock_filter.get_all_entries.return_value = [_make_event(MECH_ADDR, request_datas=[data])]
         bridge.with_retry.side_effect = lambda fn, **kw: fn()
 
-        listener = EventListener(config, bridge=bridge)
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH, bridge=bridge)
         mock_contract = MagicMock()
         mock_contract.events.MarketplaceRequest.create_filter.return_value = mock_filter
         listener._marketplace_contract = mock_contract
@@ -148,10 +164,9 @@ class TestFetchEvents:
         assert requests[0].prompt == "q1"
 
     def test_fetch_handles_exception(self):
-        config = MicromechConfig(mech={"mech_address": MECH_ADDR})
         bridge = MagicMock()
 
-        listener = EventListener(config, bridge=bridge)
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH, bridge=bridge)
         mock_contract = MagicMock()
         mock_contract.events.MarketplaceRequest.create_filter.side_effect = Exception("rpc")
         listener._marketplace_contract = mock_contract
@@ -163,7 +178,7 @@ class TestFetchEvents:
 class TestPollOnce:
     @pytest.mark.asyncio
     async def test_poll_without_bridge_returns_empty(self):
-        listener = EventListener(MicromechConfig(), bridge=None)
+        listener = EventListener(MicromechConfig(), CHAIN_CFG, bridge=None)
         result = await listener.poll_once()
         assert result == []
 
@@ -173,7 +188,7 @@ class TestPollOnce:
         bridge.with_retry.side_effect = lambda fn, **kw: fn()
         bridge.web3.eth.block_number = 100
 
-        listener = EventListener(MicromechConfig(), bridge=bridge)
+        listener = EventListener(MicromechConfig(), CHAIN_CFG, bridge=bridge)
         listener._last_block = 100
         result = await listener.poll_once()
         assert result == []
@@ -183,21 +198,21 @@ class TestPollOnce:
         bridge = MagicMock()
         bridge.with_retry.side_effect = Exception("timeout")
 
-        listener = EventListener(MicromechConfig(), bridge=bridge)
+        listener = EventListener(MicromechConfig(), CHAIN_CFG, bridge=bridge)
         result = await listener.poll_once()
         assert result == []
 
 
 class TestAdvanceBlock:
     def test_advance_block(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         listener._polled_to_block = 500
         listener.advance_block()
         assert listener._last_block == 500
         assert listener._polled_to_block is None
 
     def test_advance_block_noop_when_none(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         listener._last_block = 100
         listener.advance_block()
         assert listener._last_block == 100
@@ -207,7 +222,7 @@ class TestRunLoop:
     @pytest.mark.asyncio
     async def test_run_stops_on_stop(self):
         config = MicromechConfig(runtime=RuntimeConfig(event_poll_interval=1))
-        listener = EventListener(config, bridge=None)
+        listener = EventListener(config, CHAIN_CFG, bridge=None)
 
         async def callback(req):
             pass
@@ -223,7 +238,7 @@ class TestRunLoop:
     @pytest.mark.asyncio
     async def test_run_with_mock_events(self):
         config = MicromechConfig(runtime=RuntimeConfig(event_poll_interval=1))
-        listener = EventListener(config, bridge=None)
+        listener = EventListener(config, CHAIN_CFG, bridge=None)
         received = []
 
         async def callback(req):
@@ -247,7 +262,7 @@ class TestRunLoop:
         assert listener._last_block == 100
 
     def test_stop(self):
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         listener._running = True
         listener.stop()
         assert listener._running is False
@@ -256,7 +271,7 @@ class TestRunLoop:
     async def test_run_handles_callback_error(self):
         """Callback errors don't crash the loop but prevent block advance."""
         config = MicromechConfig(runtime=RuntimeConfig(event_poll_interval=1))
-        listener = EventListener(config, bridge=None)
+        listener = EventListener(config, CHAIN_CFG, bridge=None)
         advanced_after_error = None
 
         async def failing_callback(req):
@@ -289,7 +304,7 @@ class TestResolveRequest:
     async def test_resolve_ipfs_multihash(self):
         """Requests with IPFS multihash data get resolved via IPFS."""
         config = MicromechConfig(ipfs={"enabled": True})
-        listener = EventListener(config)
+        listener = EventListener(config, CHAIN_CFG)
 
         # Build a valid 34-byte multihash (0x12 0x20 + 32-byte sha256)
         digest = hashlib.sha256(b"test payload").digest()
@@ -319,7 +334,7 @@ class TestResolveRequest:
     async def test_resolve_skips_when_prompt_present(self):
         """If prompt is already set, IPFS resolution is skipped."""
         config = MicromechConfig(ipfs={"enabled": True})
-        listener = EventListener(config)
+        listener = EventListener(config, CHAIN_CFG)
 
         req = MechRequest(
             request_id="r1",
@@ -335,7 +350,7 @@ class TestResolveRequest:
     async def test_resolve_skips_when_ipfs_disabled(self):
         """With IPFS disabled, multihash data is not resolved."""
         config = MicromechConfig(ipfs={"enabled": False})
-        listener = EventListener(config)
+        listener = EventListener(config, CHAIN_CFG)
 
         digest = hashlib.sha256(b"test").digest()
         req = MechRequest(
@@ -352,7 +367,7 @@ class TestResolveRequest:
     async def test_resolve_handles_ipfs_error(self):
         """IPFS fetch failure returns original request."""
         config = MicromechConfig(ipfs={"enabled": True})
-        listener = EventListener(config)
+        listener = EventListener(config, CHAIN_CFG)
 
         digest = hashlib.sha256(b"test").digest()
         req = MechRequest(
@@ -375,7 +390,7 @@ class TestResolveRequest:
     async def test_resolve_non_multihash_data(self):
         """Non-multihash binary data is returned as-is."""
         config = MicromechConfig(ipfs={"enabled": True})
-        listener = EventListener(config)
+        listener = EventListener(config, CHAIN_CFG)
 
         req = MechRequest(
             request_id="r1",
@@ -390,14 +405,11 @@ class TestResolveRequest:
 
 class TestGetMarketplaceContract:
     def test_lazy_loads_contract(self):
-        config = MicromechConfig(
-            mech={"mech_address": MECH_ADDR},
-        )
         bridge = MagicMock()
         mock_contract = MagicMock()
         bridge.web3.eth.contract.return_value = mock_contract
 
-        listener = EventListener(config, bridge=bridge)
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH, bridge=bridge)
         contract = listener._get_marketplace_contract()
         assert contract is mock_contract
 
@@ -410,7 +422,7 @@ class TestGetMarketplaceContract:
 class TestParseMarketplaceEventEdgeCases:
     def test_string_request_data(self):
         """String request data is converted to bytes."""
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         data_str = json.dumps({"prompt": "hello", "tool": "echo"})
         event = _make_event(
             MECH_ADDR,
@@ -422,7 +434,7 @@ class TestParseMarketplaceEventEdgeCases:
 
     def test_string_request_id(self):
         """String request IDs (not bytes) are handled."""
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         event = {
             "args": {
                 "priorityMech": MECH_ADDR,
@@ -436,7 +448,7 @@ class TestParseMarketplaceEventEdgeCases:
 
     def test_missing_request_data(self):
         """When requestDatas is shorter than requestIds, empty data is used."""
-        listener = EventListener(MicromechConfig())
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
         event = _make_event(
             MECH_ADDR,
             request_ids=[b"\x01" * 32, b"\x02" * 32],

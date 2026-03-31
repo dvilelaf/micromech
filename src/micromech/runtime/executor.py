@@ -7,6 +7,7 @@ concurrent access is safe — the event loop serializes them naturally.
 
 import asyncio
 import time
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -15,6 +16,9 @@ from micromech.core.models import MechRequest, ToolResult
 from micromech.core.persistence import PersistentQueue
 from micromech.tools.base import Tool
 from micromech.tools.registry import ToolNotFoundError, ToolRegistry
+
+if TYPE_CHECKING:
+    from micromech.runtime.metrics import MetricsCollector
 
 
 class ToolExecutor:
@@ -28,11 +32,13 @@ class ToolExecutor:
         registry: ToolRegistry,
         queue: PersistentQueue,
         max_concurrent: int = 10,
+        metrics: "MetricsCollector | None" = None,
     ):
         self.registry = registry
         self.queue = queue
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._active: set[str] = set()
+        self._metrics = metrics
 
     @property
     def active_count(self) -> int:
@@ -56,6 +62,10 @@ class ToolExecutor:
             self._active.discard(req_id)
             return ToolResult(error=str(e))
 
+        tool_id = request.tool or "echo"
+        if self._metrics:
+            self._metrics.record_execution_started(req_id, tool_id, chain=request.chain)
+
         try:
             tool = self._resolve_tool(request)
             result_str = await tool.execute_with_timeout(request.prompt, **request.extra_params)
@@ -70,6 +80,10 @@ class ToolExecutor:
                 },
             )
             self.queue.mark_executed(req_id, result)
+            if self._metrics:
+                self._metrics.record_execution_done(
+                    req_id, tool.metadata.id, elapsed, chain=request.chain
+                )
             logger.info(
                 "Executed {} with tool {} in {:.2f}s",
                 req_id,
@@ -82,12 +96,20 @@ class ToolExecutor:
             elapsed = time.monotonic() - start
             result = ToolResult(error=str(e), execution_time=elapsed)
             self.queue.mark_executed(req_id, result)
+            if self._metrics:
+                self._metrics.record_execution_failed(
+                    req_id, tool_id, str(e), elapsed, chain=request.chain
+                )
             logger.warning("Tool timeout for {}: {}", req_id, e)
             return result
 
         except ToolNotFoundError as e:
             result = ToolResult(error=str(e))
             self.queue.mark_executed(req_id, result)
+            if self._metrics:
+                self._metrics.record_execution_failed(
+                    req_id, tool_id, str(e), chain=request.chain
+                )
             logger.error("Tool not found for {}: {}", req_id, e)
             return result
 
@@ -98,6 +120,10 @@ class ToolExecutor:
                 self.queue.mark_executed(req_id, result)
             except Exception:
                 logger.error("Failed to persist error for {}", req_id)
+            if self._metrics:
+                self._metrics.record_execution_failed(
+                    req_id, tool_id, str(e), elapsed, chain=request.chain
+                )
             logger.error("Execution failed for {}: {}", req_id, e)
             return result
 

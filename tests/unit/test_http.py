@@ -106,3 +106,62 @@ class TestRequestEndpoint:
         resp = client.post("/request", json={"prompt": "test"})
         assert resp.status_code == 202
         assert received_requests[0].tool == "echo"
+
+    def test_submit_with_chain(self, client: TestClient, received_requests: list):
+        resp = client.post(
+            "/request",
+            json={"prompt": "test", "chain": "gnosis"},
+        )
+        assert resp.status_code == 202
+        assert received_requests[0].chain == "gnosis"
+
+    def test_default_chain_is_gnosis(self, client: TestClient, received_requests: list):
+        resp = client.post("/request", json={"prompt": "test"})
+        assert resp.status_code == 202
+        assert received_requests[0].chain == "gnosis"
+
+
+class TestChainValidation:
+    """Test chain validation when get_status returns chain list."""
+
+    def test_rejects_unknown_chain(self):
+        async def on_request(req):
+            pass
+
+        def get_status():
+            return {
+                "status": "running",
+                "chains": ["gnosis", "base"],
+                "queue": {},
+                "tools": [],
+                "delivered_total": 0,
+            }
+
+        app = create_app(on_request=on_request, get_status=get_status)
+        c = TestClient(app)
+
+        resp = c.post("/request", json={"prompt": "test", "chain": "solana"})
+        assert resp.status_code == 400
+        assert "solana" in resp.json()["detail"]
+
+    def test_accepts_valid_chain(self):
+        received = []
+
+        async def on_request(req):
+            received.append(req)
+
+        def get_status():
+            return {
+                "status": "running",
+                "chains": ["gnosis", "base"],
+                "queue": {},
+                "tools": [],
+                "delivered_total": 0,
+            }
+
+        app = create_app(on_request=on_request, get_status=get_status)
+        c = TestClient(app)
+
+        resp = c.post("/request", json={"prompt": "test", "chain": "base"})
+        assert resp.status_code == 202
+        assert received[0].chain == "base"

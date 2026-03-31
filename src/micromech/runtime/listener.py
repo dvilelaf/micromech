@@ -11,7 +11,7 @@ from typing import Any, Optional
 
 from loguru import logger
 
-from micromech.core.config import MicromechConfig
+from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.models import MechRequest
 
 
@@ -22,8 +22,14 @@ class EventListener:
     Falls back to no-op if no bridge is available.
     """
 
-    def __init__(self, config: MicromechConfig, bridge: Optional[Any] = None):
+    def __init__(
+        self,
+        config: MicromechConfig,
+        chain_config: ChainConfig,
+        bridge: Optional[Any] = None,
+    ):
         self.config = config
+        self.chain_config = chain_config
         self.bridge = bridge
         self._last_block: Optional[int] = None
         self._polled_to_block: Optional[int] = None
@@ -38,7 +44,7 @@ class EventListener:
 
             abi = load_marketplace_abi()
             self._marketplace_contract = web3.eth.contract(
-                address=web3.to_checksum_address(self.config.mech.marketplace_address),
+                address=web3.to_checksum_address(self.chain_config.marketplace_address),
                 abi=abi,
             )
         return self._marketplace_contract
@@ -106,6 +112,7 @@ class EventListener:
                 payload = await fetch_json_from_ipfs(cid, gateway=self.config.ipfs.gateway)
                 return MechRequest(
                     request_id=req.request_id,
+                    chain=req.chain,
                     data=req.data,
                     prompt=payload.get("prompt", ""),
                     tool=payload.get("tool", ""),
@@ -124,7 +131,7 @@ class EventListener:
 
     def _fetch_events(self, from_block: int, to_block: int) -> list[MechRequest]:
         """Fetch Request events from marketplace contract (sync, runs in thread)."""
-        mech_addr = self.config.mech.mech_address
+        mech_addr = self.chain_config.mech_address
 
         try:
             contract = self._get_marketplace_contract()
@@ -179,6 +186,7 @@ class EventListener:
             results.append(
                 MechRequest(
                     request_id=rid_hex,
+                    chain=self.chain_config.chain,
                     data=data,
                     prompt=prompt,
                     tool=tool,

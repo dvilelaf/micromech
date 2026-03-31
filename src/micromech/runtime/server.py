@@ -1,19 +1,13 @@
 """MechServer — main runtime orchestrator.
 
-Coordinates: event listener, request queue, tool executor, delivery manager, HTTP server.
+Coordinates: event listeners, request queue, tool executor, delivery managers, HTTP server.
+Supports multiple chains simultaneously — one listener + delivery manager per enabled chain.
 On startup, recovers any pending/interrupted requests from the database.
-
-All synchronous DB calls run on the single-threaded asyncio event loop.
-Since Peewee SQLite calls are non-yielding (no await between them),
-they are safe from concurrent access within the event loop. The
-asyncio.Semaphore in the executor provides concurrency control for
-tool execution, while DB writes are inherently serialized by the GIL
-and single-threaded event loop.
 """
 
 import asyncio
 import signal
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 
@@ -24,6 +18,7 @@ from micromech.core.persistence import PersistentQueue
 from micromech.runtime.delivery import DeliveryManager
 from micromech.runtime.executor import ToolExecutor
 from micromech.runtime.listener import EventListener
+from micromech.runtime.metrics import MetricsCollector
 from micromech.tools.registry import ToolRegistry
 
 
@@ -31,31 +26,42 @@ class MechServer:
     """Main micromech runtime server.
 
     Lifecycle:
-    1. Initialize components (queue, registry, executor, listener, delivery)
+    1. Initialize components (queue, registry, executor, per-chain listeners/deliveries)
     2. Start processor loop
     3. Recover interrupted requests from DB
-    4. Run all loops concurrently (event listener, processor, delivery, HTTP)
+    4. Run all loops concurrently (event listeners, processor, deliveries, HTTP)
     5. Graceful shutdown on SIGTERM/SIGINT
     """
 
     def __init__(
         self,
         config: MicromechConfig,
-        bridge: Optional[object] = None,
+        bridges: Optional[dict[str, Any]] = None,
     ):
         self.config = config
-        self.bridge = bridge
+        self.bridges = bridges or {}
 
-        # Core components
+        # Shared components
         self.queue = PersistentQueue(config.persistence.db_path)
         self.registry = ToolRegistry()
+        self.metrics = MetricsCollector()
         self.executor = ToolExecutor(
             registry=self.registry,
             queue=self.queue,
             max_concurrent=config.runtime.max_concurrent,
+            metrics=self.metrics,
         )
-        self.listener = EventListener(config, bridge)
-        self.delivery = DeliveryManager(config, self.queue, bridge)
+
+        # Per-chain components
+        self.listeners: dict[str, EventListener] = {}
+        self.deliveries: dict[str, DeliveryManager] = {}
+
+        for chain_name, chain_cfg in config.enabled_chains.items():
+            bridge = self.bridges.get(chain_name)
+            self.listeners[chain_name] = EventListener(config, chain_cfg, bridge)
+            self.deliveries[chain_name] = DeliveryManager(
+                config, chain_cfg, self.queue, bridge, metrics=self.metrics
+            )
 
         # Unbounded queue — backpressure is handled by the executor semaphore
         self._request_queue: asyncio.Queue[MechRequest] = asyncio.Queue()
@@ -124,6 +130,9 @@ class MechServer:
 
         self.queue.add_request(request)
         self._queued_ids.add(req_id)
+        self.metrics.record_request_received(
+            req_id, request.tool, request.is_offchain, chain=request.chain
+        )
         await self._request_queue.put(request)
 
     async def _processor_loop(self) -> None:
@@ -153,8 +162,11 @@ class MechServer:
         return {
             "status": "running" if self._running else "stopped",
             "queue": self.queue.count_by_status(),
+            "queue_by_chain": self.queue.count_by_chain(),
+            "chains": list(self.config.enabled_chains.keys()),
             "tools": self.registry.tool_ids,
-            "delivered_total": self.delivery.delivered_count,
+            "delivered_total": sum(d.delivered_count for d in self.deliveries.values()),
+            "metrics": self.metrics.get_live_snapshot(),
         }
 
     async def run(self, with_http: bool = True) -> None:
@@ -167,25 +179,34 @@ class MechServer:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self._handle_signal)
 
-        logger.info("MechServer starting...")
+        chains = list(self.config.enabled_chains.keys())
+        logger.info("MechServer starting on chains: {}", chains)
 
         # Start processor FIRST so recovery queue is consumed
         self._tasks = [
             asyncio.create_task(self._processor_loop()),
-            asyncio.create_task(self.delivery.run()),
         ]
+
+        # Start per-chain delivery managers
+        for chain_name, delivery in self.deliveries.items():
+            self._tasks.append(asyncio.create_task(delivery.run()))
 
         # Recover after processor is running
         await self._recover()
 
-        if self.bridge:
-            self._tasks.append(asyncio.create_task(self.listener.run(self._on_new_request)))
+        # Start per-chain listeners (only where bridge is available)
+        for chain_name, listener in self.listeners.items():
+            bridge = self.bridges.get(chain_name)
+            if bridge:
+                self._tasks.append(asyncio.create_task(listener.run(self._on_new_request)))
+                logger.info("Listener started for chain: {}", chain_name)
 
         if with_http:
             self._tasks.append(asyncio.create_task(self._run_http()))
 
         logger.info(
-            "MechServer running (tools={}, max_concurrent={})",
+            "MechServer running (chains={}, tools={}, max_concurrent={})",
+            len(chains),
             len(self.registry.tool_ids),
             self.config.runtime.max_concurrent,
         )
@@ -196,7 +217,7 @@ class MechServer:
             logger.info("Server tasks cancelled")
 
     async def _run_http(self) -> None:
-        """Run the HTTP server."""
+        """Run the HTTP server with both runtime API and web dashboard."""
         import uvicorn
 
         from micromech.runtime.http import create_app
@@ -207,6 +228,25 @@ class MechServer:
             get_result=self.queue.get_by_id,
         )
 
+        # Mount the web dashboard on the same server
+        from micromech.web.app import create_web_app
+
+        def get_tools():
+            return [
+                {"id": t.metadata.id, "version": t.metadata.version}
+                for t in self.registry.list_tools()
+            ]
+
+        web_app = create_web_app(
+            get_status=self.get_status,
+            get_recent=self.queue.get_recent,
+            get_tools=get_tools,
+            on_request=self._on_new_request,
+            queue=self.queue,
+            metrics=self.metrics,
+        )
+        app.mount("/dashboard", web_app)
+
         config = uvicorn.Config(
             app,
             host=self.config.runtime.host,
@@ -215,7 +255,7 @@ class MechServer:
         )
         server = uvicorn.Server(config)
         logger.info(
-            "HTTP server on {}:{}",
+            "HTTP server on {}:{} (dashboard at /dashboard)",
             self.config.runtime.host,
             self.config.runtime.port,
         )
@@ -228,8 +268,10 @@ class MechServer:
     def stop(self) -> None:
         """Gracefully stop the server."""
         self._running = False
-        self.listener.stop()
-        self.delivery.stop()
+        for listener in self.listeners.values():
+            listener.stop()
+        for delivery in self.deliveries.values():
+            delivery.stop()
         for task in self._tasks:
             task.cancel()
         for task in self._executor_tasks:

@@ -6,13 +6,16 @@ via the mech service's Safe multisig.
 
 import asyncio
 import json
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from loguru import logger
 
-from micromech.core.config import MicromechConfig
+from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.models import RequestRecord
 from micromech.core.persistence import PersistentQueue
+
+if TYPE_CHECKING:
+    from micromech.runtime.metrics import MetricsCollector
 
 
 def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
@@ -53,15 +56,19 @@ class DeliveryManager:
     def __init__(
         self,
         config: MicromechConfig,
+        chain_config: ChainConfig,
         queue: PersistentQueue,
         bridge: Optional[Any] = None,
+        metrics: "MetricsCollector | None" = None,
     ):
         self.config = config
+        self.chain_config = chain_config
         self.queue = queue
         self.bridge = bridge
         self._running = False
         self._delivered_count = 0
         self._mech_contract: Optional[Any] = None
+        self._metrics = metrics
 
     @property
     def delivered_count(self) -> int:
@@ -78,13 +85,13 @@ class DeliveryManager:
 
     @property
     def _chain_name(self) -> str:
-        """Derive chain name from mech config."""
-        return self.config.mech.chain
+        """Chain name from this delivery manager's config."""
+        return self.chain_config.chain
 
     def _get_mech_contract(self) -> Any:
         """Lazy-load the mech contract instance."""
         if self._mech_contract is None:
-            mech_addr = self.config.mech.mech_address
+            mech_addr = self.chain_config.mech_address
             if not mech_addr:
                 msg = "mech_address not configured"
                 raise ValueError(msg)
@@ -104,7 +111,9 @@ class DeliveryManager:
         if self.bridge is None:
             return 0
 
-        records = self.queue.get_undelivered(limit=self.config.runtime.delivery_batch_size)
+        records = self.queue.get_undelivered(
+            limit=self.config.runtime.delivery_batch_size, chain=self._chain_name
+        )
         if not records:
             return 0
 
@@ -119,6 +128,10 @@ class DeliveryManager:
                     )
                     delivered += 1
                     self._delivered_count += 1
+                    if self._metrics:
+                        self._metrics.record_delivery(
+                            record.request.request_id, chain=self._chain_name
+                        )
                     logger.info(
                         "Delivered {} (tx: {})",
                         record.request.request_id,
@@ -130,6 +143,10 @@ class DeliveryManager:
                     record.request.request_id,
                     e,
                 )
+                if self._metrics:
+                    self._metrics.record_delivery_failed(
+                        record.request.request_id, str(e), chain=self._chain_name
+                    )
                 self.queue.mark_failed(record.request.request_id, f"delivery: {e}")
 
         return delivered
@@ -186,14 +203,17 @@ class DeliveryManager:
         """
         mech_contract = self._get_mech_contract()
         # deliverToMarketplace must be called from the service multisig
-        sender = self.config.mech.multisig_address or self.config.mech.mech_address
+        sender = self.chain_config.multisig_address or self.chain_config.mech_address
         from_addr = self.bridge.web3.to_checksum_address(sender)
 
         # Convert request_id to bytes32
-        if request_id.startswith("0x"):
-            req_id_bytes = bytes.fromhex(request_id[2:])
-        else:
-            req_id_bytes = bytes.fromhex(request_id)
+        try:
+            hex_str = request_id[2:] if request_id.startswith("0x") else request_id
+            req_id_bytes = bytes.fromhex(hex_str)
+        except ValueError:
+            # Non-hex IDs (e.g. "http-abc123") — hash to get deterministic bytes32
+            import hashlib
+            req_id_bytes = hashlib.sha256(request_id.encode()).digest()
         req_id_bytes = req_id_bytes.ljust(32, b"\x00")[:32]
 
         safe_fn: Optional[Callable[[], str]] = None
@@ -217,7 +237,7 @@ class DeliveryManager:
         deliveryRates[], paymentData).
         """
         mech_contract = self._get_mech_contract()
-        sender = self.config.mech.multisig_address or self.config.mech.mech_address
+        sender = self.chain_config.multisig_address or self.chain_config.mech_address
         from_addr = self.bridge.web3.to_checksum_address(sender)
 
         # requester: the sender from the HTTP request, or our own address
@@ -237,7 +257,7 @@ class DeliveryManager:
         # deliverWithSignatures is an array of tuples
         deliver_with_sigs = [(request_data, signature, delivery_data)]
 
-        delivery_rates = [self.config.mech.delivery_rate]
+        delivery_rates = [self.chain_config.delivery_rate]
         payment_data = b""
 
         safe_fn: Optional[Callable[[], str]] = None
@@ -279,7 +299,7 @@ class DeliveryManager:
         self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
     ) -> str:
         """Submit deliverToMarketplace via Gnosis Safe (production path)."""
-        mech_address = self.bridge.web3.to_checksum_address(self.config.mech.mech_address)
+        mech_address = self.bridge.web3.to_checksum_address(self.chain_config.mech_address)
         call_data = contract.functions.deliverToMarketplace(
             [req_id_bytes],
             [data],
@@ -305,7 +325,7 @@ class DeliveryManager:
         payment_data: bytes,
     ) -> str:
         """Submit deliverMarketplaceWithSignatures via Gnosis Safe (production path)."""
-        mech_address = self.bridge.web3.to_checksum_address(self.config.mech.mech_address)
+        mech_address = self.bridge.web3.to_checksum_address(self.chain_config.mech_address)
         call_data = contract.functions.deliverMarketplaceWithSignatures(
             requester,
             deliver_with_sigs,
@@ -413,7 +433,7 @@ class DeliveryManager:
 
     def _get_signer_key(self) -> str:
         """Get the private key for signing delivery transactions."""
-        account_tag = self.config.mech.account_tag
+        account_tag = self.chain_config.account_tag
         try:
             account = self.bridge.wallet.account_service.resolve_account(account_tag)
             return account.key.hex()
