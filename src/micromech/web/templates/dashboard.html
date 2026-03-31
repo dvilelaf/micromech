@@ -4,159 +4,730 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>micromech</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
     <style>
+        :root {
+            --bg-color: #0c0e14;
+            --card-bg: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --primary-color: #5865f2;
+            --primary-hover: #4752c4;
+            --accent-color: #00d2ff;
+            --text-color: #f1f3f5;
+            --text-muted: #adb5bd;
+            --success: #2ecc71;
+            --error: #e74c3c;
+            --warning: #f1c40f;
+            --font-main: "Outfit", sans-serif;
+            --font-mono: "JetBrains Mono", monospace;
+        }
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; padding: 1.5rem; }
-        h1 { font-size: 1.5rem; margin-bottom: 1rem; color: #fff; }
-        h2 { font-size: 1.1rem; margin-bottom: 0.5rem; color: #ccc; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
-        .card { background: #1a1a1a; border: 1px solid #333; border-radius: 8px; padding: 1rem; }
-        .card-value { font-size: 1.8rem; font-weight: bold; color: #4fc3f7; }
-        .card-label { font-size: 0.85rem; color: #888; margin-top: 0.25rem; }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #222; font-size: 0.85rem; }
-        th { color: #888; font-weight: 500; }
-        .status { padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
-        .status-pending { background: #333; color: #ffd54f; }
-        .status-executing { background: #1a237e; color: #82b1ff; }
-        .status-executed { background: #1b5e20; color: #69f0ae; }
-        .status-delivered { background: #004d40; color: #64ffda; }
-        .status-failed { background: #b71c1c; color: #ff8a80; }
-        .tool-tag { background: #263238; color: #80cbc4; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem; }
-        .prompt { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .section { margin-bottom: 1.5rem; }
-        .tools-list { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-        .tools-list .tool-tag { padding: 4px 10px; font-size: 0.8rem; }
+        body {
+            font-family: var(--font-main);
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        /* Background blobs */
+        .background-blobs { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: -1; filter: blur(80px); opacity: 0.4; }
+        .blob { position: absolute; border-radius: 50%; }
+        .blob-1 { width: 500px; height: 500px; background: var(--primary-color); top: -100px; right: -100px; }
+        .blob-2 { width: 400px; height: 400px; background: var(--accent-color); bottom: -100px; left: -100px; }
+        .blob-3 { width: 300px; height: 300px; background: #9b59b6; top: 40%; left: 30%; }
+
+        /* Layout */
+        .app-container { max-width: 1400px; margin: 0 auto; padding: 0 2rem 2rem; }
+
+        /* Header */
+        header {
+            height: 70px; display: flex; align-items: center; justify-content: space-between;
+            border-bottom: 1px solid var(--glass-border); margin-bottom: 1.5rem;
+        }
+        .logo { display: flex; align-items: center; gap: 0.8rem; }
+        .logo h1 { font-size: 1.5rem; font-weight: 600; }
+        .logo h1 span { font-weight: 300; color: var(--text-muted); }
+        .status-indicator { display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
+        .pulse {
+            width: 8px; height: 8px; background-color: var(--success); border-radius: 50%;
+            box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0.7); }
+            70% { box-shadow: 0 0 0 6px rgba(46, 204, 113, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(46, 204, 113, 0); }
+        }
+
+        /* Tabs */
+        .tabs { display: flex; gap: 0.25rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.5rem; }
+        .tab-btn {
+            background: transparent; border: none; color: var(--text-muted); padding: 0.5rem 1rem;
+            font-family: var(--font-main); font-size: 0.9rem; cursor: pointer; border-radius: 8px 8px 0 0;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover { color: var(--text-color); background: rgba(255,255,255,0.03); }
+        .tab-btn.active { color: var(--accent-color); border-bottom: 2px solid var(--accent-color); }
+        .tab-pane { display: none; }
+        .tab-pane.active { display: block; }
+
+        /* Glass card */
+        .glass {
+            background: var(--card-bg); backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border); border-radius: 16px; padding: 1.5rem;
+        }
+
+        /* Metric cards grid */
+        .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .metric-card { text-align: center; }
+        .metric-value { font-family: var(--font-mono); font-size: 2rem; font-weight: 600; color: var(--accent-color); }
+        .metric-value.success { color: var(--success); }
+        .metric-value.warning { color: var(--warning); }
+        .metric-value.error { color: var(--error); }
+        .metric-label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+        /* Charts grid */
+        .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem; }
+        .chart-card h3 { font-size: 0.95rem; font-weight: 400; color: var(--text-muted); margin-bottom: 1rem; }
+
+        /* Tables */
+        table { width: 100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 0.8rem; }
+        th { color: var(--text-muted); font-weight: 500; padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--glass-border); }
+        td { padding: 0.6rem 0.75rem; border-bottom: 1px solid rgba(255,255,255,0.03); }
+        tr:hover td { background: rgba(255,255,255,0.02); }
+        .val { text-align: right; font-variant-numeric: tabular-nums; }
+
+        /* Status badges */
+        .badge {
+            display: inline-block; padding: 2px 8px; border-radius: 4px;
+            font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+        }
+        .badge-pending { background: rgba(241,196,15,0.15); color: var(--warning); }
+        .badge-executing { background: rgba(88,101,242,0.2); color: #82b1ff; }
+        .badge-executed { background: rgba(46,204,113,0.15); color: var(--success); }
+        .badge-delivered { background: rgba(0,210,255,0.15); color: var(--accent-color); }
+        .badge-failed { background: rgba(231,76,60,0.15); color: var(--error); }
+
+        /* Event badges */
+        .event-request_received { color: var(--accent-color); }
+        .event-execution_started { color: var(--primary-color); }
+        .event-execution_done { color: var(--success); }
+        .event-delivered { color: #64ffda; }
+        .event-failed, .event-delivery_failed { color: var(--error); }
+
+        /* Tool tags */
+        .tool-tag { background: rgba(0,210,255,0.1); color: var(--accent-color); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-family: var(--font-mono); }
+
+        /* Activity feed */
+        .feed { max-height: 400px; overflow-y: auto; }
+        .feed-item {
+            display: flex; align-items: center; gap: 0.75rem; padding: 0.5rem 0;
+            border-bottom: 1px solid rgba(255,255,255,0.03); font-size: 0.8rem;
+        }
+        .feed-time { color: var(--text-muted); font-family: var(--font-mono); font-size: 0.75rem; min-width: 60px; }
+        .feed-event { font-weight: 500; min-width: 140px; }
+        .feed-id { color: var(--text-muted); font-family: var(--font-mono); font-size: 0.75rem; }
+        .feed-detail { color: var(--text-muted); font-size: 0.75rem; margin-left: auto; }
+
+        /* Management */
+        .mgmt-section { display: flex; flex-direction: column; gap: 1rem; }
+        .mgmt-row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+        input[type="text"] {
+            background: rgba(0,0,0,0.2); border: 1px solid var(--glass-border); color: var(--text-color);
+            padding: 8px 12px; border-radius: 8px; font-family: var(--font-mono); font-size: 0.85rem;
+        }
+        input[type="text"]:focus { outline: none; border-color: var(--accent-color); }
+        .btn {
+            padding: 8px 20px; border: 1px solid var(--glass-border); border-radius: 8px; cursor: pointer;
+            font-family: var(--font-main); font-size: 0.85rem; font-weight: 500; transition: all 0.2s;
+        }
+        .btn-primary { background: var(--primary-color); color: white; border-color: var(--primary-color); }
+        .btn-primary:hover { background: var(--primary-hover); }
+        .btn-secondary { background: transparent; color: var(--text-muted); }
+        .btn-secondary:hover { background: rgba(255,255,255,0.05); color: var(--text-color); }
+        .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .mgmt-result {
+            background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 8px;
+            padding: 1rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);
+            white-space: pre-wrap; display: none;
+        }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .charts-grid { grid-template-columns: 1fr; }
+            .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
     </style>
 </head>
 <body>
-    <h1>micromech</h1>
-
-    <div class="grid">
-        <div class="card">
-            <div class="card-value">{{ pending }}</div>
-            <div class="card-label">Pending</div>
-        </div>
-        <div class="card">
-            <div class="card-value">{{ executing }}</div>
-            <div class="card-label">Executing</div>
-        </div>
-        <div class="card">
-            <div class="card-value">{{ executed }}</div>
-            <div class="card-label">Awaiting Delivery</div>
-        </div>
-        <div class="card">
-            <div class="card-value">{{ delivered_total }}</div>
-            <div class="card-label">Total Delivered</div>
-        </div>
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
     </div>
 
-    <div class="section">
-        <h2>Tools</h2>
-        <div class="tools-list">
-            {% for tool in tools %}
-            <span class="tool-tag">{{ tool.id }} v{{ tool.version }}</span>
-            {% endfor %}
-        </div>
-    </div>
+    <div class="app-container">
+        <header>
+            <div class="logo">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-color)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="3"></circle>
+                    <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"></path>
+                </svg>
+                <h1>micromech <span>dashboard</span></h1>
+            </div>
+            <div style="display:flex;align-items:center;gap:1rem;">
+                <div>
+                    <label for="chain-select" style="font-size:0.75rem;color:var(--text-muted);">Chain</label>
+                    <select id="chain-select" style="background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);color:var(--text-color);padding:4px 8px;border-radius:6px;font-family:var(--font-main);font-size:0.85rem;">
+                        <option value="">All chains</option>
+                    </select>
+                </div>
+                <div class="status-indicator">
+                    <span class="pulse" id="pulse"></span>
+                    <span id="status-text">Connecting...</span>
+                </div>
+            </div>
+        </header>
 
-    <div class="section">
-        <h2>Recent Requests</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Status</th>
-                    <th>Tool</th>
-                    <th>Prompt</th>
-                    <th>Time</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for r in recent %}
-                <tr>
-                    <td><code>{{ r.request.request_id[:16] }}...</code></td>
-                    <td><span class="status status-{{ r.request.status }}">{{ r.request.status }}</span></td>
-                    <td><span class="tool-tag">{{ r.request.tool or '-' }}</span></td>
-                    <td class="prompt">{{ r.request.prompt[:80] }}</td>
-                    <td>
-                        {% if r.result and r.result.execution_time %}
-                        {{ "%.2f"|format(r.result.execution_time) }}s
-                        {% else %}-{% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-                {% if not recent %}
-                <tr><td colspan="5" style="text-align:center; color:#666;">No requests yet</td></tr>
-                {% endif %}
-            </tbody>
-        </table>
-    </div>
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="overview">Overview</button>
+            <button class="tab-btn" data-tab="activity">Live Activity</button>
+            <button class="tab-btn" data-tab="tools">Tools</button>
+            <button class="tab-btn" data-tab="charts">Charts</button>
+            <button class="tab-btn" data-tab="management">Management</button>
+        </nav>
 
-    <div class="section">
-        <h2>Management</h2>
-        <div style="margin-bottom: 0.75rem;">
-            <label for="service-key" style="font-size: 0.85rem; color: #888;">Service Key:</label>
-            <input type="text" id="service-key" placeholder="e.g. mech_gnosis"
-                   style="background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; padding: 6px 10px; border-radius: 4px; width: 250px; font-size: 0.85rem;">
-        </div>
-        <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
-            <button class="mgmt-btn" onclick="mgmtAction('stake')">Stake</button>
-            <button class="mgmt-btn" onclick="mgmtAction('unstake')">Unstake</button>
-            <button class="mgmt-btn" onclick="mgmtAction('claim')">Claim</button>
-            <button class="mgmt-btn" onclick="mgmtAction('checkpoint')">Checkpoint</button>
-        </div>
-        <pre id="mgmt-result" style="margin-top: 0.75rem; background: #111; border: 1px solid #222; border-radius: 4px; padding: 0.75rem; font-size: 0.8rem; color: #aaa; min-height: 2rem; display: none; white-space: pre-wrap;"></pre>
-    </div>
+        <main>
+            <!-- Overview Tab -->
+            <section id="tab-overview" class="tab-pane active">
+                <div class="metrics-grid">
+                    <div class="glass metric-card">
+                        <div class="metric-value" id="m-received">0</div>
+                        <div class="metric-label">Received</div>
+                    </div>
+                    <div class="glass metric-card">
+                        <div class="metric-value" id="m-pending">0</div>
+                        <div class="metric-label">Pending</div>
+                    </div>
+                    <div class="glass metric-card">
+                        <div class="metric-value" id="m-executing">0</div>
+                        <div class="metric-label">Executing</div>
+                    </div>
+                    <div class="glass metric-card">
+                        <div class="metric-value success" id="m-delivered">0</div>
+                        <div class="metric-label">Delivered</div>
+                    </div>
+                    <div class="glass metric-card">
+                        <div class="metric-value error" id="m-failed">0</div>
+                        <div class="metric-label">Failed</div>
+                    </div>
+                    <div class="glass metric-card">
+                        <div class="metric-value" id="m-avg-time">0s</div>
+                        <div class="metric-label">Avg Exec Time</div>
+                    </div>
+                    <div class="glass metric-card">
+                        <div class="metric-value" id="m-success-rate">100%</div>
+                        <div class="metric-label">Success Rate</div>
+                    </div>
+                    <div class="glass metric-card">
+                        <div class="metric-value" id="m-uptime">0m</div>
+                        <div class="metric-label">Uptime</div>
+                    </div>
+                </div>
 
-    <style>
-        .mgmt-btn {
-            background: #263238; color: #80cbc4; border: 1px solid #37474f;
-            padding: 6px 16px; border-radius: 4px; cursor: pointer;
-            font-size: 0.85rem; font-weight: 500; transition: background 0.2s;
-        }
-        .mgmt-btn:hover { background: #37474f; }
-        .mgmt-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    </style>
+                <div class="charts-grid">
+                    <div class="glass chart-card">
+                        <h3>Queue Status</h3>
+                        <canvas id="queueChart"></canvas>
+                    </div>
+                    <div class="glass chart-card">
+                        <h3>Request Channels</h3>
+                        <canvas id="channelChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="glass">
+                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">Recent Requests</h3>
+                    <div style="overflow-x:auto;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Request ID</th>
+                                    <th>Chain</th>
+                                    <th>Status</th>
+                                    <th>Tool</th>
+                                    <th>Prompt</th>
+                                    <th class="val">Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="recent-requests"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Activity Tab -->
+            <section id="tab-activity" class="tab-pane">
+                <div class="glass">
+                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">Live Activity Feed <span style="font-size:0.75rem;">(since page open)</span></h3>
+                    <div class="feed" id="activity-feed">
+                        <div style="text-align:center; color:var(--text-muted); padding:2rem;">Waiting for events...</div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tools Tab -->
+            <section id="tab-tools" class="tab-pane">
+                <div class="glass">
+                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">Tool Performance</h3>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Tool</th>
+                                <th class="val">Total</th>
+                                <th class="val">Delivered</th>
+                                <th class="val">Failed</th>
+                                <th class="val">Avg Time</th>
+                                <th class="val">Success %</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tool-stats"></tbody>
+                    </table>
+                </div>
+            </section>
+
+            <!-- Charts Tab -->
+            <section id="tab-charts" class="tab-pane">
+                <div class="charts-grid">
+                    <div class="glass chart-card">
+                        <h3>Daily Requests (30 days)</h3>
+                        <canvas id="dailyChart"></canvas>
+                    </div>
+                    <div class="glass chart-card">
+                        <h3>Monthly Requests</h3>
+                        <canvas id="monthlyChart"></canvas>
+                    </div>
+                </div>
+                <div class="charts-grid" style="margin-top:1.5rem;">
+                    <div class="glass chart-card">
+                        <h3>Requests by Tool</h3>
+                        <canvas id="toolChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Management Tab -->
+            <section id="tab-management" class="tab-pane">
+                <div class="glass mgmt-section">
+                    <h3 style="font-size:0.95rem; color:var(--text-muted);">Service Management</h3>
+                    <div class="mgmt-row">
+                        <input type="text" id="service-key" placeholder="Service key (e.g. mech_gnosis)" style="width:280px;">
+                        <select id="mgmt-chain" style="background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);color:var(--text-color);padding:8px 12px;border-radius:8px;font-family:var(--font-main);font-size:0.85rem;"></select>
+                    </div>
+                    <div class="mgmt-row">
+                        <button class="btn btn-primary" onclick="mgmtAction('stake')">Stake</button>
+                        <button class="btn btn-secondary" onclick="mgmtAction('unstake')">Unstake</button>
+                        <button class="btn btn-secondary" onclick="mgmtAction('claim')">Claim Rewards</button>
+                        <button class="btn btn-secondary" onclick="mgmtAction('checkpoint')">Checkpoint</button>
+                        <button class="btn btn-secondary" onclick="mgmtAction('status')">Status</button>
+                    </div>
+                    <pre class="mgmt-result" id="mgmt-result"></pre>
+                </div>
+            </section>
+        </main>
+    </div>
 
     <script>
-        async function mgmtAction(action) {
-            const serviceKey = document.getElementById('service-key').value.trim();
-            if (!serviceKey) {
-                alert('Please enter a service key');
+    // --- State ---
+    const state = {
+        events: [],
+        queueChart: null,
+        channelChart: null,
+        dailyChart: null,
+        monthlyChart: null,
+        toolChart: null,
+        sseConnected: false,
+        chains: [],
+        selectedChain: '',  // '' = all chains
+    };
+
+    // --- Chart.js defaults ---
+    Chart.defaults.color = '#adb5bd';
+    Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+    Chart.defaults.font.family = '"Outfit", sans-serif';
+
+    // --- Tabs ---
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+            btn.classList.add('active');
+            document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+            // Load data when switching tabs
+            if (btn.dataset.tab === 'tools') loadToolStats();
+            if (btn.dataset.tab === 'charts') loadCharts();
+        });
+    });
+
+    // --- SSE Stream ---
+    function connectSSE() {
+        const es = new EventSource('/api/metrics/stream');
+        es.onopen = () => {
+            state.sseConnected = true;
+            document.getElementById('status-text').textContent = 'Connected';
+            document.getElementById('pulse').style.backgroundColor = 'var(--success)';
+        };
+        es.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            updateLiveMetrics(data);
+            if (data.events) {
+                data.events.forEach(ev => addEvent(ev));
+            }
+            if (data.queue) {
+                updateQueueChart(data.queue);
+            }
+        };
+        es.onerror = () => {
+            state.sseConnected = false;
+            document.getElementById('status-text').textContent = 'Reconnecting...';
+            document.getElementById('pulse').style.backgroundColor = 'var(--warning)';
+        };
+    }
+
+    function updateLiveMetrics(data) {
+        const live = data.live || {};
+        const queue = data.queue || {};
+
+        setText('m-received', live.requests_received ?? 0);
+        setText('m-pending', queue.pending ?? 0);
+        setText('m-executing', queue.executing ?? 0);
+        setText('m-delivered', (data.delivered_total ?? live.deliveries_completed) ?? 0);
+        setText('m-failed', live.executions_failed ?? 0);
+        setText('m-avg-time', (live.avg_execution_time ?? 0).toFixed(2) + 's');
+        setText('m-success-rate', (live.success_rate ?? 100).toFixed(1) + '%');
+        setText('m-uptime', formatUptime(live.uptime ?? 0));
+    }
+
+    // --- Activity Feed ---
+    let feedInitialized = false;
+    function addEvent(ev) {
+        if (!feedInitialized) {
+            document.getElementById('activity-feed').innerHTML = '';
+            feedInitialized = true;
+        }
+        state.events.push(ev);
+        const feed = document.getElementById('activity-feed');
+        const item = document.createElement('div');
+        item.className = 'feed-item';
+        const time = new Date(ev.timestamp * 1000).toLocaleTimeString();
+        const eventLabel = ev.event.replace(/_/g, ' ');
+        item.innerHTML = `
+            <span class="feed-time">${time}</span>
+            <span class="feed-event event-${ev.event}">${eventLabel}</span>
+            <span class="feed-id">${ev.request_id.substring(0, 16)}...</span>
+            ${ev.tool ? `<span class="tool-tag">${ev.tool}</span>` : ''}
+            ${ev.execution_time ? `<span class="feed-detail">${ev.execution_time.toFixed(2)}s</span>` : ''}
+            ${ev.error ? `<span class="feed-detail" style="color:var(--error)">${ev.error.substring(0, 60)}</span>` : ''}
+        `;
+        feed.insertBefore(item, feed.firstChild);
+        // Keep max 200 items
+        while (feed.children.length > 200) feed.removeChild(feed.lastChild);
+    }
+
+    // --- Queue Chart ---
+    function initQueueChart() {
+        const ctx = document.getElementById('queueChart').getContext('2d');
+        state.queueChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Pending', 'Executing', 'Executed', 'Delivered', 'Failed'],
+                datasets: [{
+                    data: [0, 0, 0, 0, 0],
+                    backgroundColor: [
+                        'rgba(241,196,15,0.7)',
+                        'rgba(88,101,242,0.7)',
+                        'rgba(46,204,113,0.5)',
+                        'rgba(0,210,255,0.7)',
+                        'rgba(231,76,60,0.7)',
+                    ],
+                    borderColor: 'rgba(255,255,255,0.1)',
+                    borderWidth: 1,
+                }],
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom', labels: { padding: 16, usePointStyle: true, pointStyle: 'circle' } },
+                },
+            },
+        });
+    }
+
+    function updateQueueChart(queue) {
+        if (!state.queueChart) return;
+        state.queueChart.data.datasets[0].data = [
+            queue.pending || 0, queue.executing || 0, queue.executed || 0,
+            queue.delivered || 0, queue.failed || 0,
+        ];
+        state.queueChart.update('none');
+    }
+
+    // --- Channel Chart ---
+    function initChannelChart() {
+        const ctx = document.getElementById('channelChart').getContext('2d');
+        state.channelChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['On-chain', 'Off-chain (HTTP)'],
+                datasets: [{
+                    data: [0, 0],
+                    backgroundColor: ['rgba(88,101,242,0.7)', 'rgba(0,210,255,0.7)'],
+                    borderColor: 'rgba(255,255,255,0.1)',
+                    borderWidth: 1,
+                }],
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { position: 'bottom', labels: { padding: 16, usePointStyle: true, pointStyle: 'circle' } },
+                },
+            },
+        });
+        // Load data
+        fetch('/api/metrics/channels' + chainQueryPrefix()).then(r => r.json()).then(d => {
+            state.channelChart.data.datasets[0].data = [d.onchain || 0, d.offchain || 0];
+            state.channelChart.update('none');
+        });
+    }
+
+    // --- Recent Requests ---
+    function loadRecentRequests() {
+        fetch('/api/requests?limit=20' + chainQueryAmp()).then(r => r.json()).then(rows => {
+            const tbody = document.getElementById('recent-requests');
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No requests yet</td></tr>';
                 return;
             }
-            const resultEl = document.getElementById('mgmt-result');
-            resultEl.style.display = 'block';
-            resultEl.textContent = 'Running ' + action + '...';
+            tbody.innerHTML = rows.map(r => `
+                <tr>
+                    <td style="font-family:var(--font-mono);font-size:0.75rem">${r.request_id.substring(0, 16)}...</td>
+                    <td style="font-size:0.75rem">${r.chain || '-'}</td>
+                    <td><span class="badge badge-${r.status}">${r.status}</span></td>
+                    <td><span class="tool-tag">${r.tool || '-'}</span></td>
+                    <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.prompt)}</td>
+                    <td class="val">${r.execution_time != null ? r.execution_time.toFixed(2) + 's' : '-'}</td>
+                </tr>
+            `).join('');
+        });
+    }
 
-            // Disable buttons while running
-            document.querySelectorAll('.mgmt-btn').forEach(b => b.disabled = true);
-
-            try {
-                const resp = await fetch('/api/management/' + action, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({service_key: serviceKey}),
-                });
-                const data = await resp.json();
-                if (data.success) {
-                    resultEl.style.color = '#69f0ae';
-                    resultEl.textContent = action + ' succeeded' + (data.data ? ':\n' + JSON.stringify(data.data, null, 2) : '');
-                } else {
-                    resultEl.style.color = '#ff8a80';
-                    resultEl.textContent = action + ' failed: ' + (data.error || 'unknown error');
-                }
-            } catch (err) {
-                resultEl.style.color = '#ff8a80';
-                resultEl.textContent = action + ' error: ' + err.message;
-            } finally {
-                document.querySelectorAll('.mgmt-btn').forEach(b => b.disabled = false);
+    // --- Tool Stats ---
+    function loadToolStats() {
+        fetch('/api/metrics/tools' + chainQueryPrefix()).then(r => r.json()).then(tools => {
+            const tbody = document.getElementById('tool-stats');
+            if (!tools.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No data yet</td></tr>';
+                return;
             }
-        }
+            tbody.innerHTML = tools.map(t => {
+                const total = t.delivered + t.failed;
+                const rate = total > 0 ? ((t.delivered / total) * 100).toFixed(1) : '-';
+                return `
+                    <tr>
+                        <td><span class="tool-tag">${t.tool}</span></td>
+                        <td class="val">${t.total}</td>
+                        <td class="val" style="color:var(--success)">${t.delivered}</td>
+                        <td class="val" style="color:var(--error)">${t.failed}</td>
+                        <td class="val">${t.avg_time.toFixed(2)}s</td>
+                        <td class="val">${rate}%</td>
+                    </tr>
+                `;
+            }).join('');
+        });
+    }
 
-        // Auto-refresh every 10 seconds
-        setTimeout(() => location.reload(), 10000);
+    // --- Historical Charts ---
+    function loadCharts() {
+        // Daily
+        fetch('/api/metrics/daily?days=30' + chainQueryAmp()).then(r => r.json()).then(data => {
+            if (state.dailyChart) state.dailyChart.destroy();
+            const ctx = document.getElementById('dailyChart').getContext('2d');
+            state.dailyChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.map(d => d.day.substring(5)),
+                    datasets: [
+                        {
+                            label: 'Total', data: data.map(d => d.total),
+                            borderColor: 'rgba(0,210,255,0.8)', backgroundColor: 'rgba(0,210,255,0.1)',
+                            fill: true, tension: 0.4, pointRadius: 2,
+                        },
+                        {
+                            label: 'Delivered', data: data.map(d => d.delivered),
+                            borderColor: 'rgba(46,204,113,0.8)', backgroundColor: 'rgba(46,204,113,0.1)',
+                            fill: true, tension: 0.4, pointRadius: 2,
+                        },
+                        {
+                            label: 'Failed', data: data.map(d => d.failed),
+                            borderColor: 'rgba(231,76,60,0.8)', backgroundColor: 'rgba(231,76,60,0.1)',
+                            fill: true, tension: 0.4, pointRadius: 2,
+                        },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle' } } },
+                    scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+                },
+            });
+        });
+
+        // Monthly
+        fetch('/api/metrics/monthly?months=12' + chainQueryAmp()).then(r => r.json()).then(data => {
+            if (state.monthlyChart) state.monthlyChart.destroy();
+            const ctx = document.getElementById('monthlyChart').getContext('2d');
+            state.monthlyChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.map(d => d.month),
+                    datasets: [
+                        {
+                            label: 'Delivered', data: data.map(d => d.delivered),
+                            backgroundColor: 'rgba(46,204,113,0.6)', borderRadius: 4,
+                        },
+                        {
+                            label: 'Failed', data: data.map(d => d.failed),
+                            backgroundColor: 'rgba(231,76,60,0.6)', borderRadius: 4,
+                        },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle' } } },
+                    scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } },
+                },
+            });
+        });
+
+        // Tool breakdown
+        fetch('/api/metrics/tools' + chainQueryPrefix()).then(r => r.json()).then(tools => {
+            if (state.toolChart) state.toolChart.destroy();
+            const ctx = document.getElementById('toolChart').getContext('2d');
+            state.toolChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: tools.map(t => t.tool),
+                    datasets: [{
+                        label: 'Requests',
+                        data: tools.map(t => t.total),
+                        backgroundColor: 'rgba(0,210,255,0.6)',
+                        borderRadius: 4,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    indexAxis: 'y',
+                    plugins: { legend: { display: false } },
+                    scales: { x: { beginAtZero: true, ticks: { precision: 0 } } },
+                },
+            });
+        });
+    }
+
+    // --- Management ---
+    async function mgmtAction(action) {
+        const serviceKey = document.getElementById('service-key').value.trim();
+        if (!serviceKey) { alert('Enter a service key'); return; }
+        const el = document.getElementById('mgmt-result');
+        el.style.display = 'block';
+        el.style.color = 'var(--text-muted)';
+        el.textContent = 'Running ' + action + '...';
+        document.querySelectorAll('.btn').forEach(b => b.disabled = true);
+
+        try {
+            const resp = await fetch('/api/management/' + action, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({service_key: serviceKey, chain: document.getElementById('mgmt-chain').value || 'gnosis'}),
+            });
+            const data = await resp.json();
+            if (data.success) {
+                el.style.color = 'var(--success)';
+                el.textContent = action + ' succeeded' + (data.data ? ':\n' + JSON.stringify(data.data, null, 2) : '');
+            } else {
+                el.style.color = 'var(--error)';
+                el.textContent = action + ' failed: ' + (data.error || 'unknown');
+            }
+        } catch (err) {
+            el.style.color = 'var(--error)';
+            el.textContent = action + ' error: ' + err.message;
+        } finally {
+            document.querySelectorAll('.btn').forEach(b => b.disabled = false);
+        }
+    }
+
+    // --- Helpers ---
+    function setText(id, val) { document.getElementById(id).textContent = val; }
+    function escapeHtml(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+    function formatUptime(secs) {
+        if (secs < 60) return secs + 's';
+        if (secs < 3600) return Math.floor(secs / 60) + 'm';
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        return h + 'h ' + m + 'm';
+    }
+
+    // --- Chain Selector ---
+    function chainParam() {
+        return state.selectedChain ? `chain=${state.selectedChain}` : '';
+    }
+    function chainQueryPrefix() {
+        return state.selectedChain ? `?chain=${state.selectedChain}` : '';
+    }
+    function chainQueryAmp() {
+        return state.selectedChain ? `&chain=${state.selectedChain}` : '';
+    }
+
+    async function loadChains() {
+        const chains = await fetch('/api/chains').then(r => r.json());
+        state.chains = chains;
+        const sel = document.getElementById('chain-select');
+        const mgmtSel = document.getElementById('mgmt-chain');
+        chains.forEach(c => {
+            sel.add(new Option(c, c));
+            mgmtSel.add(new Option(c, c));
+        });
+        sel.addEventListener('change', () => {
+            state.selectedChain = sel.value;
+            loadRecentRequests();
+            initChannelChart();
+            loadToolStats();
+            loadCharts();
+        });
+    }
+
+    // --- Init ---
+    loadChains();
+    initQueueChart();
+    initChannelChart();
+    loadRecentRequests();
+    connectSSE();
+
+    // Refresh recent requests every 30s
+    setInterval(loadRecentRequests, 30000);
     </script>
 </body>
 </html>
