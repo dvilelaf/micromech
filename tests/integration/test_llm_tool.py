@@ -31,7 +31,7 @@ class TestEchoToolBaseline:
     """Baseline: echo tool always works (no LLM needed)."""
 
     def test_echo_tool(self):
-        from micromech.tools.builtin.echo_tool.echo_tool import run
+        from micromech.tools.echo_tool.echo_tool import run
 
         result, prompt, metadata, cb = run(prompt="hello world", tool="echo")
         parsed = json.loads(result)
@@ -45,7 +45,7 @@ class TestLLMTool:
 
     def test_llm_tool_simple(self, llm_available):
         """LLM tool returns a valid response for a simple prompt."""
-        from micromech.tools.builtin.llm_tool.llm_tool import run
+        from micromech.tools.llm_tool.llm_tool import run
 
         result, prompt, metadata, cb = run(prompt="What is 2 + 2? Answer with just the number.")
         assert result is not None
@@ -55,7 +55,7 @@ class TestLLMTool:
 
     def test_llm_tool_returns_model_info(self, llm_available):
         """LLM tool response includes model name and token count."""
-        from micromech.tools.builtin.llm_tool.llm_tool import run
+        from micromech.tools.llm_tool.llm_tool import run
 
         result, prompt, metadata, cb = run(prompt="Say hello.")
         parsed = json.loads(result)
@@ -69,7 +69,7 @@ class TestPredictionTool:
 
     def test_prediction_tool_real(self, llm_available):
         """Prediction tool returns valid p_yes/p_no that sum to ~1.0."""
-        from micromech.tools.builtin.prediction_request.prediction_request import run
+        from micromech.tools.prediction_request.prediction_request import run
 
         result, prompt, metadata, cb = run(
             prompt="Will Bitcoin exceed $200,000 by December 2026?",
@@ -86,7 +86,7 @@ class TestPredictionTool:
 
     def test_prediction_tool_values_in_range(self, llm_available):
         """All prediction values are within [0, 1]."""
-        from micromech.tools.builtin.prediction_request.prediction_request import run
+        from micromech.tools.prediction_request.prediction_request import run
 
         result, prompt, metadata, cb = run(
             prompt="Will it rain in London tomorrow?",

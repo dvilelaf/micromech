@@ -16,7 +16,7 @@ from micromech.ipfs.metadata import (
 
 class TestScanToolPackages:
     def test_scan_builtin_tools(self):
-        tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools" / "builtin"
+        tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools"
         tools = scan_tool_packages(tools_dir)
         assert len(tools) >= 1
         # Echo should always be found
@@ -28,13 +28,13 @@ class TestScanToolPackages:
         assert tools == []
 
     def test_tool_has_allowed_tools(self):
-        tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools" / "builtin"
+        tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools"
         tools = scan_tool_packages(tools_dir)
         echo = [t for t in tools if t["name"] == "echo_tool"][0]
         assert "echo" in echo["allowed_tools"]
 
     def test_tool_has_package_cid(self):
-        tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools" / "builtin"
+        tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools"
         tools = scan_tool_packages(tools_dir)
         for tool in tools:
             if tool["allowed_tools"]:

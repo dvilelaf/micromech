@@ -19,4 +19,4 @@ dependencies:
     version: '>=0.19.0'
 fingerprint:
   __init__.py: bafkreieark7qeq6htcoi77kjpieesdgfdurqyyzaolxbofkbl6z7choowu
-  prediction_request.py: bafkreiacmky74e3shsv2w636yqwg4ktp4dm5lzaylkhmdivpjmai36bbne
+  prediction_request.py: bafkreia65psanzkfnylpmfxh6lmhlmjb6kojfx4xpwsooq6wh4x7tqnewa

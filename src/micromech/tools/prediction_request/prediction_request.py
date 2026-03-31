@@ -105,7 +105,7 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
 
     # Use local LLM for inference
     try:
-        from micromech.tools.builtin.llm_tool.llm_tool import _get_llm
+        from micromech.tools.llm_tool.llm_tool import _get_llm
 
         llm = _get_llm()
         response = llm.create_chat_completion(

@@ -21,7 +21,7 @@ class TestLlmTool:
         """run() returns a valid MechResponse 4-tuple."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
 
         importlib.reload(llm_mod)
 
@@ -41,7 +41,7 @@ class TestLlmTool:
         """run() returns JSON with 'result' key."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
 
         importlib.reload(llm_mod)
 
@@ -61,7 +61,7 @@ class TestLlmTool:
         """run() passes system + user messages to LLM."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
 
         importlib.reload(llm_mod)
 
@@ -88,7 +88,7 @@ class TestLlmTool:
         """Counter callback is returned as-is in the 4th element."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
 
         importlib.reload(llm_mod)
 
@@ -104,7 +104,7 @@ class TestLlmTool:
         """Custom temperature and max_tokens are forwarded to LLM."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
 
         importlib.reload(llm_mod)
 
@@ -137,8 +137,8 @@ class TestPredictionRequestTool:
         """run() returns prediction with p_yes, p_no, confidence, info_utility."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
-        import micromech.tools.builtin.prediction_request.prediction_request as pred_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
+        import micromech.tools.prediction_request.prediction_request as pred_mod
 
         importlib.reload(llm_mod)
         importlib.reload(pred_mod)
@@ -166,8 +166,8 @@ class TestPredictionRequestTool:
         """run() formats the PREDICTION_PROMPT with user_prompt."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
-        import micromech.tools.builtin.prediction_request.prediction_request as pred_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
+        import micromech.tools.prediction_request.prediction_request as pred_mod
 
         importlib.reload(llm_mod)
         importlib.reload(pred_mod)
@@ -194,8 +194,8 @@ class TestPredictionRequestTool:
         """On LLM error, returns default prediction (0.5/0.5/0.0/0.0)."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
-        import micromech.tools.builtin.prediction_request.prediction_request as pred_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
+        import micromech.tools.prediction_request.prediction_request as pred_mod
 
         importlib.reload(llm_mod)
         importlib.reload(pred_mod)
@@ -214,8 +214,8 @@ class TestPredictionRequestTool:
         """If LLM returns non-JSON, returns default prediction."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
-        import micromech.tools.builtin.prediction_request.prediction_request as pred_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
+        import micromech.tools.prediction_request.prediction_request as pred_mod
 
         importlib.reload(llm_mod)
         importlib.reload(pred_mod)
@@ -236,8 +236,8 @@ class TestPredictionRequestTool:
         """Probabilities that don't sum to 1 get normalized."""
         import importlib
 
-        import micromech.tools.builtin.llm_tool.llm_tool as llm_mod
-        import micromech.tools.builtin.prediction_request.prediction_request as pred_mod
+        import micromech.tools.llm_tool.llm_tool as llm_mod
+        import micromech.tools.prediction_request.prediction_request as pred_mod
 
         importlib.reload(llm_mod)
         importlib.reload(pred_mod)
@@ -259,7 +259,7 @@ class TestPredictionHelpers:
     """Test _extract_json and _validate_prediction directly."""
 
     def test_extract_json_from_markdown(self):
-        from micromech.tools.builtin.prediction_request.prediction_request import _extract_json
+        from micromech.tools.prediction_request.prediction_request import _extract_json
 
         text = '```json\n{"p_yes": 0.6, "p_no": 0.4}\n```'
         result = _extract_json(text)
@@ -267,14 +267,14 @@ class TestPredictionHelpers:
         assert data["p_yes"] == 0.6
 
     def test_extract_json_plain(self):
-        from micromech.tools.builtin.prediction_request.prediction_request import _extract_json
+        from micromech.tools.prediction_request.prediction_request import _extract_json
 
         text = '{"p_yes": 0.5, "p_no": 0.5}'
         result = _extract_json(text)
         assert json.loads(result)["p_yes"] == 0.5
 
     def test_validate_prediction_adds_missing_fields(self):
-        from micromech.tools.builtin.prediction_request.prediction_request import (
+        from micromech.tools.prediction_request.prediction_request import (
             _validate_prediction,
         )
 
@@ -284,7 +284,7 @@ class TestPredictionHelpers:
         assert "info_utility" in result
 
     def test_validate_prediction_invalid_json(self):
-        from micromech.tools.builtin.prediction_request.prediction_request import (
+        from micromech.tools.prediction_request.prediction_request import (
             _validate_prediction,
         )
 

@@ -71,7 +71,7 @@ class ToolRegistry:
     def load_builtins(self) -> None:
         """Load all built-in tools."""
         self._load_tool_package(
-            "micromech.tools.builtin.echo_tool.echo_tool",
+            "micromech.tools.echo_tool.echo_tool",
             "echo",
             name="Echo",
             description="Returns default prediction. For testing.",
@@ -79,7 +79,7 @@ class ToolRegistry:
         )
 
         self._load_tool_package(
-            "micromech.tools.builtin.llm_tool.llm_tool",
+            "micromech.tools.llm_tool.llm_tool",
             "llm",
             name="Local LLM",
             description="General-purpose local LLM (Qwen 0.5B, CPU).",
@@ -87,7 +87,7 @@ class ToolRegistry:
         )
 
         self._load_tool_package(
-            "micromech.tools.builtin.prediction_request.prediction_request",
+            "micromech.tools.prediction_request.prediction_request",
             "prediction-offline",
             name="Prediction Offline (Local LLM)",
             description="Prediction market analysis using local LLM.",

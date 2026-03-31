@@ -172,7 +172,7 @@ def fingerprint_all_builtins() -> dict[str, dict[str, str]]:
 
     Returns a dict mapping tool directory names to their fingerprints.
     """
-    tools_dir = Path(__file__).parent.parent / "tools" / "builtin"
+    tools_dir = Path(__file__).parent.parent / "tools"
     results: dict[str, dict[str, str]] = {}
     for tool_dir in sorted(tools_dir.iterdir()):
         if not tool_dir.is_dir():
