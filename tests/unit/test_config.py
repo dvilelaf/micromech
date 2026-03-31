@@ -236,3 +236,47 @@ class TestMicromechConfig:
         assert cfg.chains["gnosis"].mech_address == "0x" + "d" * 40
         # marketplace etc. filled from CHAIN_DEFAULTS
         assert cfg.chains["gnosis"].marketplace_address.startswith("0x")
+
+
+VALID_ADDR = "0x" + "aB" * 20
+MARKETPLACE = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
+FACTORY = "0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF"
+STAKING = "0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44"
+
+
+class TestDetectSetupState:
+    def _make(self, **overrides) -> ChainConfig:
+        defaults = {
+            "marketplace_address": MARKETPLACE,
+            "factory_address": FACTORY,
+            "staking_address": STAKING,
+        }
+        defaults.update(overrides)
+        return ChainConfig(**defaults)
+
+    def test_needs_create_when_empty(self):
+        cfg = self._make()
+        assert cfg.detect_setup_state() == "needs_create"
+        assert cfg.setup_complete is False
+
+    def test_needs_deploy_when_only_service_id(self):
+        cfg = self._make(service_id=42, service_key="gnosis_42")
+        assert cfg.detect_setup_state() == "needs_deploy"
+        assert cfg.setup_complete is False
+
+    def test_needs_mech_when_multisig_but_no_mech(self):
+        cfg = self._make(
+            service_id=42, service_key="gnosis_42",
+            multisig_address=VALID_ADDR,
+        )
+        assert cfg.detect_setup_state() == "needs_mech"
+        assert cfg.setup_complete is False
+
+    def test_complete_when_all_set(self):
+        cfg = self._make(
+            service_id=42, service_key="gnosis_42",
+            multisig_address=VALID_ADDR,
+            mech_address=VALID_ADDR,
+        )
+        assert cfg.detect_setup_state() == "complete"
+        assert cfg.setup_complete is True

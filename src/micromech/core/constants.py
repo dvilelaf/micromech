@@ -69,3 +69,16 @@ STATUS_FAILED: Final = "failed"
 # Delivery methods
 DELIVERY_MARKETPLACE: Final = "marketplace"
 DELIVERY_LEGACY: Final = "legacy"
+
+# Minimum funding requirements per chain (native token in wei, OLAS in whole units)
+# These cover gas for the full lifecycle + some buffer
+MIN_NATIVE_WEI: dict[str, int] = {
+    "gnosis": 100_000_000_000_000_000,  # 0.1 xDAI
+    "base": 1_000_000_000_000_000,  # 0.001 ETH
+    "ethereum": 10_000_000_000_000_000,  # 0.01 ETH
+    "polygon": 1_000_000_000_000_000_000,  # 1 POL
+    "optimism": 1_000_000_000_000_000,  # 0.001 ETH
+    "arbitrum": 1_000_000_000_000_000,  # 0.001 ETH
+    "celo": 1_000_000_000_000_000_000,  # 1 CELO
+}
+MIN_OLAS_WHOLE: int = 10_000  # OLAS for staking bond (Supply Alpha)

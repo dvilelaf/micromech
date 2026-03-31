@@ -76,6 +76,35 @@ class ChainConfig(BaseModel):
     def check_eth_address(cls, v: Optional[str]) -> Optional[str]:
         return validate_eth_address(v)
 
+    def detect_setup_state(self) -> str:
+        """Detect how far along the setup process this chain config is.
+
+        Returns one of: needs_create, needs_deploy, needs_mech, complete.
+        """
+        if not self.service_id:
+            return "needs_create"
+        if not self.multisig_address:
+            return "needs_deploy"
+        if not self.mech_address:
+            return "needs_mech"
+        return "complete"
+
+    @property
+    def setup_complete(self) -> bool:
+        """Check if all required addresses are populated."""
+        return self.detect_setup_state() == "complete"
+
+    def apply_deploy_result(self, result: dict) -> None:
+        """Update config fields from a full_deploy result dict."""
+        if "service_id" in result:
+            self.service_id = result["service_id"]
+        if "service_key" in result:
+            self.service_key = result["service_key"]
+        if "multisig_address" in result:
+            self.multisig_address = result["multisig_address"]
+        if "mech_address" in result:
+            self.mech_address = result["mech_address"]
+
 
 class PersistenceConfig(BaseModel):
     """Database settings."""

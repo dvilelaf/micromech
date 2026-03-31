@@ -73,3 +73,65 @@ class IwaBridge:
     def with_retry(self, fn: Any, **kwargs: Any) -> Any:
         """Execute a function with iwa's RPC auto-rotation."""
         return self.chain_interface.with_retry(fn, **kwargs)
+
+
+# Cached instances for balance checking (avoid re-probing RPCs on every call)
+_cached_wallet: Optional[Any] = None
+_cached_interfaces: Optional[Any] = None
+
+
+def check_balances(chain_name: str) -> tuple[float, float]:
+    """Check native token and OLAS balances for the wallet on a chain.
+
+    Returns (native_balance, olas_balance) in whole units.
+    Caches Wallet and ChainInterfaces across calls to avoid repeated RPC probing.
+    """
+    global _cached_wallet, _cached_interfaces  # noqa: PLW0603
+
+    try:
+        if not _IWA_AVAILABLE:
+            return 0.0, 0.0
+
+        if _cached_wallet is None:
+            _cached_wallet = Wallet()
+        if _cached_interfaces is None:
+            _cached_interfaces = ChainInterfaces()
+
+        address = _cached_wallet.address
+        ci = _cached_interfaces.get(chain_name)
+        if not ci:
+            return 0.0, 0.0
+
+        native_wei = ci.with_retry(lambda: ci.web3.eth.get_balance(address))
+        native = native_wei / 1e18
+
+        # Get OLAS balance
+        olas_balance = 0.0
+        try:
+            chain_model = ci.chain
+            olas_addr = chain_model.get_token_address("OLAS")
+            if olas_addr:
+                erc20_abi = [
+                    {
+                        "inputs": [{"name": "account", "type": "address"}],
+                        "name": "balanceOf",
+                        "outputs": [{"name": "", "type": "uint256"}],
+                        "stateMutability": "view",
+                        "type": "function",
+                    }
+                ]
+                # olas_addr is already an EthereumAddress (checksummed)
+                contract = ci.web3.eth.contract(
+                    address=str(olas_addr), abi=erc20_abi
+                )
+                raw = ci.with_retry(
+                    lambda: contract.functions.balanceOf(address).call()
+                )
+                olas_balance = raw / 1e18
+        except Exception:
+            logger.debug("Failed to check OLAS balance on {}", chain_name)
+
+        return native, olas_balance
+    except Exception:
+        logger.debug("Failed to check balances on {}", chain_name)
+        return 0.0, 0.0

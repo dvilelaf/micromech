@@ -21,19 +21,50 @@ class TestVersionCommand:
 
 
 class TestInitCommand:
-    def test_init_creates_config(self, tmp_path: Path):
-        config_path = tmp_path / "config.yaml"
-        result = runner.invoke(app, ["init", "--config", str(config_path)])
-        assert result.exit_code == 0
-        assert config_path.exists()
-        assert "created" in result.output.lower()
+    @patch("micromech.cli._check_balances", return_value=(1.0, 20000.0))
+    def test_init_wizard_skip_funding(self, mock_balances, tmp_path: Path):
+        mock_wallet = MagicMock()
+        mock_wallet.address = "0x" + "11" * 20
 
-    def test_init_refuses_overwrite(self, tmp_path: Path):
         config_path = tmp_path / "config.yaml"
-        config_path.write_text("existing")
-        result = runner.invoke(app, ["init", "--config", str(config_path)])
-        assert result.exit_code == 1
-        assert "already exists" in result.output.lower()
+        mock_module = MagicMock(Wallet=MagicMock(return_value=mock_wallet))
+        with patch.dict("sys.modules", {"iwa.core.wallet": mock_module}):
+            result = runner.invoke(app, [
+                "init", "--config", str(config_path),
+                "--chain", "gnosis", "--yes", "--skip-funding-check",
+            ])
+        # Will fail at deploy step (no iwa ServiceManager) but wizard starts
+        assert "setup wizard" in result.output.lower()
+        assert "wallet found" in result.output.lower()
+
+    @patch("micromech.cli._check_balances", return_value=(1.0, 20000.0))
+    def test_init_resumes_complete(self, mock_balances, tmp_path: Path):
+        """Init detects already-deployed service and skips."""
+        mock_wallet = MagicMock()
+        mock_wallet.address = "0x" + "11" * 20
+
+        config_path = tmp_path / "config.yaml"
+        from micromech.core.config import ChainConfig
+        cfg = MicromechConfig(chains={"gnosis": ChainConfig(
+            chain="gnosis",
+            service_id=42,
+            service_key="gnosis_42",
+            multisig_address="0x" + "22" * 20,
+            mech_address="0x" + "33" * 20,
+            marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+            factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+            staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+        )})
+        cfg.save(config_path)
+
+        mock_module = MagicMock(Wallet=MagicMock(return_value=mock_wallet))
+        with patch.dict("sys.modules", {"iwa.core.wallet": mock_module}):
+            result = runner.invoke(app, [
+                "init", "--config", str(config_path),
+                "--chain", "gnosis", "--yes", "--skip-funding-check",
+            ])
+        assert result.exit_code == 0
+        assert "already fully deployed" in result.output.lower()
 
 
 class TestConfigCommand:
@@ -43,7 +74,7 @@ class TestConfigCommand:
         result = runner.invoke(app, ["config", "--config", str(config_path)])
         assert result.exit_code == 0
         assert "runtime" in result.output
-        assert "mech" in result.output
+        assert "chains" in result.output
 
     def test_show_default_config(self, tmp_path: Path):
         config_path = tmp_path / "nonexistent.yaml"
@@ -480,3 +511,20 @@ class TestAddToolCommand:
         result = runner.invoke(app, ["add-tool", "existing_tool"])
         assert result.exit_code == 1
         assert "already exists" in result.output
+
+
+class TestDoctorCommand:
+    def test_doctor_no_config(self, tmp_path: Path):
+        config_path = tmp_path / "nonexistent.yaml"
+        result = runner.invoke(app, ["doctor", "--config", str(config_path)])
+        assert result.exit_code == 0
+        assert "doctor" in result.output.lower()
+        assert "No config" in result.output or "warning" in result.output.lower()
+
+    def test_doctor_with_config(self, tmp_path: Path):
+        config_path = tmp_path / "config.yaml"
+        MicromechConfig().save(config_path)
+        result = runner.invoke(app, ["doctor", "--config", str(config_path)])
+        assert result.exit_code == 0
+        assert "Config loaded" in result.output
+        assert "gnosis" in result.output.lower()

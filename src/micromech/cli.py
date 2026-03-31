@@ -1,6 +1,8 @@
 """micromech CLI — management and runtime commands."""
 
 import asyncio
+import sys
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -8,12 +10,34 @@ import typer
 from loguru import logger
 
 from micromech.core.config import DEFAULT_CONFIG_PATH, MicromechConfig
+from micromech.core.constants import CHAIN_DEFAULTS, MIN_NATIVE_WEI, MIN_OLAS_WHOLE
 
 app = typer.Typer(
     name="micromech",
     help="Lightweight OLAS mech runtime.",
     no_args_is_help=True,
 )
+
+# Available chains for setup wizard
+CHAIN_NAMES = list(CHAIN_DEFAULTS.keys())
+CHAIN_DISPLAY = {
+    "gnosis": "Gnosis (recommended — cheapest gas)",
+    "base": "Base",
+    "ethereum": "Ethereum (expensive gas)",
+    "polygon": "Polygon",
+    "optimism": "Optimism",
+    "arbitrum": "Arbitrum",
+    "celo": "Celo",
+}
+NATIVE_SYMBOL = {
+    "gnosis": "xDAI",
+    "base": "ETH",
+    "ethereum": "ETH",
+    "polygon": "POL",
+    "optimism": "ETH",
+    "arbitrum": "ETH",
+    "celo": "CELO",
+}
 
 
 def _load_config(config_path: Optional[Path]) -> MicromechConfig:
@@ -22,18 +46,198 @@ def _load_config(config_path: Optional[Path]) -> MicromechConfig:
     return MicromechConfig.load(path)
 
 
+def _print_step(step: int, total: int, msg: str) -> None:
+    """Print a wizard step header."""
+    typer.echo(f"\n[{step}/{total}] {msg}")
+    typer.echo("-" * 40)
+
+
+def _check_balances(chain_name: str) -> tuple[float, float]:
+    """Check native token and OLAS balances. Delegates to core.bridge (cached)."""
+    from micromech.core.bridge import check_balances
+
+    return check_balances(chain_name)
+
+
 @app.command()
 def init(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+    chain: Optional[str] = typer.Option(None, "--chain", help="Chain to deploy on"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive mode"),
+    skip_funding: bool = typer.Option(False, "--skip-funding-check"),
 ) -> None:
-    """Initialize config file with defaults."""
+    """Setup wizard — wallet, chain, funding, deploy. Get running in 3 minutes."""
     path = config_path or DEFAULT_CONFIG_PATH
-    if path.exists():
-        typer.echo(f"Config already exists at {path}")
+    total_steps = 5
+
+    typer.echo("\nmicromech setup wizard")
+    typer.echo("=" * 40)
+    typer.echo("Get your mech earning OLAS rewards in 3 minutes.\n")
+
+    # --- Step 1: Wallet ---
+    _print_step(1, total_steps, "Wallet")
+    wallet_address: Optional[str] = None
+    try:
+        from iwa.core.wallet import Wallet
+        wallet = Wallet()
+        wallet_address = wallet.address
+        typer.echo(f"  Wallet found: {wallet_address}")
+    except ImportError:
+        typer.echo("  iwa not installed. Install with: pip install micromech[chain]")
         raise typer.Exit(1)
-    config = MicromechConfig()
-    config.save(path)
-    typer.echo(f"Config created at {path}")
+    except Exception:
+        typer.echo("  No wallet found. Creating a new one...")
+        typer.echo("  (You'll need the iwa wallet setup: run 'iwa wallet create')")
+        typer.echo("  Then re-run: micromech init")
+        raise typer.Exit(1)
+
+    # --- Step 2: Chain Selection ---
+    _print_step(2, total_steps, "Chain Selection")
+    if chain and chain in CHAIN_NAMES:
+        selected_chain = chain
+        typer.echo(f"  Using: {selected_chain}")
+    elif yes:
+        selected_chain = "gnosis"
+        typer.echo(f"  Using default: {selected_chain}")
+    else:
+        for i, name in enumerate(CHAIN_NAMES, 1):
+            label = CHAIN_DISPLAY.get(name, name)
+            typer.echo(f"    {i}. {label}")
+        while True:
+            choice = typer.prompt("  Select chain", default="1")
+            try:
+                idx = int(choice) - 1
+                if 0 <= idx < len(CHAIN_NAMES):
+                    selected_chain = CHAIN_NAMES[idx]
+                    break
+            except ValueError:
+                if choice in CHAIN_NAMES:
+                    selected_chain = choice
+                    break
+            typer.echo("  Invalid choice.")
+    typer.echo(f"  Selected: {selected_chain}")
+
+    # --- Step 3: Funding Check ---
+    _print_step(3, total_steps, "Fund Your Wallet")
+    native_sym = NATIVE_SYMBOL.get(selected_chain, "ETH")
+    min_native = MIN_NATIVE_WEI.get(selected_chain, 100_000_000_000_000_000) / 1e18
+
+    typer.echo(f"  Your mech needs funds on {selected_chain}:")
+    typer.echo(f"    - ~{min_native} {native_sym} for gas")
+    typer.echo(f"    - {MIN_OLAS_WHOLE:,} OLAS for staking bond")
+    typer.echo(f"\n  Send funds to: {wallet_address}")
+
+    if not skip_funding:
+        typer.echo("\n  Checking balances...")
+        funded = False
+        attempts = 0
+        max_wait = 600  # 10 minutes
+        while not funded and attempts * 15 < max_wait:
+            native_bal, olas_bal = _check_balances(selected_chain)
+            native_ok = native_bal >= min_native
+            olas_ok = olas_bal >= MIN_OLAS_WHOLE
+
+            native_status = "OK" if native_ok else "waiting"
+            olas_status = "OK" if olas_ok else "waiting"
+
+            sys.stdout.write(
+                f"\r    {native_sym}: {native_bal:.4f} [{native_status}]  "
+                f"OLAS: {olas_bal:,.0f} [{olas_status}]    "
+            )
+            sys.stdout.flush()
+
+            if native_ok and olas_ok:
+                funded = True
+                typer.echo("\n  Wallet funded!")
+                break
+
+            if attempts == 0 and not yes:
+                typer.echo(
+                    "\n\n  Waiting for funds... (Ctrl+C to cancel, --skip-funding-check to skip)"
+                )
+
+            attempts += 1
+            time.sleep(15)
+
+        if not funded:
+            typer.echo("\n  Timed out waiting for funds.")
+            typer.echo(f"  Fund {wallet_address} and re-run: micromech init --skip-funding-check")
+            raise typer.Exit(1)
+    else:
+        typer.echo("  Skipping funding check (--skip-funding-check)")
+
+    # --- Step 4: Tools ---
+    _print_step(4, total_steps, "Tools")
+    typer.echo("  Default tools enabled:")
+    typer.echo("    [x] echo — Test tool (default prediction)")
+    typer.echo("    [x] llm — Local LLM (Qwen 0.5B, CPU)")
+    typer.echo("  (Edit ~/.micromech/config.yaml to customize later)")
+
+    # --- Step 5: Deploy ---
+    _print_step(5, total_steps, "Deploy to OLAS Protocol")
+
+    # Build or load config
+    chain_defaults = CHAIN_DEFAULTS.get(selected_chain, {})
+    from micromech.core.config import ChainConfig
+
+    chain_cfg = ChainConfig(
+        chain=selected_chain,
+        marketplace_address=chain_defaults.get("marketplace", ""),
+        factory_address=chain_defaults.get("factory", ""),
+        staking_address=chain_defaults.get("staking", ""),
+    )
+
+    # Check existing state
+    if path.exists():
+        config = MicromechConfig.load(path)
+        if selected_chain in config.chains:
+            chain_cfg = config.chains[selected_chain]
+    else:
+        config = MicromechConfig(chains={selected_chain: chain_cfg})
+
+    state = chain_cfg.detect_setup_state()
+    if chain_cfg.setup_complete:
+        typer.echo("  Service already fully deployed!")
+        typer.echo(f"    service_id: {chain_cfg.service_id}")
+        typer.echo(f"    multisig: {chain_cfg.multisig_address}")
+        typer.echo(f"    mech: {chain_cfg.mech_address}")
+        typer.echo("\n  Start with: micromech run")
+        config.save(path)
+        return
+
+    if state != "needs_create":
+        typer.echo(f"  Resuming from state: {state}")
+
+    def _on_progress(step: int, total: int, msg: str, success: bool = True) -> None:
+        icon = "+" if success else "!"
+        typer.echo(f"  [{icon}] [{step}/{total}] {msg}")
+
+    try:
+        from micromech.management import MechLifecycle
+
+        lc = MechLifecycle(config, chain_name=selected_chain)
+        result = lc.full_deploy(on_progress=_on_progress)
+
+        # Update config with deployment results
+        chain_cfg.apply_deploy_result(result)
+        config.chains[selected_chain] = chain_cfg
+        config.save(path)
+
+        typer.echo(f"\n  Config saved to {path}")
+        typer.echo("\n  Your mech is ready! Start with:\n")
+        typer.echo("    micromech run")
+        typer.echo("\n  Dashboard: http://localhost:8000")
+
+    except RuntimeError as e:
+        typer.echo(f"\n  Deployment failed: {e}")
+        typer.echo("  Fix the issue and re-run: micromech init (it will resume)")
+        # Save partial state
+        config.chains[selected_chain] = chain_cfg
+        config.save(path)
+        raise typer.Exit(1)
+    except ImportError:
+        typer.echo("  iwa not installed. Install with: pip install micromech[chain]")
+        raise typer.Exit(1)
 
 
 @app.command()
@@ -497,6 +701,125 @@ def add_tool(
     typer.echo(f"  {name}/component.yaml")
     typer.echo(f"  {name}/{name}.py")
     typer.echo(f"\nEdit {tool_dir / name}.py to implement your tool logic.")
+
+
+@app.command()
+def doctor(
+    config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+) -> None:
+    """Diagnose common issues — wallet, RPCs, service state, tools."""
+    issues = 0
+    warnings = 0
+
+    def ok(msg: str) -> None:
+        typer.echo(f"  [OK] {msg}")
+
+    def warn(msg: str) -> None:
+        nonlocal warnings
+        warnings += 1
+        typer.echo(f"  [!!] {msg}")
+
+    def fail(msg: str) -> None:
+        nonlocal issues
+        issues += 1
+        typer.echo(f"  [FAIL] {msg}")
+
+    typer.echo("\nmicromech doctor")
+    typer.echo("=" * 40)
+
+    # 1. Config
+    typer.echo("\nConfig:")
+    path = config_path or DEFAULT_CONFIG_PATH
+    if path.exists():
+        try:
+            cfg = MicromechConfig.load(path)
+            ok(f"Config loaded from {path}")
+            ok(f"Chains configured: {list(cfg.chains.keys())}")
+        except Exception as e:
+            fail(f"Config parse error: {e}")
+            raise typer.Exit(1)
+    else:
+        warn(f"No config at {path} (run 'micromech init' first)")
+        cfg = MicromechConfig()
+
+    # 2. Wallet
+    typer.echo("\nWallet:")
+    try:
+        from iwa.core.wallet import Wallet
+        wallet = Wallet()
+        ok(f"Address: {wallet.address}")
+    except ImportError:
+        fail("iwa not installed (pip install micromech[chain])")
+    except Exception as e:
+        fail(f"Wallet error: {e}")
+
+    # 3. Chain connectivity
+    typer.echo("\nChain RPCs:")
+    try:
+        from iwa.core.chain import ChainInterfaces
+        interfaces = ChainInterfaces()
+        for chain_name in cfg.chains:
+            ci = interfaces.get(chain_name)
+            if ci:
+                try:
+                    block = ci.web3.eth.block_number
+                    ok(f"{chain_name}: block #{block}")
+                except Exception as e:
+                    fail(f"{chain_name}: {e}")
+            else:
+                fail(f"{chain_name}: no chain interface")
+    except ImportError:
+        warn("Cannot check RPCs (iwa not installed)")
+
+    # 4. Service state
+    typer.echo("\nService State:")
+    for chain_name, chain_cfg in cfg.chains.items():
+        state = chain_cfg.detect_setup_state()
+        if chain_cfg.setup_complete:
+            ok(f"{chain_name}: complete (service #{chain_cfg.service_id})")
+        else:
+            warn(f"{chain_name}: {state}")
+
+    # 5. Tools
+    typer.echo("\nTools:")
+    try:
+        from micromech.tools.registry import ToolRegistry
+        reg = ToolRegistry()
+        reg.load_builtins()
+        tool_list = reg.tool_ids
+        if tool_list:
+            ok(f"Available: {', '.join(tool_list)}")
+        else:
+            warn("No tools loaded")
+    except Exception as e:
+        fail(f"Tool registry error: {e}")
+
+    # 6. LLM model
+    typer.echo("\nLLM Model:")
+    model_path = cfg.llm.models_dir / cfg.llm.model_file
+    if model_path.exists():
+        size_mb = model_path.stat().st_size / (1024 * 1024)
+        ok(f"Model ready: {cfg.llm.model_file} ({size_mb:.0f} MB)")
+    else:
+        warn(f"Model not downloaded: {cfg.llm.model_file}")
+        typer.echo("         Download with: micromech run (auto-downloads on first use)")
+
+    # 7. Database
+    typer.echo("\nDatabase:")
+    if cfg.persistence.db_path.exists():
+        size_kb = cfg.persistence.db_path.stat().st_size / 1024
+        ok(f"DB exists: {cfg.persistence.db_path} ({size_kb:.1f} KB)")
+    else:
+        warn("No database yet (will be created on first run)")
+
+    # Summary
+    typer.echo(f"\n{'=' * 40}")
+    if issues == 0 and warnings == 0:
+        typer.echo("All checks passed!")
+    elif issues == 0:
+        typer.echo(f"{warnings} warning(s), 0 failures")
+    else:
+        typer.echo(f"{issues} failure(s), {warnings} warning(s)")
 
 
 @app.command()
