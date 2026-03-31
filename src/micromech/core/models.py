@@ -6,6 +6,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, field_validator
 
 from micromech.core.constants import (
+    DEFAULT_CHAIN,
     DELIVERY_MARKETPLACE,
     STATUS_PENDING,
     validate_eth_address,
@@ -23,6 +24,7 @@ class MechRequest(BaseModel):
     """Incoming mech request (on-chain or off-chain)."""
 
     request_id: str
+    chain: str = DEFAULT_CHAIN
     sender: str = ""
     data: bytes = b""
 

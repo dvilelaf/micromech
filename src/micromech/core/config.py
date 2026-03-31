@@ -4,9 +4,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from micromech.core.constants import (
+    CHAIN_DEFAULTS,
     DEFAULT_CHAIN,
     DEFAULT_CLEANUP_DAYS,
     DEFAULT_DB_NAME,
@@ -23,7 +24,6 @@ from micromech.core.constants import (
     DEFAULT_MAX_CONCURRENT,
     DEFAULT_PORT,
     DEFAULT_REQUEST_TIMEOUT,
-    MECH_MARKETPLACE_ADDRESS,
     validate_eth_address,
 )
 
@@ -55,18 +55,23 @@ class RuntimeConfig(BaseModel):
         return upper
 
 
-class MechConfig(BaseModel):
-    """Mech identity and chain settings."""
+class ChainConfig(BaseModel):
+    """Per-chain mech identity and contract addresses."""
 
     chain: str = DEFAULT_CHAIN
+    enabled: bool = True
     service_id: Optional[int] = None
+    service_key: Optional[str] = None
     mech_address: Optional[str] = None
     multisig_address: Optional[str] = None
-    marketplace_address: str = MECH_MARKETPLACE_ADDRESS
+    marketplace_address: str
+    factory_address: str
+    staking_address: str
     delivery_rate: int = Field(default=DEFAULT_DELIVERY_RATE, ge=0)
     account_tag: str = "mech"
 
-    @field_validator("mech_address", "multisig_address", "marketplace_address")
+    @field_validator("mech_address", "multisig_address", "marketplace_address",
+                     "factory_address", "staking_address")
     @classmethod
     def check_eth_address(cls, v: Optional[str]) -> Optional[str]:
         return validate_eth_address(v)
@@ -106,12 +111,25 @@ class ToolConfig(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+def _default_chains() -> dict[str, ChainConfig]:
+    """Default: only gnosis enabled."""
+    gnosis = CHAIN_DEFAULTS["gnosis"]
+    return {
+        "gnosis": ChainConfig(
+            chain="gnosis",
+            marketplace_address=gnosis["marketplace"],
+            factory_address=gnosis["factory"],
+            staking_address=gnosis["staking"],
+        )
+    }
+
+
 class MicromechConfig(BaseModel):
     """Top-level configuration."""
 
     version: str = "1"
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
-    mech: MechConfig = Field(default_factory=MechConfig)
+    chains: dict[str, ChainConfig] = Field(default_factory=_default_chains)
     ipfs: IpfsConfig = Field(default_factory=IpfsConfig)
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -120,6 +138,25 @@ class MicromechConfig(BaseModel):
             ToolConfig(id="echo", enabled=True),
         ]
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_single_chain(cls, data: Any) -> Any:
+        """Auto-migrate old single-chain `mech:` config to `chains:` dict."""
+        if isinstance(data, dict) and "mech" in data and "chains" not in data:
+            mech = data.pop("mech")
+            chain_name = mech.get("chain", DEFAULT_CHAIN)
+            defaults = CHAIN_DEFAULTS.get(chain_name, {})
+            mech.setdefault("marketplace_address", defaults.get("marketplace", ""))
+            mech.setdefault("factory_address", defaults.get("factory", ""))
+            mech.setdefault("staking_address", defaults.get("staking", ""))
+            data["chains"] = {chain_name: mech}
+        return data
+
+    @property
+    def enabled_chains(self) -> dict[str, ChainConfig]:
+        """Get only enabled chain configs."""
+        return {k: v for k, v in self.chains.items() if v.enabled}
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "MicromechConfig":
@@ -135,4 +172,6 @@ class MicromechConfig(BaseModel):
         config_path = path or DEFAULT_CONFIG_PATH
         config_path.parent.mkdir(parents=True, exist_ok=True)
         data = self.model_dump(mode="json")
-        config_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+        config_path.write_text(
+            yaml.dump(data, default_flow_style=False, sort_keys=False)
+        )

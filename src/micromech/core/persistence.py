@@ -13,6 +13,7 @@ import peewee as pw
 from loguru import logger
 
 from micromech.core.constants import (
+    DEFAULT_CHAIN,
     STATUS_DELIVERED,
     STATUS_EXECUTED,
     STATUS_EXECUTING,
@@ -27,6 +28,7 @@ class RequestRow(pw.Model):
     """Persistent storage for mech requests and their lifecycle."""
 
     request_id = pw.CharField(primary_key=True)
+    chain = pw.CharField(default=DEFAULT_CHAIN, index=True)
     sender = pw.CharField(default="")
     data = pw.BlobField(default=b"")
     prompt = pw.TextField(default="")
@@ -54,7 +56,17 @@ class RequestRow(pw.Model):
 
     class Meta:
         table_name = "requests"
-        indexes = ((("status", "created_at"), False),)
+        indexes = (
+            (("status", "created_at"), False),
+            (("chain", "status", "created_at"), False),
+        )
+
+
+def _chain_filter(query: pw.ModelSelect, chain: Optional[str]) -> pw.ModelSelect:
+    """Apply chain filter if specified. None means all chains."""
+    if chain is not None:
+        return query.where(RequestRow.chain == chain)
+    return query
 
 
 class PersistentQueue:
@@ -78,7 +90,21 @@ class PersistentQueue:
         RequestRow.bind(self._db)
         self._db.connect()
         self._db.create_tables([RequestRow])
+        self._migrate()
         logger.info("Database initialized at {}", db_path)
+
+    def _migrate(self) -> None:
+        """Auto-migrate: add chain column if missing (for existing single-chain DBs)."""
+        try:
+            self._db.execute_sql("SELECT chain FROM requests LIMIT 1")
+        except pw.OperationalError:
+            self._db.execute_sql(
+                f"ALTER TABLE requests ADD COLUMN chain VARCHAR(32) DEFAULT '{DEFAULT_CHAIN}'"
+            )
+            self._db.execute_sql(
+                "CREATE INDEX IF NOT EXISTS idx_requests_chain ON requests(chain)"
+            )
+            logger.info("Migrated database: added chain column")
 
     def close(self) -> None:
         if not self._db.is_closed():
@@ -90,6 +116,7 @@ class PersistentQueue:
         try:
             RequestRow.create(
                 request_id=request.request_id,
+                chain=request.chain,
                 sender=request.sender,
                 data=request.data,
                 prompt=request.prompt,
@@ -103,7 +130,7 @@ class PersistentQueue:
                 error=request.error,
                 updated_at=now,
             )
-            logger.debug("Persisted request {}", request.request_id)
+            logger.debug("Persisted request {} (chain={})", request.request_id, request.chain)
         except pw.IntegrityError:
             logger.debug("Request {} already exists, skipping", request.request_id)
 
@@ -194,15 +221,17 @@ class PersistentQueue:
         """Get requests stuck in executing (interrupted by crash)."""
         return self._query_by_status(STATUS_EXECUTING)
 
-    def get_undelivered(self, limit: int = 10) -> list[RequestRecord]:
-        """Get executed but not yet delivered requests."""
-        rows = (
+    def get_undelivered(
+        self, limit: int = 10, chain: Optional[str] = None
+    ) -> list[RequestRecord]:
+        """Get executed but not yet delivered requests, optionally filtered by chain."""
+        query = (
             RequestRow.select()
             .where(RequestRow.status == STATUS_EXECUTED)
             .order_by(RequestRow.created_at.asc())
-            .limit(limit)
         )
-        return [self._row_to_record(r) for r in rows]
+        query = _chain_filter(query, chain)
+        return [self._row_to_record(r) for r in query.limit(limit)]
 
     def get_by_id(self, request_id: str) -> Optional[RequestRecord]:
         """Get a single request by ID."""
@@ -212,12 +241,13 @@ class PersistentQueue:
         except RequestRow.DoesNotExist:
             return None
 
-    def get_recent(self, limit: int = 50) -> list[RequestRecord]:
-        """Get recent requests across all statuses."""
-        rows = RequestRow.select().order_by(RequestRow.created_at.desc()).limit(limit)
-        return [self._row_to_record(r) for r in rows]
+    def get_recent(self, limit: int = 50, chain: Optional[str] = None) -> list[RequestRecord]:
+        """Get recent requests across all statuses, optionally filtered by chain."""
+        query = RequestRow.select().order_by(RequestRow.created_at.desc())
+        query = _chain_filter(query, chain)
+        return [self._row_to_record(r) for r in query.limit(limit)]
 
-    def count_by_status(self) -> dict[str, int]:
+    def count_by_status(self, chain: Optional[str] = None) -> dict[str, int]:
         """Count requests grouped by status. Returns 0 for all known statuses."""
         all_statuses = {
             STATUS_PENDING: 0,
@@ -226,11 +256,117 @@ class PersistentQueue:
             STATUS_DELIVERED: 0,
             STATUS_FAILED: 0,
         }
-        for row in RequestRow.select(
+        query = RequestRow.select(
             RequestRow.status, pw.fn.COUNT(RequestRow.request_id).alias("cnt")
-        ).group_by(RequestRow.status):
+        ).group_by(RequestRow.status)
+        query = _chain_filter(query, chain)
+        for row in query:
             all_statuses[row.status] = row.cnt
         return all_statuses
+
+    def count_by_chain(self) -> dict[str, int]:
+        """Count total requests per chain."""
+        result: dict[str, int] = {}
+        for row in RequestRow.select(
+            RequestRow.chain, pw.fn.COUNT(RequestRow.request_id).alias("cnt")
+        ).group_by(RequestRow.chain):
+            result[row.chain] = row.cnt
+        return result
+
+    def tool_stats(self, chain: Optional[str] = None) -> list[dict]:
+        """Per-tool stats: count, success count, avg execution time."""
+        query = (
+            RequestRow.select(
+                RequestRow.tool,
+                pw.fn.COUNT(RequestRow.request_id).alias("total"),
+                pw.fn.SUM(
+                    pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)
+                ).alias("delivered"),
+                pw.fn.SUM(
+                    pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)
+                ).alias("failed"),
+                pw.fn.AVG(RequestRow.result_time).alias("avg_time"),
+            )
+            .where(RequestRow.tool != "")
+            .group_by(RequestRow.tool)
+            .order_by(pw.fn.COUNT(RequestRow.request_id).desc())
+        )
+        query = _chain_filter(query, chain)
+        return [
+            {
+                "tool": r.tool,
+                "total": r.total,
+                "delivered": int(r.delivered or 0),
+                "failed": int(r.failed or 0),
+                "avg_time": round(float(r.avg_time or 0), 3),
+            }
+            for r in query
+        ]
+
+    def daily_stats(self, days: int = 30, chain: Optional[str] = None) -> list[dict]:
+        """Daily request counts for the last N days."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        query = (
+            RequestRow.select(
+                pw.fn.DATE(RequestRow.created_at).alias("day"),
+                pw.fn.COUNT(RequestRow.request_id).alias("total"),
+                pw.fn.SUM(
+                    pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)
+                ).alias("delivered"),
+                pw.fn.SUM(
+                    pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)
+                ).alias("failed"),
+            )
+            .where(RequestRow.created_at >= cutoff)
+            .group_by(pw.fn.DATE(RequestRow.created_at))
+            .order_by(pw.fn.DATE(RequestRow.created_at).asc())
+        )
+        query = _chain_filter(query, chain)
+        return [
+            {
+                "day": str(r.day),
+                "total": r.total,
+                "delivered": int(r.delivered or 0),
+                "failed": int(r.failed or 0),
+            }
+            for r in query
+        ]
+
+    def monthly_stats(self, months: int = 12, chain: Optional[str] = None) -> list[dict]:
+        """Monthly request counts."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=months * 31)
+        query = (
+            RequestRow.select(
+                pw.fn.strftime("%Y-%m", RequestRow.created_at).alias("month"),
+                pw.fn.COUNT(RequestRow.request_id).alias("total"),
+                pw.fn.SUM(
+                    pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)
+                ).alias("delivered"),
+                pw.fn.SUM(
+                    pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)
+                ).alias("failed"),
+            )
+            .where(RequestRow.created_at >= cutoff)
+            .group_by(pw.fn.strftime("%Y-%m", RequestRow.created_at))
+            .order_by(pw.fn.strftime("%Y-%m", RequestRow.created_at).asc())
+        )
+        query = _chain_filter(query, chain)
+        return [
+            {
+                "month": r.month,
+                "total": r.total,
+                "delivered": int(r.delivered or 0),
+                "failed": int(r.failed or 0),
+            }
+            for r in query
+        ]
+
+    def onchain_offchain_counts(self, chain: Optional[str] = None) -> dict[str, int]:
+        """Count on-chain vs off-chain requests."""
+        base_q = _chain_filter(RequestRow.select(), chain)
+        onchain = base_q.where(RequestRow.is_offchain == False).count()  # noqa: E712
+        offchain = base_q.where(RequestRow.is_offchain == True).count()  # noqa: E712
+        return {"onchain": onchain, "offchain": offchain}
 
     def cleanup(self, days: int = 30) -> int:
         """Remove delivered/failed requests older than N days. Returns count deleted."""
@@ -267,6 +403,7 @@ class PersistentQueue:
 
         request = MechRequest.model_construct(
             request_id=row.request_id,
+            chain=row.chain,
             sender=row.sender,
             data=bytes(row.data) if row.data else b"",
             prompt=row.prompt,

@@ -6,8 +6,8 @@ import pytest
 from pydantic import ValidationError
 
 from micromech.core.config import (
+    ChainConfig,
     LLMConfig,
-    MechConfig,
     MicromechConfig,
     PersistenceConfig,
     RuntimeConfig,
@@ -52,10 +52,27 @@ class TestRuntimeConfig:
             RuntimeConfig(request_timeout=5)
 
 
-class TestMechConfig:
+STUB_MARKETPLACE = "0x" + "a" * 40
+STUB_FACTORY = "0x" + "b" * 40
+STUB_STAKING = "0x" + "c" * 40
+
+
+def _chain_cfg(**overrides) -> ChainConfig:
+    """Helper to build a ChainConfig with stub required addresses."""
+    defaults = dict(
+        marketplace_address=STUB_MARKETPLACE,
+        factory_address=STUB_FACTORY,
+        staking_address=STUB_STAKING,
+    )
+    defaults.update(overrides)
+    return ChainConfig(**defaults)
+
+
+class TestChainConfig:
     def test_defaults(self):
-        cfg = MechConfig()
+        cfg = _chain_cfg()
         assert cfg.chain == "gnosis"
+        assert cfg.enabled is True
         assert cfg.service_id is None
         assert cfg.mech_address is None
         assert cfg.marketplace_address.startswith("0x")
@@ -63,24 +80,32 @@ class TestMechConfig:
 
     def test_valid_address(self):
         addr = "0x" + "a" * 40
-        cfg = MechConfig(mech_address=addr)
+        cfg = _chain_cfg(mech_address=addr)
         assert cfg.mech_address == addr
 
     def test_invalid_address_no_prefix(self):
         with pytest.raises(ValidationError):
-            MechConfig(mech_address="not_an_address")
+            _chain_cfg(mech_address="not_an_address")
 
     def test_invalid_address_wrong_length(self):
         with pytest.raises(ValidationError):
-            MechConfig(mech_address="0x123")
+            _chain_cfg(mech_address="0x123")
 
     def test_invalid_address_non_hex(self):
         with pytest.raises(ValidationError):
-            MechConfig(mech_address="0x" + "Z" * 40)
+            _chain_cfg(mech_address="0x" + "Z" * 40)
 
     def test_none_address_is_valid(self):
-        cfg = MechConfig(mech_address=None)
+        cfg = _chain_cfg(mech_address=None)
         assert cfg.mech_address is None
+
+    def test_custom_chain(self):
+        cfg = _chain_cfg(chain="base")
+        assert cfg.chain == "base"
+
+    def test_disabled(self):
+        cfg = _chain_cfg(enabled=False)
+        assert cfg.enabled is False
 
 
 class TestPersistenceConfig:
@@ -137,7 +162,8 @@ class TestMicromechConfig:
         cfg = MicromechConfig()
         assert cfg.version == "1"
         assert isinstance(cfg.runtime, RuntimeConfig)
-        assert isinstance(cfg.mech, MechConfig)
+        assert "gnosis" in cfg.chains
+        assert isinstance(cfg.chains["gnosis"], ChainConfig)
         assert isinstance(cfg.persistence, PersistenceConfig)
         assert isinstance(cfg.llm, LLMConfig)
         assert len(cfg.tools) >= 1
@@ -145,7 +171,7 @@ class TestMicromechConfig:
     def test_save_and_load(self, tmp_path: Path):
         cfg = MicromechConfig(
             runtime=RuntimeConfig(port=9999),
-            mech=MechConfig(chain="base"),
+            chains={"base": _chain_cfg(chain="base")},
         )
         config_path = tmp_path / "config.yaml"
         cfg.save(config_path)
@@ -154,7 +180,8 @@ class TestMicromechConfig:
 
         loaded = MicromechConfig.load(config_path)
         assert loaded.runtime.port == 9999
-        assert loaded.mech.chain == "base"
+        assert "base" in loaded.chains
+        assert loaded.chains["base"].chain == "base"
 
     def test_load_nonexistent_returns_defaults(self, tmp_path: Path):
         cfg = MicromechConfig.load(tmp_path / "nonexistent.yaml")
@@ -163,15 +190,49 @@ class TestMicromechConfig:
     def test_from_dict(self):
         data = {
             "runtime": {"port": 7000, "log_level": "DEBUG"},
-            "mech": {"chain": "base"},
+            "chains": {
+                "base": {
+                    "chain": "base",
+                    "marketplace_address": STUB_MARKETPLACE,
+                    "factory_address": STUB_FACTORY,
+                    "staking_address": STUB_STAKING,
+                }
+            },
         }
         cfg = MicromechConfig.model_validate(data)
         assert cfg.runtime.port == 7000
-        assert cfg.mech.chain == "base"
+        assert cfg.chains["base"].chain == "base"
 
     def test_roundtrip_json(self):
         cfg = MicromechConfig()
         data = cfg.model_dump(mode="json")
         restored = MicromechConfig.model_validate(data)
         assert restored.runtime.port == cfg.runtime.port
-        assert restored.mech.chain == cfg.mech.chain
+        assert restored.chains["gnosis"].chain == cfg.chains["gnosis"].chain
+
+    def test_enabled_chains_property(self):
+        cfg = MicromechConfig(
+            chains={
+                "gnosis": _chain_cfg(chain="gnosis", enabled=True),
+                "base": _chain_cfg(chain="base", enabled=False),
+            }
+        )
+        enabled = cfg.enabled_chains
+        assert "gnosis" in enabled
+        assert "base" not in enabled
+
+    def test_backward_compat_mech_key_migration(self):
+        """Old configs with `mech:` key auto-migrate to `chains:` dict."""
+        data = {
+            "mech": {
+                "chain": "gnosis",
+                "service_id": 42,
+                "mech_address": "0x" + "d" * 40,
+            }
+        }
+        cfg = MicromechConfig.model_validate(data)
+        assert "gnosis" in cfg.chains
+        assert cfg.chains["gnosis"].service_id == 42
+        assert cfg.chains["gnosis"].mech_address == "0x" + "d" * 40
+        # marketplace etc. filled from CHAIN_DEFAULTS
+        assert cfg.chains["gnosis"].marketplace_address.startswith("0x")
