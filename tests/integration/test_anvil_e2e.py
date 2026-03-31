@@ -355,7 +355,7 @@ class TestMicromechOnchainE2E:
 
     def test_event_listener_detects_request(self, w3):
         """Send a marketplace request and verify EventListener can detect it."""
-        from micromech.core.config import MechConfig, MicromechConfig, RuntimeConfig
+        from micromech.core.config import ChainConfig, MicromechConfig, RuntimeConfig
         from micromech.runtime.listener import EventListener
 
         marketplace = w3.eth.contract(
@@ -407,16 +407,20 @@ class TestMicromechOnchainE2E:
             def with_retry(self, fn, **kwargs):
                 return fn()
 
+        chain_cfg = ChainConfig(
+            chain="gnosis",
+            mech_address=MECH_ADDR,
+            marketplace_address=MARKETPLACE_ADDR,
+            factory_address=MECH_FACTORY,
+            staking_address=SUPPLY_STAKING_ADDR,
+        )
         config = MicromechConfig(
-            mech=MechConfig(
-                mech_address=MECH_ADDR,
-                marketplace_address=MARKETPLACE_ADDR,
-            ),
+            chains={"gnosis": chain_cfg},
             runtime=RuntimeConfig(event_lookback_blocks=100),
         )
 
         bridge = AnvilBridge(w3)
-        listener = EventListener(config, bridge=bridge)
+        listener = EventListener(config, chain_cfg, bridge=bridge)
         listener._last_block = block_before
 
         # Poll for events
@@ -513,8 +517,8 @@ class TestFullServerCycleE2E:
     async def test_request_execute_deliver_on_chain(self, w3, tmp_path):
         """Send request, server detects+executes+delivers, verify delivery on-chain."""
         from micromech.core.config import (
+            ChainConfig,
             IpfsConfig,
-            MechConfig,
             MicromechConfig,
             PersistenceConfig,
             RuntimeConfig,
@@ -586,11 +590,14 @@ class TestFullServerCycleE2E:
 
         config = MicromechConfig(
             persistence=PersistenceConfig(db_path=tmp_path / "full_cycle.db"),
-            mech=MechConfig(
+            chains={"gnosis": ChainConfig(
+                chain="gnosis",
                 mech_address=MECH_ADDR,
                 multisig_address=MECH_MULTISIG,
                 marketplace_address=MARKETPLACE_ADDR,
-            ),
+                factory_address=MECH_FACTORY,
+                staking_address=SUPPLY_STAKING_ADDR,
+            )},
             runtime=RuntimeConfig(
                 event_poll_interval=1,
                 event_lookback_blocks=100,
@@ -601,7 +608,7 @@ class TestFullServerCycleE2E:
         )
 
         bridge = AnvilBridge(w3)
-        server = MechServer(config, bridge=bridge)
+        server = MechServer(config, bridges={"gnosis": bridge})
 
         # Set listener to start from before our request
         server.listener._last_block = block_before
@@ -1140,8 +1147,8 @@ class TestOffchainHTTPE2E:
         import aiohttp
 
         from micromech.core.config import (
+            ChainConfig,
             IpfsConfig,
-            MechConfig,
             MicromechConfig,
             PersistenceConfig,
             RuntimeConfig,
@@ -1176,12 +1183,15 @@ class TestOffchainHTTPE2E:
         port = 19876
         config = MicromechConfig(
             persistence=PersistenceConfig(db_path=tmp_path / "http_e2e.db"),
-            mech=MechConfig(
+            chains={"gnosis": ChainConfig(
+                chain="gnosis",
                 mech_address=MECH_ADDR,
                 multisig_address=MECH_MULTISIG,
                 marketplace_address=MARKETPLACE_ADDR,
+                factory_address=MECH_FACTORY,
+                staking_address=SUPPLY_STAKING_ADDR,
                 delivery_rate=MECH_DELIVERY_RATE,
-            ),
+            )},
             runtime=RuntimeConfig(
                 port=port,
                 host="127.0.0.1",
@@ -1193,7 +1203,7 @@ class TestOffchainHTTPE2E:
         )
 
         bridge = AnvilBridge(w3)
-        server = MechServer(config, bridge=bridge)
+        server = MechServer(config, bridges={"gnosis": bridge})
         server_task = asyncio.create_task(server.run(with_http=True))
 
         try:
