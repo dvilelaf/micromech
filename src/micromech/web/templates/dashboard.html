@@ -656,7 +656,7 @@
         try {
             const resp = await fetch('/api/management/' + action, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'X-Micromech-Action': action},
                 body: JSON.stringify({service_key: serviceKey, chain: document.getElementById('mgmt-chain').value || 'gnosis'}),
             });
             const data = await resp.json();

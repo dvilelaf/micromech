@@ -3,12 +3,27 @@ services:
     image: dvilela/micromech:latest
     user: "1000:1000"
     volumes:
+      # Persistent data (config, database, models)
       - ./data:/app/data
+      # iwa wallet — mount from host or use named volume
+      - ${IWA_DATA:-${HOME}/.iwa}:/home/app/.iwa:ro
     environment:
-      - TZ=Europe/Madrid
+      - TZ=${TZ:-Europe/Madrid}
+      # Wallet password (required if wallet is encrypted)
+      - wallet_password=${WALLET_PASSWORD:-}
+      # Chain RPCs (optional — uses public RPCs from chainlist if omitted)
+      - gnosis_rpc=${GNOSIS_RPC:-}
+      - base_rpc=${BASE_RPC:-}
+      - ethereum_rpc=${ETHEREUM_RPC:-}
+      - polygon_rpc=${POLYGON_RPC:-}
+      - optimism_rpc=${OPTIMISM_RPC:-}
+      - arbitrum_rpc=${ARBITRUM_RPC:-}
+      - celo_rpc=${CELO_RPC:-}
     env_file:
-      - ./secrets.env
+      - path: ./secrets.env
+        required: false
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
+    # Default: run server. Use "web" for setup-only mode (browser wizard).
     command: ["python", "-m", "micromech", "run"]
