@@ -169,15 +169,18 @@ class MechServer:
             "metrics": self.metrics.get_live_snapshot(),
         }
 
-    async def run(self, with_http: bool = True) -> None:
+    async def run(
+        self, with_http: bool = True, register_signals: bool = True,
+    ) -> None:
         """Run the server with all components."""
         self._running = True
         self._load_tools()
 
-        # Register signal handlers
-        loop = asyncio.get_running_loop()
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(sig, self._handle_signal)
+        # Register signal handlers (skip when embedded in another process)
+        if register_signals:
+            loop = asyncio.get_running_loop()
+            for sig in (signal.SIGTERM, signal.SIGINT):
+                loop.add_signal_handler(sig, self._handle_signal)
 
         chains = list(self.config.enabled_chains.keys())
         logger.info("MechServer starting on chains: {}", chains)

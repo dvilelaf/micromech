@@ -190,9 +190,16 @@
                         <option value="">All chains</option>
                     </select>
                 </div>
-                <div class="status-indicator">
+                <div class="status-indicator" id="runtime-indicator" style="cursor: pointer; position: relative;" onclick="toggleRuntimePopover()">
                     <span class="pulse" id="pulse"></span>
                     <span id="status-text">Connecting...</span>
+                    <!-- Runtime control popover -->
+                    <div id="runtime-popover" style="display: none; position: absolute; top: 100%; right: 0; margin-top: 0.5rem;
+                        background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border);
+                        border-radius: 12px; padding: 1rem; min-width: 220px; z-index: 100;">
+                        <p id="popover-status" style="font-size: 0.85rem; margin-bottom: 0.75rem;"></p>
+                        <div style="display: flex; gap: 0.5rem;" id="popover-buttons"></div>
+                    </div>
                 </div>
             </div>
         </header>
@@ -382,8 +389,6 @@
         const es = new EventSource('/api/metrics/stream');
         es.onopen = () => {
             state.sseConnected = true;
-            document.getElementById('status-text').textContent = 'Connected';
-            document.getElementById('pulse').style.backgroundColor = 'var(--success)';
         };
         es.onmessage = (e) => {
             const data = JSON.parse(e.data);
@@ -394,11 +399,12 @@
             if (data.queue) {
                 updateQueueChart(data.queue);
             }
+            // Update runtime state indicator
+            updateRuntimeIndicator(data.runtime_state || 'unknown');
         };
         es.onerror = () => {
             state.sseConnected = false;
-            document.getElementById('status-text').textContent = 'Reconnecting...';
-            document.getElementById('pulse').style.backgroundColor = 'var(--warning)';
+            updateRuntimeIndicator('disconnected');
         };
     }
 
@@ -717,6 +723,82 @@
             loadToolStats();
             loadCharts();
         });
+    }
+
+    // --- Runtime indicator + popover ---
+    let currentRuntimeState = 'unknown';
+
+    function updateRuntimeIndicator(state) {
+        currentRuntimeState = state;
+        const pulse = document.getElementById('pulse');
+        const text = document.getElementById('status-text');
+        const colors = {
+            running: 'var(--success)', starting: 'var(--warning)',
+            stopped: 'var(--error)', error: 'var(--error)',
+            disconnected: 'var(--warning)', unknown: 'var(--text-muted)',
+        };
+        const labels = {
+            running: 'Mech running', starting: 'Starting...',
+            stopped: 'Mech stopped', error: 'Mech error',
+            disconnected: 'Reconnecting...', unknown: 'Connecting...',
+        };
+        pulse.style.backgroundColor = colors[state] || colors.unknown;
+        pulse.style.animation = state === 'starting' ? 'pulse 0.8s infinite' : (state === 'running' ? 'pulse 2s infinite' : 'none');
+        text.textContent = labels[state] || state;
+        updatePopoverContent(state);
+    }
+
+    function toggleRuntimePopover() {
+        const pop = document.getElementById('runtime-popover');
+        pop.style.display = pop.style.display === 'none' ? 'block' : 'none';
+    }
+
+    // Close popover on click outside
+    document.addEventListener('click', (e) => {
+        const ind = document.getElementById('runtime-indicator');
+        const pop = document.getElementById('runtime-popover');
+        if (pop && !ind.contains(e.target)) pop.style.display = 'none';
+    });
+
+    function updatePopoverContent(state) {
+        const status = document.getElementById('popover-status');
+        const btns = document.getElementById('popover-buttons');
+        if (!status || !btns) return;
+
+        status.textContent = state === 'running' ? 'Mech is running and processing requests.'
+            : state === 'stopped' ? 'Mech is stopped. No requests will be processed.'
+            : state === 'error' ? 'Mech encountered an error.'
+            : state === 'starting' ? 'Mech is starting up...'
+            : '';
+
+        btns.innerHTML = '';
+        if (state === 'running') {
+            btns.appendChild(makeBtn('Stop', 'stop', 'var(--error)'));
+            btns.appendChild(makeBtn('Restart', 'restart', 'var(--warning)'));
+        } else if (state === 'stopped' || state === 'error') {
+            btns.appendChild(makeBtn('Start', 'start', 'var(--success)'));
+        }
+    }
+
+    function makeBtn(label, action, color) {
+        const b = document.createElement('button');
+        b.textContent = label;
+        b.style.cssText = 'padding: 0.4rem 1rem; border-radius: 6px; border: none; cursor: pointer; font-family: var(--font-main); font-size: 0.85rem; color: white; background: ' + color + ';';
+        b.onclick = (e) => { e.stopPropagation(); runtimeAction(action); };
+        return b;
+    }
+
+    async function runtimeAction(action) {
+        try {
+            const resp = await fetch('/api/runtime/' + action, {
+                method: 'POST',
+                headers: {'X-Micromech-Action': action},
+            });
+            const data = await resp.json();
+            if (data.state) updateRuntimeIndicator(data.state);
+        } catch (e) {
+            console.error('Runtime action failed:', e);
+        }
     }
 
     // --- Init ---

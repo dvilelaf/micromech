@@ -75,6 +75,7 @@ def create_web_app(
     on_request: Callable,
     queue: "PersistentQueue | None" = None,
     metrics: "MetricsCollector | None" = None,
+    runtime_manager: "Any | None" = None,
 ) -> FastAPI:
     """Create the web UI FastAPI app.
 
@@ -364,7 +365,17 @@ def create_web_app(
                         yield f"data: {json.dumps(evt)}\n\n"
 
                     _clear_setup_cache()
-                    yield f"data: {json.dumps({'step': 'done', 'result': result})}\n\n"
+
+                    # Auto-start runtime after successful deploy
+                    runtime_started = False
+                    if runtime_manager:
+                        runtime_started = await runtime_manager.start()
+
+                    done_evt = {
+                        "step": "done", "result": result,
+                        "runtime_started": runtime_started,
+                    }
+                    yield f"data: {json.dumps(done_evt)}\n\n"
                 except Exception:
                     logger.exception("Deploy failed for {}", chain_name)
                     err = {"step": "error", "message": "Deployment failed. Check server logs."}
@@ -477,6 +488,10 @@ def create_web_app(
 
                 payload: dict[str, Any] = {"type": "tick", "timestamp": time.time()}
 
+                # Include runtime state
+                if runtime_manager:
+                    payload["runtime_state"] = runtime_manager.state
+
                 # Always include live metrics
                 if metrics:
                     payload["live"] = metrics.get_live_snapshot()
@@ -558,6 +573,40 @@ def create_web_app(
         health["chains"] = chain_health
 
         return health
+
+    # --- Runtime Control API ---
+
+    @app.get("/api/runtime/status")
+    async def runtime_status() -> dict:
+        """Get runtime state (stopped, starting, running, error)."""
+        if runtime_manager:
+            return runtime_manager.get_status()
+        return {"state": "unavailable"}
+
+    @app.post("/api/runtime/{action}")
+    async def runtime_control(
+        action: str,
+        x_micromech_action: Optional[str] = Header(None),
+    ) -> dict:
+        """Start, stop, or restart the mech runtime."""
+        if not x_micromech_action:
+            return JSONResponse(
+                {"error": "Missing X-Micromech-Action header"}, 403
+            )
+        if not runtime_manager:
+            return {"error": "Runtime manager not available"}
+
+        if action == "start":
+            ok = await runtime_manager.start()
+            return {"success": ok, "state": runtime_manager.state}
+        elif action == "stop":
+            ok = await runtime_manager.stop()
+            return {"success": ok, "state": runtime_manager.state}
+        elif action == "restart":
+            ok = await runtime_manager.restart()
+            return {"success": ok, "state": runtime_manager.state}
+        else:
+            return {"error": f"Unknown action: {action}"}
 
     # --- Management API ---
 

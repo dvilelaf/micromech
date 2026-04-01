@@ -390,11 +390,17 @@ def web(
     port: int = typer.Option(8000, "--port", "-p"),
     host: str = typer.Option("0.0.0.0", "--host"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
+    no_runtime: bool = typer.Option(False, "--no-runtime", help="Dashboard only, no mech runtime"),
 ) -> None:
-    """Launch the web dashboard."""
+    """Launch micromech with web dashboard + optional auto-start runtime.
+
+    If a service is deployed, the mech runtime starts automatically.
+    Use --no-runtime for dashboard-only mode (monitoring/setup).
+    """
     import uvicorn
 
     from micromech.core.persistence import PersistentQueue
+    from micromech.runtime.manager import RuntimeManager
     from micromech.tools.registry import ToolRegistry
     from micromech.web.app import create_web_app
 
@@ -402,13 +408,17 @@ def web(
     queue = PersistentQueue(cfg.persistence.db_path)
     reg = ToolRegistry()
     reg.load_builtins()
+    mgr = RuntimeManager(cfg)
 
     async def noop_on_request(req):
-        pass  # Web UI is read-only for now
+        pass
 
     def get_status():
+        # Use runtime status if running, otherwise basic dashboard status
+        if mgr.state == "running":
+            return mgr.get_status()
         return {
-            "status": "dashboard",
+            "status": mgr.state,
             "queue": queue.count_by_status(),
             "queue_by_chain": queue.count_by_chain(),
             "chains": list(cfg.enabled_chains.keys()),
@@ -420,9 +430,29 @@ def web(
         return queue.get_recent(limit, chain=chain)
 
     def get_tools():
-        return [{"id": t.metadata.id, "version": t.metadata.version} for t in reg.list_tools()]
+        return [
+            {"id": t.metadata.id, "version": t.metadata.version}
+            for t in reg.list_tools()
+        ]
 
-    web_app = create_web_app(get_status, get_recent, get_tools, noop_on_request, queue=queue)
+    web_app = create_web_app(
+        get_status, get_recent, get_tools, noop_on_request,
+        queue=queue, runtime_manager=mgr,
+    )
+
+    # Auto-start runtime if service is deployed and not --no-runtime
+    has_deployed = any(c.setup_complete for c in cfg.chains.values())
+    if has_deployed and not no_runtime:
+        typer.echo("Service deployed — runtime will auto-start")
+
+        @web_app.on_event("startup")
+        async def _auto_start_runtime():
+            ok = await mgr.start()
+            if ok:
+                logger.info("Runtime auto-started")
+            else:
+                logger.warning("Runtime auto-start failed: {}", mgr.error)
+
     typer.echo(f"Dashboard at http://{host}:{port}")
     uvicorn.run(web_app, host=host, port=port)
 

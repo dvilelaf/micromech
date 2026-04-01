@@ -422,15 +422,12 @@
 
             <!-- Step 6: Done -->
             <div class="step" id="step-6">
-                <div class="success-icon">&#10003;</div>
+                <div class="success-icon" id="success-icon">&#10003;</div>
                 <div class="success-text">
-                    <h2>Your mech is ready!</h2>
-                    <p>Service deployed and staked. Restart in full mode to start earning rewards:</p>
-                    <div class="cmd">micromech run</div>
-                    <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.75rem;">
-                        This starts the listener, executor, and delivery engine.</p>
+                    <h2 id="success-title">Your mech is ready!</h2>
+                    <p id="success-desc">Starting runtime...</p>
                     <p style="margin-top: 1.5rem;">
-                        <a href="/" class="btn btn-accent">Go to Dashboard</a>
+                        <a href="/" class="btn btn-accent" id="btn-go-dashboard" style="display: none;">Go to Dashboard</a>
                     </p>
                 </div>
             </div>
@@ -947,7 +944,23 @@
                 el.innerHTML = '&#10003;';
             });
             document.querySelectorAll('.deploy-msg').forEach(el => el.classList.remove('muted'));
-            setTimeout(() => goStep(6), 1000);
+
+            setTimeout(() => {
+                goStep(6);
+                if (evt.runtime_started) {
+                    document.getElementById('success-title').textContent = 'Your mech is live!';
+                    document.getElementById('success-desc').textContent =
+                        'Runtime started. Your mech is listening for requests and earning rewards.';
+                    document.getElementById('btn-go-dashboard').style.display = 'inline-block';
+                    // Auto-redirect to dashboard after 3 seconds
+                    setTimeout(() => { window.location.href = '/'; }, 3000);
+                } else {
+                    document.getElementById('success-title').textContent = 'Service deployed!';
+                    document.getElementById('success-desc').textContent =
+                        'Restart micromech to activate the runtime.';
+                    document.getElementById('btn-go-dashboard').style.display = 'inline-block';
+                }
+            }, 1000);
             return;
         }
 
