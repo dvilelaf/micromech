@@ -14,12 +14,12 @@ def fund(address: str) -> None:
     addr = address.lower()
     addr_clean = addr[2:]
 
-    # 100 xDAI
+    # 100,000 xDAI (enough for service activation bond + gas)
     requests.post(ANVIL, json={
         "jsonrpc": "2.0", "method": "anvil_setBalance",
-        "params": [addr, "0x56BC75E2D63100000"], "id": 1,
+        "params": [addr, "0x152D02C7E14AF6800000"], "id": 1,
     })
-    print("  xDAI: 100")
+    print("  xDAI: 100,000")
 
     # 20000 OLAS via storage slot
     slot_input = bytes.fromhex(addr_clean.rjust(64, "0") + "0" * 63 + "3")

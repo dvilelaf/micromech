@@ -506,6 +506,7 @@
                 return;
             } else if (data.wallet_file_exists) {
                 // Wallet file exists but needs password to unlock
+                walletFileExists = true;
                 desc.textContent = 'Wallet found.';
                 document.getElementById('password-label').textContent = 'Enter your password to unlock it.';
                 document.getElementById('btn-wallet-create').textContent = 'Unlock';
@@ -563,10 +564,27 @@
         el.appendChild(err);
     }
 
+    let walletFileExists = false;  // set by checkWallet
+    let lastBalanceUpdate = 0;
+
+    // Update "X seconds ago" text every second
+    setInterval(() => {
+        if (lastBalanceUpdate && currentStep === 3) {
+            const secs = Math.round((Date.now() - lastBalanceUpdate) / 1000);
+            const ts = document.getElementById('balance-updated');
+            if (ts) ts.textContent = secs + 's ago';
+        }
+    }, 1000);
+
     async function createOrUnlockWallet() {
         const password = document.getElementById('wallet-password').value;
-        if (!password || password.length < 4) {
-            showInlineError('Password too short (min 4 characters).');
+        if (!password) {
+            showInlineError('Please enter a password.');
+            return;
+        }
+        // Only enforce minimum length for new wallets
+        if (!walletFileExists && password.length < 4) {
+            showInlineError('Password must be at least 4 characters.');
             return;
         }
 
@@ -754,8 +772,7 @@
 
             document.getElementById('btn-fund-next').disabled = !(data.native_sufficient && olasOk);
 
-            const ts = document.getElementById('balance-updated');
-            if (ts) ts.textContent = 'Updated ' + new Date().toLocaleTimeString();
+            lastBalanceUpdate = Date.now();
         } catch (e) {
             console.error('Balance poll error:', e);
         }

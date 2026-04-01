@@ -218,6 +218,13 @@ def create_web_app(
                 msg = "Wallet creation failed"
                 raise RuntimeError(msg)
 
+            # Verify password is correct by trying to decrypt the private key
+            if wallet_existed:
+                try:
+                    ks._get_private_key(str(address))
+                except Exception:
+                    return {"error": "Incorrect password."}
+
             # Store password + key_storage for subsequent operations
             _bridge._wallet_password = password
             _bridge._cached_key_storage = ks
@@ -320,6 +327,15 @@ def create_web_app(
                     "step": step, "total": total,
                     "message": msg, "success": success,
                 })
+
+            # Verify bridge state before deploy
+            import micromech.core.bridge as _br
+            logger.info(
+                "Deploy: bridge state: password={}, ks={}, wallet={}",
+                bool(_br._wallet_password),
+                _br._cached_key_storage is not None,
+                _br._cached_wallet is not None,
+            )
 
             lc = MechLifecycle(cfg, chain_name=chain_name)
             result = lc.full_deploy(on_progress=on_progress)

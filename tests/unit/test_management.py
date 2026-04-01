@@ -124,15 +124,18 @@ class TestMechLifecycleWithMocks:
 class TestCreateMech:
     """Test create_mech which interacts with the marketplace contract."""
 
+    @patch("micromech.core.bridge.get_wallet")
     @patch("micromech.management._get_service_manager")
-    def test_create_mech_success(self, mock_get_mgr):
+    def test_create_mech_success(self, mock_get_mgr, mock_get_wallet):
         mock_mgr = MagicMock()
         mock_mgr.service.service_id = 42
-        mock_mgr.service.owner_address = "0x" + "aa" * 20
+        mock_mgr.service.service_owner_eoa_address = "0x" + "aa" * 20
 
-        # Mock web3 + contract
+        # Mock web3 via get_wallet().chain_interfaces
         mock_web3 = MagicMock()
-        mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_wallet = MagicMock()
+        mock_wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_get_wallet.return_value = mock_wallet
 
         tx_hash = b"\xde\xad" + b"\x00" * 30
         mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = (
@@ -158,12 +161,13 @@ class TestCreateMech:
         assert result is not None
         assert mech_addr_hex in result
 
+    @patch("micromech.core.bridge.get_wallet")
     @patch("micromech.management._get_service_manager")
-    def test_create_mech_no_service_id(self, mock_get_mgr):
+    def test_create_mech_no_service_id(self, mock_get_mgr, mock_get_wallet):
         mock_mgr = MagicMock()
         mock_mgr.service.service_id = None
         mock_web3 = MagicMock()
-        mock_mgr.wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_get_wallet.return_value.chain_interfaces.get.return_value.web3 = mock_web3
         mock_get_mgr.return_value = mock_mgr
 
         lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)

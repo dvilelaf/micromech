@@ -64,6 +64,7 @@ class MechLifecycle:
                 chain_name=self.chain_name,
                 agent_ids=[agent_id],
                 bond_amount_wei=bond_wei,
+                token_address_or_tag="OLAS",
             )
             logger.info("Service created on {}: {}", self.chain_name, service_id)
             return service_id
@@ -118,16 +119,49 @@ class MechLifecycle:
         factory = factory_address or self.chain_config.factory_address
         rate = delivery_rate or self.chain_config.delivery_rate
         try:
-            from iwa.plugins.olas.service_manager.mech import MechSupplyMixin
+            # Call create on marketplace directly (iwa 0.6.0 compat)
+            from micromech.core.bridge import get_wallet
 
-            # Attach mixin method to the manager instance
-            return MechSupplyMixin.create_mech_on_marketplace(
-                mgr,
-                chain_name=self.chain_name,
-                factory_address=factory,
-                delivery_rate=rate,
-                marketplace_address=self.chain_config.marketplace_address,
+            wallet = get_wallet()
+            ci = wallet.chain_interfaces.get(self.chain_name)
+            web3 = ci.web3
+
+            import json
+
+            from iwa.core.types import EthereumAddress
+            from iwa.plugins.olas.contracts.base import OLAS_ABI_PATH
+
+            abi = json.loads((OLAS_ABI_PATH / "mech_marketplace.json").read_text())
+            marketplace = web3.eth.contract(
+                address=EthereumAddress(self.chain_config.marketplace_address),
+                abi=abi,
             )
+            service_id = mgr.service.service_id
+            owner = mgr.service.service_owner_eoa_address
+
+            # Third arg is bytes: ABI-encode the delivery rate
+            from eth_abi import encode
+            payload = encode(["uint256"], [rate])
+
+            tx = marketplace.functions.create(
+                service_id,
+                EthereumAddress(factory),
+                payload,
+            ).transact({"from": EthereumAddress(owner), "gas": 10_000_000})
+
+            receipt = web3.eth.wait_for_transaction_receipt(tx)
+            if receipt["status"] != 1:
+                logger.error("Mech creation TX reverted")
+                return None
+
+            for log_entry in receipt.get("logs", []):
+                if len(log_entry.get("topics", [])) >= 2:
+                    mech_addr = "0x" + log_entry["topics"][1].hex()[-40:]
+                    logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
+                    return mech_addr
+
+            logger.warning("Mech created but address not found in logs")
+            return None
         except ImportError:
             logger.error("iwa MechSupplyMixin not available")
             return None
@@ -135,13 +169,19 @@ class MechLifecycle:
             logger.error("Failed to create mech on {}: {}", self.chain_name, e)
             return None
 
+    def _get_staking_contract(self, address: Optional[str] = None) -> Any:
+        """Create a StakingContract instance from address string."""
+        from iwa.plugins.olas.contracts.staking import StakingContract
+        addr = address or self.chain_config.staking_address
+        return StakingContract(addr, chain_name=self.chain_name)
+
     def stake(self, service_key: str, staking_contract: Optional[str] = None) -> bool:
         """Stake the service in a supply staking contract."""
-        contract = staking_contract or self.chain_config.staking_address
+        contract = self._get_staking_contract(staking_contract)
         mgr = _get_service_manager(self.config, service_key)
         try:
             result = mgr.stake(staking_contract=contract)
-            logger.info("Staked on {} in {}: {}", self.chain_name, contract[:16], result)
+            logger.info("Staked on {}: {}", self.chain_name, result)
             return result
         except Exception as e:
             logger.error("Failed to stake on {}: {}", self.chain_name, e)
@@ -149,11 +189,11 @@ class MechLifecycle:
 
     def unstake(self, service_key: str, staking_contract: Optional[str] = None) -> bool:
         """Unstake the service."""
-        contract = staking_contract or self.chain_config.staking_address
+        contract = self._get_staking_contract(staking_contract)
         mgr = _get_service_manager(self.config, service_key)
         try:
             result = mgr.unstake(staking_contract=contract)
-            logger.info("Unstaked on {} from {}: {}", self.chain_name, contract[:16], result)
+            logger.info("Unstaked on {}: {}", self.chain_name, result)
             return result
         except Exception as e:
             logger.error("Failed to unstake on {}: {}", self.chain_name, e)
@@ -263,7 +303,7 @@ class MechLifecycle:
             self.chain_config.service_id = service_id
             _progress(1, f"Service created: #{service_id}")
 
-            service_key = f"{self.chain_name}_{service_id}"
+            service_key = f"{self.chain_name}:{service_id}"
             result["service_key"] = service_key
             self.chain_config.service_key = service_key
         else:

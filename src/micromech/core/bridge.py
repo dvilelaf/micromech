@@ -98,11 +98,16 @@ def get_wallet() -> Any:
     # Try normal Wallet() first (works if wallet_password in env)
     try:
         _cached_wallet = Wallet()
+        # Ensure chain_interfaces is available (used by MechSupplyMixin)
+        if not hasattr(_cached_wallet, "chain_interfaces"):
+            _cached_wallet.chain_interfaces = ChainInterfaces()
         return _cached_wallet
     except (AttributeError, TypeError):
-        pass
+        logger.debug("Wallet() failed, falling back to manual construction")
 
     # Fall back to manual construction with cached password
+    logger.debug("get_wallet fallback: _wallet_password={}, _cached_key_storage={}",
+                 bool(_wallet_password), _cached_key_storage is not None)
     if not _wallet_password:
         msg = "No wallet password available. Provide wallet_password env var or use the web wizard."
         raise RuntimeError(msg)
@@ -135,6 +140,7 @@ def get_wallet() -> Any:
         wallet.safe_service, wallet.transaction_service,
     )
     wallet.plugin_service = PluginService()
+    wallet.chain_interfaces = ChainInterfaces()
     init_db()
 
     _cached_wallet = wallet
