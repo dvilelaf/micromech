@@ -134,6 +134,40 @@ run-anvil:
     echo "Starting micromech against Anvil fork..."
     gnosis_rpc=http://localhost:18545 testing=true uv run micromech run
 
+# Run web dashboard against Anvil fork (setup wizard mode)
+web-anvil port="8000":
+    #!/usr/bin/env bash
+    set -e
+    if ! curl -s http://localhost:18545 -X POST -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x64'; then
+        echo "Error: Anvil fork not running on port 18545. Run 'just anvil-fork' first."
+        exit 1
+    fi
+    echo "Starting micromech web against Anvil fork..."
+    echo "Open http://localhost:{{port}}/setup"
+    gnosis_rpc=http://localhost:18545 testing=true uv run micromech web --port {{port}}
+
+# Fund an address on the Anvil fork (xDAI + OLAS)
+anvil-fund address:
+    #!/usr/bin/env bash
+    set -e
+    ANVIL=http://localhost:18545
+    ADDR={{address}}
+    OLAS=0xcE11e14225575945b8E6Dc0D4F2dD4C570f79d9f
+
+    uv run python scripts/anvil_fund.py {{address}}
+
+# Run CLI init wizard against Anvil fork
+init-anvil:
+    #!/usr/bin/env bash
+    set -e
+    if ! curl -s http://localhost:18545 -X POST -H 'Content-Type: application/json' \
+        -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x64'; then
+        echo "Error: Anvil fork not running on port 18545. Run 'just anvil-fork' first."
+        exit 1
+    fi
+    gnosis_rpc=http://localhost:18545 testing=true uv run micromech init --chain gnosis
+
 # Build package
 build:
     uv build

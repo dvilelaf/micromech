@@ -274,12 +274,22 @@
                         <label style="display: block; color: var(--text-muted); font-size: 0.85rem; margin-bottom: 0.5rem;" id="password-label">
                             Choose a password to encrypt your wallet
                         </label>
-                        <input type="password" id="wallet-password"
-                            placeholder="Password (min 4 characters)"
-                            style="width: 100%; padding: 0.75rem; border-radius: 8px; border: 1px solid var(--glass-border);
-                            background: rgba(0,0,0,0.3); color: var(--text-color); font-family: var(--font-mono);
-                            font-size: 0.9rem; outline: none;"
-                        >
+                        <div style="position: relative;">
+                            <input type="password" id="wallet-password"
+                                placeholder="Password (min 4 characters)"
+                                style="width: 100%; padding: 0.75rem; padding-right: 3rem; border-radius: 8px;
+                                border: 1px solid var(--glass-border); background: rgba(0,0,0,0.3);
+                                color: var(--text-color); font-family: var(--font-mono); font-size: 0.9rem; outline: none;"
+                                onkeydown="if(event.key==='Enter') createOrUnlockWallet()"
+                            >
+                            <button type="button" id="toggle-password"
+                                style="position: absolute; right: 0.5rem; top: 50%; transform: translateY(-50%);
+                                background: none; border: none; color: var(--text-muted); cursor: pointer;
+                                font-size: 1.1rem; padding: 0.25rem;"
+                                onclick="togglePasswordVisibility()"
+                                title="Show/hide password"
+                            >&#128065;</button>
+                        </div>
                     </div>
                     <button class="btn btn-accent" id="btn-wallet-create" onclick="createOrUnlockWallet()">
                         Create Wallet
@@ -295,9 +305,9 @@
                             This is the only way to recover your wallet. Store it safely offline.</p>
                     </div>
                     <div id="mnemonic-words" style="background: rgba(0,0,0,0.3); border-radius: 8px;
-                        padding: 1rem; font-family: var(--font-mono); font-size: 0.85rem;
-                        line-height: 1.8; word-spacing: 0.5rem; filter: blur(5px); cursor: pointer;
-                        user-select: none; transition: filter 0.2s;"
+                        padding: 1rem; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.4rem;
+                        font-family: var(--font-mono); font-size: 0.82rem;
+                        filter: blur(5px); cursor: pointer; user-select: none; transition: filter 0.2s;"
                         onclick="this.style.filter = this.style.filter === 'none' ? 'blur(5px)' : 'none'; this.style.userSelect = this.style.filter === 'none' ? 'text' : 'none';"
                     ></div>
                     <p style="color: var(--text-muted); font-size: 0.8rem; margin-top: 0.5rem; text-align: center;">
@@ -316,9 +326,13 @@
 
             <!-- Step 2: Chain Selection -->
             <div class="step" id="step-2">
-                <h2>Select Chain</h2>
-                <p>Choose which blockchain to deploy your mech on. Gnosis is recommended — it has the lowest gas fees.</p>
+                <h2>Select Chains</h2>
+                <p>Choose which blockchains to deploy on. You can select multiple. Gnosis is the cheapest to start.</p>
                 <div class="chain-grid" id="chain-grid"></div>
+                <div style="margin-top: 0.5rem; display: flex; gap: 0.75rem; font-size: 0.8rem;">
+                    <a href="#" id="select-all-chains" style="color: var(--accent-color); text-decoration: none;">Select all</a>
+                    <a href="#" id="select-none-chains" style="color: var(--text-muted); text-decoration: none;">Clear</a>
+                </div>
                 <div class="btn-row">
                     <button class="btn btn-primary" onclick="goStep(1)">Back</button>
                     <button class="btn btn-primary" id="btn-chain-next" disabled>Next</button>
@@ -346,6 +360,7 @@
                         <span class="balance-value balance-waiting" id="olas-bal">checking...</span>
                     </div>
                 </div>
+                <p id="balance-updated" style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.5rem; text-align: right;"></p>
                 <div class="btn-row">
                     <button class="btn btn-primary" onclick="goStep(2)">Back</button>
                     <button class="btn btn-primary" id="btn-fund-next" disabled>Next</button>
@@ -423,7 +438,8 @@
     <script>
     // State
     let currentStep = 1;
-    let selectedChain = 'gnosis';
+    let selectedChains = new Set(['gnosis']);
+    let allChainNames = [];
     let walletAddress = null;
     let balancePollId = null;
 
@@ -448,10 +464,17 @@
 
         if (n === 3) {
             startBalancePoll();
-            // Update fund requirements text for selected chain
-            const sym = NATIVE_SYMBOLS[selectedChain] || 'ETH';
+            // Update fund requirements for selected chains
             const reqEl = document.getElementById('fund-requirements');
-            if (reqEl) reqEl.textContent = `~0.1 ${sym} (gas) + 10,000 OLAS (staking bond)`;
+            if (reqEl) {
+                const chains = [...selectedChains];
+                const parts = chains.map(c => {
+                    const sym = NATIVE_SYMBOLS[c] || 'ETH';
+                    return `~0.1 ${sym} on ${c.charAt(0).toUpperCase() + c.slice(1)}`;
+                });
+                const olasTotal = chains.length * 10000;
+                reqEl.textContent = parts.join(' + ') + ` + ${olasTotal.toLocaleString()} OLAS total (${chains.length} x 10,000 bond)`;
+            }
         } else {
             stopBalancePoll();
         }
@@ -476,18 +499,22 @@
             const data = await res.json();
 
             if (data.wallet_exists) {
-                showWalletFound(data.wallet_address);
+                walletAddress = data.wallet_address;
                 if (data.step === 'complete') { goStep(6); return; }
-            } else if (data.needs_password) {
+                // Wallet already unlocked — skip straight to chain selection
+                goStep(2);
+                return;
+            } else if (data.wallet_file_exists) {
                 // Wallet file exists but needs password to unlock
-                desc.textContent = 'Wallet found but locked. Enter your password to unlock it.';
-                document.getElementById('password-label').textContent = 'Enter your wallet password';
-                document.getElementById('btn-wallet-create').textContent = 'Unlock Wallet';
+                desc.textContent = 'Wallet found.';
+                document.getElementById('password-label').textContent = 'Enter your password to unlock it.';
+                document.getElementById('btn-wallet-create').textContent = 'Unlock';
                 form.style.display = 'block';
             } else {
-                // No wallet at all — offer to create
-                desc.textContent = 'No wallet found. Create one to get started.';
-                document.getElementById('password-label').textContent = 'Choose a password to encrypt your wallet';
+                // No wallet — create new
+                desc.textContent = 'No wallet found. Choose a password to create one.';
+                document.getElementById('password-label').textContent =
+                    'This encrypts your private key. Remember it — you\'ll need it every time.';
                 document.getElementById('btn-wallet-create').textContent = 'Create Wallet';
                 form.style.display = 'block';
             }
@@ -539,7 +566,7 @@
     async function createOrUnlockWallet() {
         const password = document.getElementById('wallet-password').value;
         if (!password || password.length < 4) {
-            showInlineError('Password must be at least 4 characters');
+            showInlineError('Password too short (min 4 characters).');
             return;
         }
 
@@ -570,22 +597,48 @@
             if (data.mnemonic) {
                 const mnemonicDiv = document.getElementById('wallet-mnemonic');
                 const wordsDiv = document.getElementById('mnemonic-words');
-                wordsDiv.textContent = data.mnemonic;
+                wordsDiv.innerHTML = '';
+                data.mnemonic.split(' ').forEach((word, i) => {
+                    const cell = document.createElement('div');
+                    cell.style.cssText = 'padding: 0.3rem 0.4rem; border-radius: 4px; background: rgba(255,255,255,0.03);';
+                    const num = document.createElement('span');
+                    num.style.cssText = 'color: var(--text-muted); margin-right: 0.3rem; font-size: 0.7rem;';
+                    num.textContent = (i + 1) + '.';
+                    cell.appendChild(num);
+                    cell.appendChild(document.createTextNode(word));
+                    wordsDiv.appendChild(cell);
+                });
                 mnemonicDiv.style.display = 'block';
                 document.getElementById('wallet-password-form').style.display = 'none';
                 // Don't enable Next until mnemonic is confirmed saved
             }
 
-            showWalletFound(data.address);
+            walletAddress = data.address;
 
-            // If mnemonic shown, disable Next until checkbox
             if (data.mnemonic) {
+                // New wallet — show mnemonic, wait for confirmation
+                showWalletFound(data.address);
                 document.getElementById('btn-wallet-next').disabled = true;
+            } else {
+                // Existing wallet unlocked — skip to chain selection
+                goStep(2);
             }
         } catch (e) {
             showInlineError('Connection error: ' + e.message);
             btn.disabled = false;
             btn.textContent = origText;
+        }
+    }
+
+    function togglePasswordVisibility() {
+        const input = document.getElementById('wallet-password');
+        const btn = document.getElementById('toggle-password');
+        if (input.type === 'password') {
+            input.type = 'text';
+            btn.innerHTML = '&#128064;';  // closed eye
+        } else {
+            input.type = 'password';
+            btn.innerHTML = '&#128065;';  // open eye
         }
     }
 
@@ -607,10 +660,13 @@
                 polygon: '', optimism: '', arbitrum: '', celo: ''
             };
 
+            allChainNames = chains.map(c => c.name);
+
             chains.forEach(c => {
                 const div = document.createElement('div');
-                div.className = 'chain-option' + (c.name === selectedChain ? ' selected' : '');
-                div.onclick = () => selectChain(c.name);
+                div.className = 'chain-option' + (selectedChains.has(c.name) ? ' selected' : '');
+                div.dataset.chain = c.name;
+                div.onclick = () => toggleChain(c.name);
                 const nameEl = document.createElement('div');
                 nameEl.className = 'chain-name';
                 nameEl.textContent = c.name.charAt(0).toUpperCase() + c.name.slice(1);
@@ -624,26 +680,53 @@
                 grid.appendChild(div);
             });
 
-            document.getElementById('btn-chain-next').disabled = false;
+            document.getElementById('select-all-chains').onclick = (e) => {
+                e.preventDefault();
+                allChainNames.forEach(n => selectedChains.add(n));
+                updateChainUI();
+            };
+            document.getElementById('select-none-chains').onclick = (e) => {
+                e.preventDefault();
+                selectedChains.clear();
+                updateChainUI();
+            };
+
+            updateChainUI();
         } catch (e) {
             console.error('Failed to load chains:', e);
         }
     }
 
-    function selectChain(name) {
-        selectedChain = name;
+    function toggleChain(name) {
+        if (selectedChains.has(name)) {
+            selectedChains.delete(name);
+        } else {
+            selectedChains.add(name);
+        }
+        updateChainUI();
+    }
+
+    function updateChainUI() {
         document.querySelectorAll('.chain-option').forEach(el => {
-            el.classList.toggle('selected', el.querySelector('.chain-name').textContent === name);
+            el.classList.toggle('selected', selectedChains.has(el.dataset.chain));
         });
-        document.getElementById('btn-chain-next').disabled = false;
+        document.getElementById('btn-chain-next').disabled = selectedChains.size === 0;
     }
 
     // --- Step 3: Balance polling ---
+    function primaryChain() {
+        // Prefer gnosis (cheapest), otherwise first selected
+        if (selectedChains.has('gnosis')) return 'gnosis';
+        return [...selectedChains][0] || 'gnosis';
+    }
+
     function startBalancePoll() {
         document.getElementById('fund-address').textContent = walletAddress || '...';
-        document.getElementById('native-label').textContent = NATIVE_SYMBOLS[selectedChain] || 'Native';
+        const chain = primaryChain();
+        document.getElementById('native-label').textContent =
+            (NATIVE_SYMBOLS[chain] || 'Native') + ' (' + chain + ')';
         pollBalance();
-        balancePollId = setInterval(pollBalance, 10000);
+        balancePollId = setInterval(pollBalance, 5000);
     }
 
     function stopBalancePoll() {
@@ -651,8 +734,9 @@
     }
 
     async function pollBalance() {
+        const chain = primaryChain();
         try {
-            const res = await fetch(`/api/setup/balance?chain=${selectedChain}`);
+            const res = await fetch(`/api/setup/balance?chain=${chain}`);
             const data = await res.json();
 
             if (data.error) return;
@@ -663,10 +747,15 @@
             nativeEl.textContent = `${data.native_balance.toFixed(4)} / ${data.native_required} needed`;
             nativeEl.className = 'balance-value ' + (data.native_sufficient ? 'balance-ok' : 'balance-waiting');
 
-            olasEl.textContent = `${data.olas_balance.toLocaleString()} / ${data.olas_required.toLocaleString()} needed`;
-            olasEl.className = 'balance-value ' + (data.olas_sufficient ? 'balance-ok' : 'balance-waiting');
+            const olasNeeded = selectedChains.size * data.olas_required;
+            const olasOk = data.olas_balance >= olasNeeded;
+            olasEl.textContent = `${data.olas_balance.toLocaleString()} / ${olasNeeded.toLocaleString()} needed`;
+            olasEl.className = 'balance-value ' + (olasOk ? 'balance-ok' : 'balance-waiting');
 
-            document.getElementById('btn-fund-next').disabled = !data.sufficient;
+            document.getElementById('btn-fund-next').disabled = !(data.native_sufficient && olasOk);
+
+            const ts = document.getElementById('balance-updated');
+            if (ts) ts.textContent = 'Updated ' + new Date().toLocaleTimeString();
         } catch (e) {
             console.error('Balance poll error:', e);
         }
@@ -686,14 +775,39 @@
 
     // --- Step 5: Deploy ---
     let lastRunningStep = 0;
+    let deployChainIndex = 0;
+    let deployChainList = [];
 
     async function startDeploy() {
         goStep(5);
         document.getElementById('btn-deploy').disabled = true;
-        // Hide retry button if visible from previous attempt
         const retryBtn = document.getElementById('btn-deploy-retry');
         if (retryBtn) retryBtn.style.display = 'none';
-        // Reset all deploy step icons
+        const errMsg = document.getElementById('deploy-error-msg');
+        if (errMsg) errMsg.textContent = '';
+
+        deployChainList = [...selectedChains];
+        deployChainIndex = 0;
+
+        // Update deploy header to show chain progress
+        updateDeployHeader();
+        resetDeploySteps();
+        markStepRunning(1);
+
+        await deployNextChain();
+    }
+
+    function updateDeployHeader() {
+        const h = document.querySelector('#step-5 h2');
+        if (deployChainList.length > 1) {
+            const name = deployChainList[deployChainIndex];
+            h.textContent = `Deploying ${deployChainIndex + 1}/${deployChainList.length}: ${name.charAt(0).toUpperCase() + name.slice(1)}`;
+        } else {
+            h.textContent = 'Deploying to OLAS Protocol';
+        }
+    }
+
+    function resetDeploySteps() {
         for (let i = 1; i <= 6; i++) {
             const icon = document.querySelector(`#ds-${i} .deploy-icon`);
             if (icon) { icon.className = 'deploy-icon pending'; icon.textContent = i; }
@@ -701,9 +815,17 @@
             if (msg) msg.classList.add('muted');
         }
         lastRunningStep = 0;
+    }
 
-        // Mark step 1 as running
-        markStepRunning(1);
+    async function deployNextChain() {
+        if (deployChainIndex >= deployChainList.length) {
+            // All chains deployed
+            setTimeout(() => goStep(6), 1000);
+            return;
+        }
+
+        const chainName = deployChainList[deployChainIndex];
+        updateDeployHeader();
 
         try {
             const res = await fetch('/api/setup/deploy', {
@@ -712,12 +834,13 @@
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'deploy',
                 },
-                body: JSON.stringify({ chain: selectedChain })
+                body: JSON.stringify({ chain: chainName })
             });
 
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
+            let chainDone = false;
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -731,8 +854,33 @@
                     if (!line.startsWith('data: ')) continue;
                     try {
                         const evt = JSON.parse(line.slice(6));
-                        handleDeployEvent(evt);
-                    } catch (e) { /* skip parse errors */ }
+                        if (evt.step === 'done') {
+                            chainDone = true;
+                            // Mark all steps done for this chain
+                            document.querySelectorAll('.deploy-icon').forEach(el => {
+                                el.className = 'deploy-icon done';
+                                el.innerHTML = '&#10003;';
+                            });
+                        } else if (evt.step === 'error') {
+                            handleDeployEvent(evt);
+                            return; // Stop, user can retry
+                        } else {
+                            handleDeployEvent(evt);
+                        }
+                    } catch (e) { /* skip */ }
+                }
+            }
+
+            if (chainDone) {
+                deployChainIndex++;
+                if (deployChainIndex < deployChainList.length) {
+                    // Short pause then next chain
+                    await new Promise(r => setTimeout(r, 1000));
+                    resetDeploySteps();
+                    markStepRunning(1);
+                    await deployNextChain();
+                } else {
+                    setTimeout(() => goStep(6), 1000);
                 }
             }
         } catch (e) {

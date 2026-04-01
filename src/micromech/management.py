@@ -16,14 +16,16 @@ from micromech.core.config import ChainConfig, MicromechConfig
 def _get_service_manager(config: MicromechConfig, service_key: Optional[str] = None) -> Any:
     """Get an iwa ServiceManager instance."""
     try:
-        from iwa.core.wallet import Wallet
         from iwa.plugins.olas.service_manager import ServiceManager
 
-        wallet = Wallet()
+        from micromech.core.bridge import get_wallet
+
+        wallet = get_wallet()
         return ServiceManager(wallet, service_key=service_key)
     except ImportError as e:
         msg = (
-            "iwa is required for management operations. Install with: pip install micromech[chain]"
+            "iwa is required for management operations. "
+            "Install with: pip install micromech[chain]"
         )
         raise ImportError(msg) from e
 
@@ -46,21 +48,22 @@ class MechLifecycle:
     def create_service(
         self,
         agent_id: int = 40,
-        num_agents: int = 1,
         bond_olas: int = 10000,
-        threshold: int = 1,
+        **kwargs,
     ) -> Optional[int]:
         """Create a new service on-chain.
 
         Returns the service_id or None on failure.
         """
+        from web3 import Web3
+
         mgr = _get_service_manager(self.config)
         try:
+            bond_wei = Web3.to_wei(bond_olas, "ether")
             service_id = mgr.create(
-                agent_id=agent_id,
-                num_agents=num_agents,
-                bond_olas=bond_olas,
-                threshold=threshold,
+                chain_name=self.chain_name,
+                agent_ids=[agent_id],
+                bond_amount_wei=bond_wei,
             )
             logger.info("Service created on {}: {}", self.chain_name, service_id)
             return service_id
@@ -201,9 +204,7 @@ class MechLifecycle:
     def full_deploy(
         self,
         agent_id: int = 40,
-        num_agents: int = 1,
         bond_olas: int = 10000,
-        threshold: int = 1,
         on_progress: Optional[Callable[[int, int, str, bool], None]] = None,
     ) -> dict[str, Any]:
         """Run the complete lifecycle, resuming from where a previous attempt left off.
@@ -252,8 +253,7 @@ class MechLifecycle:
         if needs_service:
             _progress(1, "Creating service...")
             service_id = self.create_service(
-                agent_id=agent_id, num_agents=num_agents,
-                bond_olas=bond_olas, threshold=threshold,
+                agent_id=agent_id, bond_olas=bond_olas,
             )
             if not service_id:
                 _progress(1, "Failed to create service", False)

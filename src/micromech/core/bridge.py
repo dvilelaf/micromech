@@ -78,6 +78,67 @@ class IwaBridge:
 # Cached instances for balance checking (avoid re-probing RPCs on every call)
 _cached_wallet: Optional[Any] = None
 _cached_interfaces: Optional[Any] = None
+# Set by web setup wizard (POST /api/setup/wallet)
+_cached_key_storage: Optional[Any] = None
+_wallet_password: Optional[str] = None
+
+
+def get_wallet() -> Any:
+    """Get or create a Wallet instance, using cached password if needed.
+
+    Uses the standard Wallet() if wallet_password is in the environment.
+    Falls back to manual construction with cached KeyStorage/password
+    from the web setup wizard.
+    """
+    global _cached_wallet  # noqa: PLW0603
+
+    if _cached_wallet is not None:
+        return _cached_wallet
+
+    # Try normal Wallet() first (works if wallet_password in env)
+    try:
+        _cached_wallet = Wallet()
+        return _cached_wallet
+    except (AttributeError, TypeError):
+        pass
+
+    # Fall back to manual construction with cached password
+    if not _wallet_password:
+        msg = "No wallet password available. Provide wallet_password env var or use the web wizard."
+        raise RuntimeError(msg)
+
+    from pathlib import Path
+
+    from iwa.core.constants import WALLET_PATH
+    from iwa.core.db import init_db
+    from iwa.core.keys import KeyStorage
+    from iwa.core.wallet import (
+        AccountService,
+        BalanceService,
+        PluginService,
+        SafeService,
+        TransactionService,
+        TransferService,
+    )
+
+    ks = _cached_key_storage or KeyStorage(path=Path(WALLET_PATH), password=_wallet_password)
+    wallet = object.__new__(Wallet)
+    wallet.key_storage = ks
+    wallet.account_service = AccountService(ks)
+    wallet.balance_service = BalanceService(ks, wallet.account_service)
+    wallet.safe_service = SafeService(ks, wallet.account_service)
+    wallet.transaction_service = TransactionService(
+        ks, wallet.account_service, wallet.safe_service
+    )
+    wallet.transfer_service = TransferService(
+        ks, wallet.account_service, wallet.balance_service,
+        wallet.safe_service, wallet.transaction_service,
+    )
+    wallet.plugin_service = PluginService()
+    init_db()
+
+    _cached_wallet = wallet
+    return _cached_wallet
 
 
 def check_balances(chain_name: str) -> tuple[float, float]:
@@ -92,12 +153,21 @@ def check_balances(chain_name: str) -> tuple[float, float]:
         if not _IWA_AVAILABLE:
             return 0.0, 0.0
 
-        if _cached_wallet is None:
+        # Get address from cached key_storage (web wizard) or Wallet
+        address = None
+        if _cached_key_storage is not None:
+            address = str(_cached_key_storage.get_address_by_tag("master"))
+        elif _cached_wallet is not None:
+            address = _cached_wallet.master_account.address
+        else:
             _cached_wallet = Wallet()
+            address = _cached_wallet.master_account.address
+
+        if not address:
+            return 0.0, 0.0
+
         if _cached_interfaces is None:
             _cached_interfaces = ChainInterfaces()
-
-        address = _cached_wallet.address
         ci = _cached_interfaces.get(chain_name)
         if not ci:
             return 0.0, 0.0

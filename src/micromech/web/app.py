@@ -115,16 +115,34 @@ def create_web_app(
         try:
             import micromech.core.bridge as _bridge
 
-            if _bridge._cached_wallet is None:
+            # Try cached key_storage first (set by POST /api/setup/wallet)
+            if _bridge._cached_key_storage is not None:
+                wallet_exists = True
+                wallet_address = str(
+                    _bridge._cached_key_storage.get_address_by_tag("master")
+                )
+            elif _bridge._cached_wallet is not None:
+                wallet_exists = True
+                wallet_address = _bridge._cached_wallet.master_account.address
+            else:
+                # Try loading wallet (needs password in env)
                 from iwa.core.wallet import Wallet
                 _bridge._cached_wallet = Wallet()
-            wallet_exists = True
-            wallet_address = _bridge._cached_wallet.address
-        except Exception as e:
-            err_msg = str(e).lower()
-            # Distinguish "no password" from "no iwa"
-            if "password" in err_msg or "secret" in err_msg or "none" in err_msg:
-                needs_password = True
+                wallet_exists = True
+                wallet_address = _bridge._cached_wallet.master_account.address
+        except Exception:
+            # Wallet() failed — user needs to provide password via web form.
+            needs_password = True
+
+        # Check if wallet file exists on disk (to distinguish create vs unlock)
+        wallet_file_exists = False
+        try:
+            from pathlib import Path
+
+            from iwa.core.constants import WALLET_PATH
+            wallet_file_exists = Path(WALLET_PATH).exists()
+        except Exception:
+            pass
 
         config_exists = DEFAULT_CONFIG_PATH.exists()
         chains_deployed: dict[str, dict] = {}
@@ -156,6 +174,7 @@ def create_web_app(
             "wallet_exists": wallet_exists,
             "wallet_address": wallet_address,
             "needs_password": needs_password,
+            "wallet_file_exists": wallet_file_exists,
             "config_exists": config_exists,
             "chains": chains_deployed,
             "step": step,
@@ -179,38 +198,43 @@ def create_web_app(
         body = await request.json()
         password = body.get("password", "")
         if not password or len(password) < 4:
-            return {"error": "Password must be at least 4 characters"}
+            return {"error": "Password too short (min 4 characters)."}
 
         def _create_or_unlock():
-            import os
+            from pathlib import Path
 
-            # Set password temporarily for Wallet init, then clear
-            os.environ["wallet_password"] = password
-            try:
-                from iwa.core.wallet import Wallet
+            from iwa.core.constants import WALLET_PATH
+            from iwa.core.keys import KeyStorage
 
-                import micromech.core.bridge as _bridge
+            import micromech.core.bridge as _bridge
 
-                wallet = Wallet()
-                _bridge._cached_wallet = wallet
+            wallet_path = Path(WALLET_PATH)
+            wallet_existed = wallet_path.exists()
 
-                # Check if mnemonic is pending (= just created)
-                mnemonic = None
+            # Create or load KeyStorage with the user-provided password
+            ks = KeyStorage(path=wallet_path, password=password)
+            address = ks.get_address_by_tag("master")
+            if not address:
+                msg = "Wallet creation failed"
+                raise RuntimeError(msg)
+
+            # Store password + key_storage for subsequent operations
+            _bridge._wallet_password = password
+            _bridge._cached_key_storage = ks
+
+            # If wallet didn't exist before, retrieve mnemonic for backup
+            mnemonic = None
+            if not wallet_existed:
                 try:
-                    pending = wallet.key_storage.get_pending_mnemonic()
-                    if pending:
-                        mnemonic = pending
+                    mnemonic = ks.decrypt_mnemonic()
                 except Exception:
                     pass
 
-                return {
-                    "address": wallet.address,
-                    "mnemonic": mnemonic,
-                    "created": mnemonic is not None,
-                }
-            finally:
-                # Don't leave password in env longer than necessary
-                os.environ.pop("wallet_password", None)
+            return {
+                "address": str(address),
+                "mnemonic": mnemonic,
+                "created": not wallet_existed,
+            }
 
         try:
             result = await asyncio.to_thread(_create_or_unlock)

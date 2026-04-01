@@ -80,7 +80,7 @@ def init(
     try:
         from iwa.core.wallet import Wallet
         wallet = Wallet()
-        wallet_address = wallet.address
+        wallet_address = wallet.master_account.address
         typer.echo(f"  Wallet found: {wallet_address}")
 
         # Show mnemonic if just created
@@ -764,7 +764,7 @@ def doctor(
     try:
         from iwa.core.wallet import Wallet
         wallet = Wallet()
-        ok(f"Address: {wallet.address}")
+        ok(f"Address: {wallet.master_account.address}")
     except ImportError:
         fail("iwa not installed (pip install micromech[chain])")
     except Exception as e:
