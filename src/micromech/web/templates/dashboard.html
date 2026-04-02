@@ -436,12 +436,12 @@
         const time = new Date(ev.timestamp * 1000).toLocaleTimeString();
         const eventLabel = ev.event.replace(/_/g, ' ');
         item.innerHTML = `
-            <span class="feed-time">${time}</span>
-            <span class="feed-event event-${ev.event}">${eventLabel}</span>
-            <span class="feed-id">${ev.request_id.substring(0, 16)}...</span>
-            ${ev.tool ? `<span class="tool-tag">${ev.tool}</span>` : ''}
+            <span class="feed-time">${escapeHtml(time)}</span>
+            <span class="feed-event event-${escapeHtml(ev.event)}">${escapeHtml(eventLabel)}</span>
+            <span class="feed-id">${escapeHtml(ev.request_id.substring(0, 16))}...</span>
+            ${ev.tool ? `<span class="tool-tag">${escapeHtml(ev.tool)}</span>` : ''}
             ${ev.execution_time ? `<span class="feed-detail">${ev.execution_time.toFixed(2)}s</span>` : ''}
-            ${ev.error ? `<span class="feed-detail" style="color:var(--error)">${ev.error.substring(0, 60)}</span>` : ''}
+            ${ev.error ? `<span class="feed-detail" style="color:var(--error)">${escapeHtml(ev.error.substring(0, 60))}</span>` : ''}
         `;
         feed.insertBefore(item, feed.firstChild);
         // Keep max 200 items
@@ -524,10 +524,10 @@
             }
             tbody.innerHTML = rows.map(r => `
                 <tr>
-                    <td style="font-family:var(--font-mono);font-size:0.75rem">${r.request_id.substring(0, 16)}...</td>
-                    <td style="font-size:0.75rem">${r.chain || '-'}</td>
-                    <td><span class="badge badge-${r.status}">${r.status}</span></td>
-                    <td><span class="tool-tag">${r.tool || '-'}</span></td>
+                    <td style="font-family:var(--font-mono);font-size:0.75rem">${escapeHtml(r.request_id.substring(0, 16))}...</td>
+                    <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
+                    <td><span class="badge badge-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
+                    <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
                     <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.prompt)}</td>
                     <td class="val">${r.execution_time != null ? r.execution_time.toFixed(2) + 's' : '-'}</td>
                 </tr>
@@ -548,7 +548,7 @@
                 const rate = total > 0 ? ((t.delivered / total) * 100).toFixed(1) : '-';
                 return `
                     <tr>
-                        <td><span class="tool-tag">${t.tool}</span></td>
+                        <td><span class="tool-tag">${escapeHtml(t.tool)}</span></td>
                         <td class="val">${t.total}</td>
                         <td class="val" style="color:var(--success)">${t.delivered}</td>
                         <td class="val" style="color:var(--error)">${t.failed}</td>

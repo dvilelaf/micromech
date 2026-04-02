@@ -226,7 +226,8 @@ def create_web_app(
                 try:
                     ks._get_private_key(str(address))
                 except Exception:
-                    return JSONResponse({"error": "Incorrect password."}, 403)
+                    msg = "Incorrect password."
+                    raise PermissionError(msg)
 
             # Store password + key_storage for subsequent operations
             _bridge._wallet_password = password
@@ -248,11 +249,12 @@ def create_web_app(
 
         try:
             result = await asyncio.to_thread(_create_or_unlock)
-            # Prevent caching of mnemonic response
             return JSONResponse(
                 result,
                 headers={"Cache-Control": "no-store"},
             )
+        except PermissionError:
+            return JSONResponse({"error": "Incorrect password."}, 403)
         except Exception:
             logger.exception("Wallet creation/unlock failed")
             return JSONResponse(

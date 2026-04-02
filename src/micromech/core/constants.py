@@ -37,7 +37,7 @@ except ImportError:
     }
 
 # Runtime defaults
-DEFAULT_HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 DEFAULT_MAX_CONCURRENT = 10
 DEFAULT_REQUEST_TIMEOUT = 300  # 5 minutes

@@ -18,7 +18,7 @@ from micromech.core.config import (
 class TestRuntimeConfig:
     def test_defaults(self):
         cfg = RuntimeConfig()
-        assert cfg.host == "0.0.0.0"
+        assert cfg.host == "127.0.0.1"
         assert cfg.port == 8000
         assert cfg.log_level == "INFO"
         assert cfg.max_concurrent == 10
