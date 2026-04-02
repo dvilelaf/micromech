@@ -198,8 +198,10 @@ def create_web_app(
 
         body = await request.json()
         password = body.get("password", "")
-        if not password or len(password) < 4:
-            return {"error": "Password too short (min 4 characters)."}
+        if not password or len(password) < 8:
+            return JSONResponse(
+                {"error": "Password too short (min 8 characters)."}, 400
+            )
 
         def _create_or_unlock():
             from pathlib import Path
@@ -224,7 +226,7 @@ def create_web_app(
                 try:
                     ks._get_private_key(str(address))
                 except Exception:
-                    return {"error": "Incorrect password."}
+                    return JSONResponse({"error": "Incorrect password."}, 403)
 
             # Store password + key_storage for subsequent operations
             _bridge._wallet_password = password
@@ -246,10 +248,17 @@ def create_web_app(
 
         try:
             result = await asyncio.to_thread(_create_or_unlock)
-            return result
+            # Prevent caching of mnemonic response
+            return JSONResponse(
+                result,
+                headers={"Cache-Control": "no-store"},
+            )
         except Exception:
             logger.exception("Wallet creation/unlock failed")
-            return {"error": "Failed to create or unlock wallet. Check password."}
+            return JSONResponse(
+                {"error": "Failed to create or unlock wallet."},
+                status_code=500,
+            )
 
     @app.get("/api/setup/balance")
     async def setup_balance(chain: str = "gnosis") -> dict:
@@ -328,15 +337,6 @@ def create_web_app(
                     "step": step, "total": total,
                     "message": msg, "success": success,
                 })
-
-            # Verify bridge state before deploy
-            import micromech.core.bridge as _br
-            logger.info(
-                "Deploy: bridge state: password={}, ks={}, wallet={}",
-                bool(_br._wallet_password),
-                _br._cached_key_storage is not None,
-                _br._cached_wallet is not None,
-            )
 
             lc = MechLifecycle(cfg, chain_name=chain_name)
             result = lc.full_deploy(on_progress=on_progress)
@@ -583,6 +583,8 @@ def create_web_app(
             return runtime_manager.get_status()
         return {"state": "unavailable"}
 
+    _RUNTIME_ACTIONS = {"start", "stop", "restart"}
+
     @app.post("/api/runtime/{action}")
     async def runtime_control(
         action: str,
@@ -593,20 +595,18 @@ def create_web_app(
             return JSONResponse(
                 {"error": "Missing X-Micromech-Action header"}, 403
             )
+        if action not in _RUNTIME_ACTIONS:
+            return JSONResponse({"error": "Unknown action"}, 404)
         if not runtime_manager:
-            return {"error": "Runtime manager not available"}
+            return JSONResponse({"error": "Runtime manager not available"}, 503)
 
-        if action == "start":
-            ok = await runtime_manager.start()
-            return {"success": ok, "state": runtime_manager.state}
-        elif action == "stop":
-            ok = await runtime_manager.stop()
-            return {"success": ok, "state": runtime_manager.state}
-        elif action == "restart":
-            ok = await runtime_manager.restart()
-            return {"success": ok, "state": runtime_manager.state}
-        else:
-            return {"error": f"Unknown action: {action}"}
+        handler = {
+            "start": runtime_manager.start,
+            "stop": runtime_manager.stop,
+            "restart": runtime_manager.restart,
+        }
+        ok = await handler[action]()
+        return {"success": ok, "state": runtime_manager.state}
 
     # --- Management API ---
 

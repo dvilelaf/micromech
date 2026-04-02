@@ -388,7 +388,7 @@ def cleanup(
 @app.command()
 def web(
     port: int = typer.Option(8000, "--port", "-p"),
-    host: str = typer.Option("0.0.0.0", "--host"),
+    host: str = typer.Option("127.0.0.1", "--host"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
     no_runtime: bool = typer.Option(False, "--no-runtime", help="Dashboard only, no mech runtime"),
 ) -> None:

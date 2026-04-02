@@ -49,7 +49,6 @@ class MechLifecycle:
         self,
         agent_id: int = 40,
         bond_olas: int = 10000,
-        **kwargs,
     ) -> Optional[int]:
         """Create a new service on-chain.
 
