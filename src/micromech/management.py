@@ -158,21 +158,20 @@ class MechLifecycle:
             # CreateMech event signature:
             # keccak256("CreateMech(address,uint256,uint256)")
             CREATE_MECH_TOPIC = (
-                "0x77a90008a218c5064bde1361c8b142"
-                "3c2957f2adfe2953940cc88e2e6b15"
-                "7c49"
+                "0x67a2e45041c70013518c5b9b849a69"
+                "44a6c17ff44d66be1c707020460ecb"
+                "d1db"
             )
+            mkt = self.chain_config.marketplace_address
             for log_entry in receipt.get("logs", []):
                 topics = log_entry.get("topics", [])
                 if len(topics) >= 2:
                     sig = topics[0].hex() if isinstance(topics[0], bytes) else str(topics[0])
                     if not sig.startswith("0x"):
                         sig = "0x" + sig
-                    # Match event sig or accept log from marketplace
                     log_addr = log_entry.get("address", "")
-                    mkt = self.chain_config.marketplace_address
                     is_marketplace = log_addr.lower() == mkt.lower()
-                    if sig == CREATE_MECH_TOPIC or is_marketplace:
+                    if sig == CREATE_MECH_TOPIC and is_marketplace:
                         raw = topics[1].hex() if isinstance(topics[1], bytes) else str(topics[1])
                         mech_addr = "0x" + raw[-40:]
                         logger.info("Mech created on {}: {}", self.chain_name, mech_addr)

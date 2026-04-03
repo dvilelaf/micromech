@@ -42,6 +42,7 @@ _RATE_LIMITS: dict[str, tuple[int, int]] = {
     "/api/setup/wallet": (10, 60),  # 10 attempts per minute (brute-force protection)
     "/request": (60, 60),  # 60 requests per minute
 }
+_MAX_TRACKED_IPS = 1000
 _rate_counters: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
 
@@ -51,12 +52,16 @@ def _rate_limited(endpoint: str, client_ip: str) -> bool:
         return False
     max_req, window = _RATE_LIMITS[endpoint]
     now = time.time()
-    hits = _rate_counters[endpoint][client_ip]
-    # Prune old entries
-    _rate_counters[endpoint][client_ip] = [t for t in hits if now - t < window]
-    if len(_rate_counters[endpoint][client_ip]) >= max_req:
+    bucket = _rate_counters[endpoint]
+    # Prune old entries for this IP
+    bucket[client_ip] = [t for t in bucket.get(client_ip, []) if now - t < window]
+    # Evict oldest IPs if we exceed the cap
+    if len(bucket) > _MAX_TRACKED_IPS:
+        oldest_ip = min(bucket, key=lambda ip: bucket[ip][-1] if bucket[ip] else 0)
+        del bucket[oldest_ip]
+    if len(bucket[client_ip]) >= max_req:
         return True
-    _rate_counters[endpoint][client_ip].append(now)
+    bucket[client_ip].append(now)
     return False
 
 
@@ -142,7 +147,18 @@ def create_web_app(
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=()"
+        )
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src https://fonts.gstatic.com; "
+            "connect-src 'self'; "
+            "img-src 'self' data:; "
+            "frame-ancestors 'none'"
+        )
         return response
 
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
@@ -296,8 +312,9 @@ def create_web_app(
                     msg = "Incorrect password."
                     raise PermissionError(msg)
 
-            # Store password + key_storage for subsequent operations
-            _bridge._wallet_password = password
+            # Store key_storage for get_wallet() fallback.
+            # KeyStorage already holds the decrypted key material,
+            # so the plaintext password is not stored in memory.
             _bridge._cached_key_storage = ks
 
             # If wallet didn't exist before, retrieve mnemonic for backup

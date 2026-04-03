@@ -144,6 +144,11 @@ class TestCreateMech:
             tx_hash
         )
         # Receipt with log containing mech address
+        # keccak256("CreateMech(address,uint256,uint256)")
+        create_mech_topic = bytes.fromhex(
+            "67a2e45041c70013518c5b9b849a6944"
+            "a6c17ff44d66be1c707020460ecbd1db"
+        )
         mech_addr_hex = "cd" * 20
         mock_web3.eth.wait_for_transaction_receipt.return_value = {
             "status": 1,
@@ -151,7 +156,7 @@ class TestCreateMech:
                 {
                     "address": MARKETPLACE,
                     "topics": [
-                        bytes(32),
+                        create_mech_topic,
                         bytes.fromhex("00" * 12 + mech_addr_hex),
                     ],
                 }
