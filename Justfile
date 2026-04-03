@@ -100,73 +100,143 @@ test-multichain:
 
     echo "Multi-chain E2E tests passed"
 
-# --- Anvil ---
+# --- Anvil (multi-chain) ---
+# Ports: gnosis=18545, base=18546, ethereum=18547, polygon=18548,
+#         optimism=18549, arbitrum=18550, celo=18551
 
-# Start an Anvil fork of Gnosis (background, port 18545)
-anvil-fork:
+# Start Anvil forks. Default: gnosis only. Pass chains to fork more.
+# Examples:
+#   just anvil-fork                    # gnosis only
+#   just anvil-fork gnosis,base        # gnosis + base
+#   just anvil-fork all                # all 7 chains
+anvil-fork chains="gnosis":
     #!/usr/bin/env bash
     set -e
-    RPC_URL=$(grep -m1 'gnosis_rpc=' /media/david/DATA/repos/triton/secrets.env | cut -d= -f2 | cut -d, -f1)
-    if [ -z "$RPC_URL" ]; then
-        echo "Error: No gnosis_rpc found in triton/secrets.env"
+    SECRETS=/media/david/DATA/repos/triton/secrets.env
+    ANVIL=~/.foundry/bin/anvil
+
+    declare -A RPC_KEYS=( [gnosis]=gnosis_rpc [base]=base_rpc [ethereum]=ethereum_rpc \
+        [polygon]=polygon_rpc [optimism]=optimism_rpc [arbitrum]=arbitrum_rpc [celo]=celo_rpc )
+    declare -A PORTS=( [gnosis]=18545 [base]=18546 [ethereum]=18547 \
+        [polygon]=18548 [optimism]=18549 [arbitrum]=18550 [celo]=18551 )
+
+    get_rpc() { grep -m1 "${1}=" "$SECRETS" 2>/dev/null | cut -d= -f2 | cut -d, -f1; }
+
+    REQUESTED="{{chains}}"
+    if [ "$REQUESTED" = "all" ]; then
+        REQUESTED="gnosis,base,ethereum,polygon,optimism,arbitrum,celo"
+    fi
+
+    STARTED=0
+    IFS=',' read -ra CHAIN_LIST <<< "$REQUESTED"
+    for chain in "${CHAIN_LIST[@]}"; do
+        chain=$(echo "$chain" | tr -d ' ')
+        port=${PORTS[$chain]:-""}
+        rpc_key=${RPC_KEYS[$chain]:-""}
+        if [ -z "$port" ]; then
+            echo "  Unknown chain: $chain (available: ${!PORTS[*]})"
+            continue
+        fi
+        rpc=$(get_rpc "$rpc_key")
+        if [ -z "$rpc" ]; then
+            echo "  $chain: no $rpc_key in secrets.env, skipping"
+            continue
+        fi
+        lsof -ti:$port | xargs -r kill 2>/dev/null || true
+        $ANVIL --fork-url "$rpc" --port $port --auto-impersonate --silent &
+        echo "  $chain: forking on port $port (PID $!)"
+        STARTED=$((STARTED + 1))
+    done
+
+    if [ $STARTED -eq 0 ]; then
+        echo "No forks started. Check secrets.env has RPC URLs."
         exit 1
     fi
-    # Kill any existing Anvil on this port
-    lsof -ti:18545 | xargs -r kill 2>/dev/null || true
-    echo "Forking Gnosis from $RPC_URL..."
-    ~/.foundry/bin/anvil --fork-url "$RPC_URL" --port 18545 --auto-impersonate --silent &
     sleep 3
-    echo "Anvil fork running on http://localhost:18545 (PID $!)"
+    echo "$STARTED fork(s) running."
 
-# Stop Anvil fork
+# Stop all Anvil forks (ports 18545-18551)
 anvil-stop:
-    lsof -ti:18545 | xargs -r kill 2>/dev/null && echo "Anvil stopped" || echo "Anvil not running"
+    #!/usr/bin/env bash
+    STOPPED=0
+    for port in 18545 18546 18547 18548 18549 18550 18551; do
+        if lsof -ti:$port | xargs -r kill 2>/dev/null; then
+            STOPPED=$((STOPPED + 1))
+        fi
+    done
+    echo "Stopped $STOPPED Anvil fork(s)."
 
-# Run micromech server against Anvil fork (sets gnosis_rpc to localhost:18545)
+# Fund an address on running Anvil forks (native + OLAS)
+# Examples:
+#   just anvil-fund 0xADDR               # fund on all running forks
+#   just anvil-fund 0xADDR gnosis,base   # fund on specific chains
+anvil-fund address chains="":
+    #!/usr/bin/env bash
+    set -e
+    if [ -n "{{chains}}" ]; then
+        uv run python scripts/anvil_fund.py {{address}} {{chains}}
+    else
+        uv run python scripts/anvil_fund.py {{address}}
+    fi
+
+# Run micromech server against Anvil forks
 run-anvil:
     #!/usr/bin/env bash
     set -e
-    if ! curl -s http://localhost:18545 -X POST -H 'Content-Type: application/json' \
-        -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x64'; then
-        echo "Error: Anvil fork not running on port 18545. Run 'just anvil-fork' first."
+    ENV_VARS=""
+    for chain_port in gnosis:18545 base:18546 ethereum:18547 polygon:18548 \
+                      optimism:18549 arbitrum:18550 celo:18551; do
+        chain=${chain_port%%:*}
+        port=${chain_port##*:}
+        if curl -sf http://localhost:$port -X POST -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' >/dev/null 2>&1; then
+            ENV_VARS="$ENV_VARS ${chain}_rpc=http://localhost:$port"
+        fi
+    done
+    if [ -z "$ENV_VARS" ]; then
+        echo "No Anvil forks running. Start with: just anvil-fork"
         exit 1
     fi
-    echo "Starting micromech against Anvil fork..."
-    gnosis_rpc=http://localhost:18545 testing=true uv run micromech run
+    echo "Detected forks:$ENV_VARS"
+    env $ENV_VARS testing=true uv run micromech run
 
-# Run web dashboard against Anvil fork (setup wizard mode)
+# Run web dashboard against Anvil forks (auto-detects running forks)
 web-anvil port="8000":
     #!/usr/bin/env bash
     set -e
-    if ! curl -s http://localhost:18545 -X POST -H 'Content-Type: application/json' \
-        -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x64'; then
-        echo "Error: Anvil fork not running on port 18545. Run 'just anvil-fork' first."
+    ENV_VARS=""
+    for chain_port in gnosis:18545 base:18546 ethereum:18547 polygon:18548 \
+                      optimism:18549 arbitrum:18550 celo:18551; do
+        chain=${chain_port%%:*}
+        port=${chain_port##*:}
+        if curl -sf http://localhost:$port -X POST -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' >/dev/null 2>&1; then
+            ENV_VARS="$ENV_VARS ${chain}_rpc=http://localhost:$port"
+        fi
+    done
+    if [ -z "$ENV_VARS" ]; then
+        echo "No Anvil forks running. Start with: just anvil-fork"
         exit 1
     fi
-    echo "Starting micromech web against Anvil fork..."
+    echo "Detected forks:$ENV_VARS"
     echo "Open http://localhost:{{port}}/setup"
-    gnosis_rpc=http://localhost:18545 testing=true uv run micromech web --port {{port}}
-
-# Fund an address on the Anvil fork (xDAI + OLAS)
-anvil-fund address:
-    #!/usr/bin/env bash
-    set -e
-    ANVIL=http://localhost:18545
-    ADDR={{address}}
-    OLAS=0xcE11e14225575945b8E6Dc0D4F2dD4C570f79d9f
-
-    uv run python scripts/anvil_fund.py {{address}}
+    env $ENV_VARS testing=true uv run micromech web --port {{port}}
 
 # Run CLI init wizard against Anvil fork
-init-anvil:
+init-anvil chain="gnosis":
     #!/usr/bin/env bash
     set -e
-    if ! curl -s http://localhost:18545 -X POST -H 'Content-Type: application/json' \
-        -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' | grep -q '0x64'; then
-        echo "Error: Anvil fork not running on port 18545. Run 'just anvil-fork' first."
-        exit 1
-    fi
-    gnosis_rpc=http://localhost:18545 testing=true uv run micromech init --chain gnosis
+    ENV_VARS=""
+    for chain_port in gnosis:18545 base:18546 ethereum:18547 polygon:18548 \
+                      optimism:18549 arbitrum:18550 celo:18551; do
+        c=${chain_port%%:*}
+        p=${chain_port##*:}
+        if curl -sf http://localhost:$p -X POST -H 'Content-Type: application/json' \
+            -d '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' >/dev/null 2>&1; then
+            ENV_VARS="$ENV_VARS ${c}_rpc=http://localhost:$p"
+        fi
+    done
+    env $ENV_VARS testing=true uv run micromech init --chain {{chain}}
 
 # Build package
 build:
