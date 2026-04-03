@@ -221,19 +221,10 @@ class DeliveryManager:
             req_id_bytes = hashlib.sha256(request_id.encode()).digest()
         req_id_bytes = req_id_bytes.ljust(32, b"\x00")[:32]
 
-        safe_fn: Optional[Callable[[], str]] = None
-        if self._has_safe:
-
-            def _safe() -> str:
-                return self._submit_via_safe(mech_contract, from_addr, req_id_bytes, data)
-
-            safe_fn = _safe
-
-        return _try_submit(
-            safe_fn,
-            lambda: self._submit_impersonated(mech_contract, from_addr, req_id_bytes, data),
-            lambda: self._submit_signed(mech_contract, from_addr, req_id_bytes, data),
+        fn_call = mech_contract.functions.deliverToMarketplace(
+            [req_id_bytes], [data],
         )
+        return self._submit_tx(fn_call, from_addr, "Delivery")
 
     def _submit_offchain_delivery(self, record: RequestRecord, delivery_data: bytes) -> str:
         """Submit deliverMarketplaceWithSignatures for off-chain (HTTP) requests.
@@ -265,51 +256,28 @@ class DeliveryManager:
         delivery_rates = [self.chain_config.delivery_rate]
         payment_data = b""
 
-        safe_fn: Optional[Callable[[], str]] = None
-        if self._has_safe:
+        fn_call = mech_contract.functions.deliverMarketplaceWithSignatures(
+            requester, deliver_with_sigs, delivery_rates, payment_data,
+        )
+        return self._submit_tx(fn_call, from_addr, "Offchain delivery")
 
-            def _safe_offchain() -> str:
-                return self._submit_offchain_via_safe(
-                    mech_contract,
-                    from_addr,
-                    requester,
-                    deliver_with_sigs,
-                    delivery_rates,
-                    payment_data,
-                )
-
-            safe_fn = _safe_offchain
-
+    def _submit_tx(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
+        """Submit a contract call via Safe → impersonation → signed fallback."""
+        safe_fn = (lambda: self._via_safe(fn_call, from_addr, label)) if self._has_safe else None
         return _try_submit(
             safe_fn,
-            lambda: self._submit_offchain_impersonated(
-                mech_contract,
-                from_addr,
-                requester,
-                deliver_with_sigs,
-                delivery_rates,
-                payment_data,
-            ),
-            lambda: self._submit_offchain_signed(
-                mech_contract,
-                from_addr,
-                requester,
-                deliver_with_sigs,
-                delivery_rates,
-                payment_data,
-            ),
+            lambda: self._via_impersonation(fn_call, from_addr, label),
+            lambda: self._via_signed(fn_call, from_addr, label),
         )
 
-    def _submit_via_safe(
-        self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
-    ) -> str:
-        """Submit deliverToMarketplace via Gnosis Safe (production path)."""
-        mech_address = self.bridge.web3.to_checksum_address(self.chain_config.mech_address)
-        call_data = contract.functions.deliverToMarketplace(
-            [req_id_bytes],
-            [data],
-        ).build_transaction({"from": from_addr})["data"]
+    # --- Generic transport methods (Safe / impersonated / signed) ---
 
+    def _via_safe(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
+        """Submit any contract call via Gnosis Safe (production path)."""
+        mech_address = self.bridge.web3.to_checksum_address(
+            self.chain_config.mech_address,
+        )
+        call_data = fn_call.build_transaction({"from": from_addr})["data"]
         tx_hash = self.bridge.wallet.safe_service.execute_safe_transaction(
             safe_address_or_tag=from_addr,
             to=mech_address,
@@ -317,128 +285,29 @@ class DeliveryManager:
             chain_name=self._chain_name,
             data=call_data,
         )
-        logger.info("Safe TX submitted: {}", tx_hash)
+        logger.info("Safe {} submitted: {}", label, tx_hash)
         return tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
 
-    def _submit_offchain_via_safe(
-        self,
-        contract: Any,
-        from_addr: str,
-        requester: str,
-        deliver_with_sigs: list[tuple[bytes, bytes, bytes]],
-        delivery_rates: list[int],
-        payment_data: bytes,
-    ) -> str:
-        """Submit deliverMarketplaceWithSignatures via Gnosis Safe (production path)."""
-        mech_address = self.bridge.web3.to_checksum_address(self.chain_config.mech_address)
-        call_data = contract.functions.deliverMarketplaceWithSignatures(
-            requester,
-            deliver_with_sigs,
-            delivery_rates,
-            payment_data,
-        ).build_transaction({"from": from_addr})["data"]
+    def _via_impersonation(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
+        """Submit any contract call via impersonation (Anvil)."""
+        tx_hash = fn_call.transact({"from": from_addr, "gas": 500_000})
+        return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
 
-        tx_hash = self.bridge.wallet.safe_service.execute_safe_transaction(
-            safe_address_or_tag=from_addr,
-            to=mech_address,
-            value=0,
-            chain_name=self._chain_name,
-            data=call_data,
-        )
-        logger.info("Safe TX (offchain) submitted: {}", tx_hash)
-        return tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
-
-    def _submit_offchain_impersonated(
-        self,
-        contract: Any,
-        from_addr: str,
-        requester: str,
-        deliver_with_sigs: list[tuple[bytes, bytes, bytes]],
-        delivery_rates: list[int],
-        payment_data: bytes,
-    ) -> str:
-        """Submit deliverMarketplaceWithSignatures via impersonation (Anvil)."""
-        tx_hash = contract.functions.deliverMarketplaceWithSignatures(
-            requester,
-            deliver_with_sigs,
-            delivery_rates,
-            payment_data,
-        ).transact(
-            {
-                "from": from_addr,
-                "gas": 500_000,
-            }
-        )
-        return _wait_and_check_receipt(self.bridge.web3, tx_hash, "Offchain delivery")
-
-    def _submit_offchain_signed(
-        self,
-        contract: Any,
-        from_addr: str,
-        requester: str,
-        deliver_with_sigs: list[tuple[bytes, bytes, bytes]],
-        delivery_rates: list[int],
-        payment_data: bytes,
-    ) -> str:
-        """Submit deliverMarketplaceWithSignatures via signed transaction."""
-        chain_id = self.bridge.web3.eth.chain_id
-        tx = contract.functions.deliverMarketplaceWithSignatures(
-            requester,
-            deliver_with_sigs,
-            delivery_rates,
-            payment_data,
-        ).build_transaction(
-            {
-                "from": from_addr,
-                "gas": 500_000,
-                "gasPrice": self.bridge.web3.eth.gas_price,
-                "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
-                "chainId": chain_id,
-            }
-        )
-
+    def _via_signed(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
+        """Submit any contract call via signed transaction."""
+        tx = fn_call.build_transaction({
+            "from": from_addr,
+            "gas": 500_000,
+            "gasPrice": self.bridge.web3.eth.gas_price,
+            "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
+            "chainId": self.bridge.web3.eth.chain_id,
+        })
         private_key = self._get_signer_key()
-        signed = self.bridge.web3.eth.account.sign_transaction(tx, private_key=private_key)
-        tx_hash = self.bridge.web3.eth.send_raw_transaction(signed.raw_transaction)
-        return _wait_and_check_receipt(self.bridge.web3, tx_hash, "Offchain delivery")
-
-    def _submit_impersonated(
-        self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
-    ) -> str:
-        """Submit via impersonation (Anvil). Transact directly from the address."""
-        tx_hash = contract.functions.deliverToMarketplace(
-            [req_id_bytes],
-            [data],
-        ).transact(
-            {
-                "from": from_addr,
-                "gas": 500_000,
-            }
+        signed = self.bridge.web3.eth.account.sign_transaction(
+            tx, private_key=private_key,
         )
-        return _wait_and_check_receipt(self.bridge.web3, tx_hash, "Delivery")
-
-    def _submit_signed(
-        self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
-    ) -> str:
-        """Submit via signed transaction using iwa wallet key."""
-        chain_id = self.bridge.web3.eth.chain_id
-        tx = contract.functions.deliverToMarketplace(
-            [req_id_bytes],
-            [data],
-        ).build_transaction(
-            {
-                "from": from_addr,
-                "gas": 500_000,
-                "gasPrice": self.bridge.web3.eth.gas_price,
-                "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
-                "chainId": chain_id,
-            }
-        )
-
-        private_key = self._get_signer_key()
-        signed = self.bridge.web3.eth.account.sign_transaction(tx, private_key=private_key)
         tx_hash = self.bridge.web3.eth.send_raw_transaction(signed.raw_transaction)
-        return _wait_and_check_receipt(self.bridge.web3, tx_hash, "Delivery")
+        return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
 
     def _get_signer_key(self) -> str:
         """Get the private key for signing delivery transactions."""

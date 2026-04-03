@@ -379,7 +379,7 @@ class TestDeliveryChainId:
     def test_tx_receipt_timeout_value(self):
         assert TX_RECEIPT_TIMEOUT == 120
 
-    def test_submit_signed_includes_chain_id(self):
+    def test_via_signed_includes_chain_id(self):
         from micromech.core.config import ChainConfig
 
         chain_cfg = ChainConfig(
@@ -404,11 +404,11 @@ class TestDeliveryChainId:
         dm = DeliveryManager(config=config, chain_config=chain_cfg, queue=queue, bridge=bridge)
         dm._get_signer_key = MagicMock(return_value="0x" + "ff" * 32)
 
-        mock_contract = MagicMock()
-        dm._submit_signed(mock_contract, "0x" + "ab" * 20, b"\x01" * 32, b"data")
+        fn_call = MagicMock()
+        dm._via_signed(fn_call, "0x" + "ab" * 20)
 
         # Verify chainId was passed to build_transaction
-        call_args = mock_contract.functions.deliverToMarketplace.return_value.build_transaction.call_args
+        call_args = fn_call.build_transaction.call_args
         tx_params = call_args[0][0]
         assert "chainId" in tx_params
         assert tx_params["chainId"] == 100

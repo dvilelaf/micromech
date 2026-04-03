@@ -18,9 +18,6 @@ from micromech.core.errors import ToolExecutionError
 
 TOOL_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
 
-# Valory run() return type: (result, prompt_used, transaction, counter_callback)
-MechResponse = tuple[Optional[str], Optional[str], Optional[dict[str, Any]], Any]
-
 
 class ToolMetadata(BaseModel):
     """Tool metadata for registration and discovery."""

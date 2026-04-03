@@ -7,7 +7,7 @@ for crash safety (WAL+NORMAL protects against process crashes) and concurrent re
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import peewee as pw
 from loguru import logger
@@ -303,12 +303,13 @@ class PersistentQueue:
             for r in query
         ]
 
-    def daily_stats(self, days: int = 30, chain: Optional[str] = None) -> list[dict]:
-        """Daily request counts for the last N days."""
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    def _time_series_stats(
+        self, group_expr: Any, label: str, cutoff: datetime, chain: Optional[str] = None,
+    ) -> list[dict]:
+        """Generic time-series aggregation (shared by daily/monthly)."""
         query = (
             RequestRow.select(
-                pw.fn.DATE(RequestRow.created_at).alias("day"),
+                group_expr.alias(label),
                 pw.fn.COUNT(RequestRow.request_id).alias("total"),
                 pw.fn.SUM(
                     pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)
@@ -318,13 +319,13 @@ class PersistentQueue:
                 ).alias("failed"),
             )
             .where(RequestRow.created_at >= cutoff)
-            .group_by(pw.fn.DATE(RequestRow.created_at))
-            .order_by(pw.fn.DATE(RequestRow.created_at).asc())
+            .group_by(group_expr)
+            .order_by(group_expr.asc())
         )
         query = _chain_filter(query, chain)
         return [
             {
-                "day": str(r.day),
+                label: str(getattr(r, label)),
                 "total": r.total,
                 "delivered": int(r.delivered or 0),
                 "failed": int(r.failed or 0),
@@ -332,34 +333,19 @@ class PersistentQueue:
             for r in query
         ]
 
+    def daily_stats(self, days: int = 30, chain: Optional[str] = None) -> list[dict]:
+        """Daily request counts for the last N days."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        return self._time_series_stats(
+            pw.fn.DATE(RequestRow.created_at), "day", cutoff, chain,
+        )
+
     def monthly_stats(self, months: int = 12, chain: Optional[str] = None) -> list[dict]:
         """Monthly request counts."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=months * 31)
-        query = (
-            RequestRow.select(
-                pw.fn.strftime("%Y-%m", RequestRow.created_at).alias("month"),
-                pw.fn.COUNT(RequestRow.request_id).alias("total"),
-                pw.fn.SUM(
-                    pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)
-                ).alias("delivered"),
-                pw.fn.SUM(
-                    pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)
-                ).alias("failed"),
-            )
-            .where(RequestRow.created_at >= cutoff)
-            .group_by(pw.fn.strftime("%Y-%m", RequestRow.created_at))
-            .order_by(pw.fn.strftime("%Y-%m", RequestRow.created_at).asc())
+        return self._time_series_stats(
+            pw.fn.strftime("%Y-%m", RequestRow.created_at), "month", cutoff, chain,
         )
-        query = _chain_filter(query, chain)
-        return [
-            {
-                "month": r.month,
-                "total": r.total,
-                "delivered": int(r.delivered or 0),
-                "failed": int(r.failed or 0),
-            }
-            for r in query
-        ]
 
     def onchain_offchain_counts(self, chain: Optional[str] = None) -> dict[str, int]:
         """Count on-chain vs off-chain requests."""

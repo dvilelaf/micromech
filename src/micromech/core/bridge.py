@@ -66,13 +66,23 @@ class IwaBridge:
         """Get web3 instance (with RPC rotation)."""
         return self.chain_interface.web3
 
-    def get_contract(self, contract_class: type, address: str) -> Any:
-        """Instantiate an iwa ContractInstance."""
-        return contract_class(address, self.chain_name)
-
     def with_retry(self, fn: Any, **kwargs: Any) -> Any:
         """Execute a function with iwa's RPC auto-rotation."""
         return self.chain_interface.with_retry(fn, **kwargs)
+
+
+def create_bridges(config: Any) -> dict[str, "IwaBridge"]:
+    """Create IwaBridge instances for all enabled chains in config."""
+    bridges: dict = {}
+    try:
+        for chain_name in config.enabled_chains:
+            try:
+                bridges[chain_name] = IwaBridge(chain_name=chain_name)
+            except Exception as e:
+                logger.warning("Bridge failed for {}: {}", chain_name, e)
+    except Exception:
+        logger.warning("iwa not available — running without chain access")
+    return bridges
 
 
 # Cached instances for balance checking (avoid re-probing RPCs on every call)

@@ -14,7 +14,6 @@ from micromech.ipfs.client import (
     fetch_json_from_ipfs,
     is_ipfs_multihash,
     multihash_to_cid,
-    prepare_request_data,
     push_json_to_ipfs,
     push_to_ipfs,
 )
@@ -182,9 +181,3 @@ class TestPrepareRequestData:
         mh2 = cid_hex_to_multihash_bytes(compute_cid_hex(data))
         assert mh1 == mh2
 
-    def test_prepare_request_data_returns_bytes(self):
-        """prepare_request_data returns multihash or digest bytes."""
-        metadata = {"prompt": "test", "tool": "echo"}
-        result = prepare_request_data(metadata)
-        assert isinstance(result, bytes)
-        assert len(result) >= 32  # At least a sha256 digest

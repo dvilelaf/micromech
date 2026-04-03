@@ -34,18 +34,8 @@ class RuntimeManager:
 
     def _create_bridges(self) -> dict:
         """Create IwaBridge instances for all enabled chains."""
-        bridges: dict = {}
-        try:
-            from micromech.core.bridge import IwaBridge
-
-            for chain_name in self.config.enabled_chains:
-                try:
-                    bridges[chain_name] = IwaBridge(chain_name=chain_name)
-                except Exception as e:
-                    logger.warning("Bridge failed for {}: {}", chain_name, e)
-        except ImportError:
-            logger.warning("iwa not available — running without chain access")
-        return bridges
+        from micromech.core.bridge import create_bridges
+        return create_bridges(self.config)
 
     async def start(self) -> bool:
         """Start the MechServer runtime (without HTTP — web app already serves it)."""

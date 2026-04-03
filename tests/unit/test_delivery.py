@@ -109,21 +109,19 @@ class TestDeliveryWithBridgeMultiple:
         assert count == 0
 
 
-class TestSubmitImpersonated:
+class TestViaImpersonation:
     def test_impersonated_success(self, queue: PersistentQueue):
-        """_submit_impersonated transacts and returns tx hash."""
+        """_via_impersonation transacts and returns tx hash."""
         config = MicromechConfig()
         bridge = MagicMock()
         bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 1}
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
-        mock_contract = MagicMock()
+        fn_call = MagicMock()
         tx_hash_bytes = b"\xde\xad" + b"\x00" * 30
-        mock_contract.functions.deliverToMarketplace.return_value.transact.return_value = (
-            tx_hash_bytes
-        )
+        fn_call.transact.return_value = tx_hash_bytes
 
-        result = dm._submit_impersonated(mock_contract, "0x" + "ab" * 20, b"\x01" * 32, b"data")
+        result = dm._via_impersonation(fn_call, "0x" + "ab" * 20)
         assert result == tx_hash_bytes.hex()
 
     def test_impersonated_reverted(self, queue: PersistentQueue):
@@ -133,22 +131,21 @@ class TestSubmitImpersonated:
         bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 0}
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
-        mock_contract = MagicMock()
+        fn_call = MagicMock()
         tx_hash_bytes = b"\xde\xad" + b"\x00" * 30
-        mock_contract.functions.deliverToMarketplace.return_value.transact.return_value = (
-            tx_hash_bytes
-        )
+        fn_call.transact.return_value = tx_hash_bytes
 
         with pytest.raises(RuntimeError, match="reverted"):
-            dm._submit_impersonated(mock_contract, "0x" + "ab" * 20, b"\x01" * 32, b"data")
+            dm._via_impersonation(fn_call, "0x" + "ab" * 20)
 
 
-class TestSubmitSigned:
+class TestViaSigned:
     def test_signed_success(self, queue: PersistentQueue):
-        """_submit_signed builds, signs, and sends transaction."""
+        """_via_signed builds, signs, and sends transaction."""
         config = MicromechConfig()
         bridge = MagicMock()
         bridge.web3.eth.gas_price = 1000
+        bridge.web3.eth.chain_id = 100
         bridge.web3.eth.get_transaction_count.return_value = 5
         bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 1}
         tx_hash_bytes = b"\xca\xfe" + b"\x00" * 30
@@ -158,11 +155,10 @@ class TestSubmitSigned:
         bridge.web3.eth.account.sign_transaction.return_value = mock_signed
 
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
-        # Mock _get_signer_key
         dm._get_signer_key = MagicMock(return_value="0x" + "ff" * 32)
 
-        mock_contract = MagicMock()
-        result = dm._submit_signed(mock_contract, "0x" + "ab" * 20, b"\x01" * 32, b"data")
+        fn_call = MagicMock()
+        result = dm._via_signed(fn_call, "0x" + "ab" * 20)
         assert result == tx_hash_bytes.hex()
 
     def test_signed_reverted(self, queue: PersistentQueue):
@@ -170,6 +166,7 @@ class TestSubmitSigned:
         config = MicromechConfig()
         bridge = MagicMock()
         bridge.web3.eth.gas_price = 1000
+        bridge.web3.eth.chain_id = 100
         bridge.web3.eth.get_transaction_count.return_value = 0
         bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 0}
         tx_hash_bytes = b"\xca\xfe" + b"\x00" * 30
@@ -181,9 +178,9 @@ class TestSubmitSigned:
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
         dm._get_signer_key = MagicMock(return_value="0x" + "ff" * 32)
 
-        mock_contract = MagicMock()
+        fn_call = MagicMock()
         with pytest.raises(RuntimeError, match="reverted"):
-            dm._submit_signed(mock_contract, "0x" + "ab" * 20, b"\x01" * 32, b"data")
+            dm._via_signed(fn_call, "0x" + "ab" * 20)
 
 
 class TestGetSignerKey:
@@ -241,12 +238,12 @@ class TestSubmitDelivery:
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
-        dm._submit_impersonated = MagicMock(return_value="0xdeadbeef")
-        dm._submit_signed = MagicMock()
+        dm._via_impersonation = MagicMock(return_value="0xdeadbeef")
+        dm._via_signed = MagicMock()
 
         result = dm._submit_delivery("0x" + "aa" * 32, b"data")
         assert result == "0xdeadbeef"
-        dm._submit_signed.assert_not_called()
+        dm._via_signed.assert_not_called()
 
     def test_fallback_to_signed(self, queue: PersistentQueue):
         """When impersonation fails (no Safe), falls back to signed."""
@@ -255,8 +252,8 @@ class TestSubmitDelivery:
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
-        dm._submit_impersonated = MagicMock(side_effect=RuntimeError("not Anvil"))
-        dm._submit_signed = MagicMock(return_value="0xcafebabe")
+        dm._via_impersonation = MagicMock(side_effect=RuntimeError("not Anvil"))
+        dm._via_signed = MagicMock(return_value="0xcafebabe")
 
         result = dm._submit_delivery("0x" + "aa" * 32, b"data")
         assert result == "0xcafebabe"
@@ -268,7 +265,7 @@ class TestSubmitDelivery:
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
-        dm._submit_impersonated = MagicMock(return_value="0xtx")
+        dm._via_impersonation = MagicMock(return_value="0xtx")
 
         result = dm._submit_delivery("0x" + "bb" * 32, b"data")
         assert result == "0xtx"
@@ -279,35 +276,32 @@ class TestSubmitViaSafe:
         """When Safe is available and succeeds, uses Safe TX."""
         config = MicromechConfig()
         bridge = MagicMock()
-        # Ensure _has_safe returns True
-        bridge.wallet.safe_service.execute_safe_transaction.return_value = "0xsafe_hash"
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
-        dm._submit_via_safe = MagicMock(return_value="0xsafe_hash")
-        dm._submit_impersonated = MagicMock()
-        dm._submit_signed = MagicMock()
+        dm._via_safe = MagicMock(return_value="0xsafe_hash")
+        dm._via_impersonation = MagicMock()
+        dm._via_signed = MagicMock()
 
         result = dm._submit_delivery("0x" + "aa" * 32, b"data")
         assert result == "0xsafe_hash"
-        dm._submit_impersonated.assert_not_called()
-        dm._submit_signed.assert_not_called()
+        dm._via_impersonation.assert_not_called()
+        dm._via_signed.assert_not_called()
 
     def test_safe_fallback_to_impersonation(self, queue: PersistentQueue):
         """When Safe fails, falls back to impersonation."""
         config = MicromechConfig()
         bridge = MagicMock()
-        bridge.wallet.safe_service.execute_safe_transaction.side_effect = RuntimeError("no safe")
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
-        dm._submit_via_safe = MagicMock(side_effect=RuntimeError("no safe"))
-        dm._submit_impersonated = MagicMock(return_value="0ximpersonated")
-        dm._submit_signed = MagicMock()
+        dm._via_safe = MagicMock(side_effect=RuntimeError("no safe"))
+        dm._via_impersonation = MagicMock(return_value="0ximpersonated")
+        dm._via_signed = MagicMock()
 
         result = dm._submit_delivery("0x" + "aa" * 32, b"data")
         assert result == "0ximpersonated"
-        dm._submit_signed.assert_not_called()
+        dm._via_signed.assert_not_called()
 
     def test_no_safe_skips_to_impersonation(self, queue: PersistentQueue):
         """When bridge has no Safe service, skips directly to impersonation."""
@@ -318,8 +312,8 @@ class TestSubmitViaSafe:
         assert not dm._has_safe
 
         dm._get_mech_contract = MagicMock()
-        dm._submit_impersonated = MagicMock(return_value="0ximp")
-        dm._submit_signed = MagicMock()
+        dm._via_impersonation = MagicMock(return_value="0ximp")
+        dm._via_signed = MagicMock()
 
         result = dm._submit_delivery("0x" + "aa" * 32, b"data")
         assert result == "0ximp"

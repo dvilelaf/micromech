@@ -13,7 +13,7 @@ from typing import Any, Optional
 import aiohttp
 from loguru import logger
 
-from micromech.core.constants import IPFS_GATEWAY
+_DEFAULT_GATEWAY = "https://gateway.autonolas.tech/ipfs/"
 
 # Multihash prefix for sha2-256: function code (0x12) + digest length (0x20)
 _SHA256_MULTIHASH_PREFIX = bytes([0x12, 0x20])
@@ -76,7 +76,7 @@ def multihash_to_cid(data: bytes) -> str:
 
 async def fetch_from_ipfs(
     cid: str,
-    gateway: str = IPFS_GATEWAY,
+    gateway: str = _DEFAULT_GATEWAY,
     timeout: int = 30,
 ) -> bytes:
     """Fetch data from IPFS via HTTP gateway.
@@ -100,7 +100,7 @@ async def fetch_from_ipfs(
 
 async def fetch_json_from_ipfs(
     cid: str,
-    gateway: str = IPFS_GATEWAY,
+    gateway: str = _DEFAULT_GATEWAY,
     timeout: int = 30,
 ) -> dict:
     """Fetch and parse JSON from IPFS."""
@@ -137,18 +137,3 @@ async def push_json_to_ipfs(
     return await push_to_ipfs(data, api_url=api_url)
 
 
-def prepare_request_data(metadata: dict[str, Any]) -> bytes:
-    """Convert metadata to on-chain request data bytes.
-
-    Pushes to IPFS (sync) and returns the truncated multihash bytes
-    that go into marketplace.request(requestData, ...).
-    """
-    try:
-        from iwa.core.ipfs import metadata_to_request_data
-
-        return metadata_to_request_data(metadata)
-    except ImportError:
-        # Compute locally
-        data = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
-        cid_hex = compute_cid_hex(data)
-        return cid_hex_to_multihash_bytes(cid_hex)

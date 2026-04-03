@@ -279,19 +279,8 @@ def run(
 
     from micromech.runtime.server import MechServer
 
-    # Create bridges for all enabled chains
-    bridges: dict = {}
-    try:
-        from micromech.core.bridge import IwaBridge
-
-        for chain_name in cfg.enabled_chains:
-            try:
-                bridges[chain_name] = IwaBridge(chain_name=chain_name)
-                logger.info("Bridge loaded for chain: {}", chain_name)
-            except Exception as e:
-                logger.warning("Bridge failed for {}: {}", chain_name, e)
-    except ImportError:
-        logger.warning("iwa not available. Running without chain access.")
+    from micromech.core.bridge import create_bridges
+    bridges = create_bridges(cfg)
 
     server = MechServer(cfg, bridges=bridges)
     try:

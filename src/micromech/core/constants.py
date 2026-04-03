@@ -56,9 +56,6 @@ DEFAULT_LLM_FILE = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
 DEFAULT_LLM_MAX_TOKENS = 256
 DEFAULT_LLM_CONTEXT_SIZE = 2048
 
-# IPFS
-IPFS_GATEWAY = "https://gateway.autonolas.tech/ipfs/"
-
 # Request statuses (Final for mypy Literal compatibility)
 STATUS_PENDING: Final = "pending"
 STATUS_EXECUTING: Final = "executing"
