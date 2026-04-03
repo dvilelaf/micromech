@@ -45,6 +45,10 @@ _RATE_LIMITS: dict[str, tuple[int, int]] = {
 _MAX_TRACKED_IPS = 1000
 _rate_counters: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
 
+# SSE connection limit
+_MAX_SSE_CONNECTIONS = 10
+_sse_connection_count = 0
+
 
 def _rate_limited(endpoint: str, client_ip: str) -> bool:
     """Check if a client has exceeded the rate limit for an endpoint."""
@@ -68,6 +72,17 @@ def _rate_limited(endpoint: str, client_ip: str) -> bool:
         return True
     bucket[client_ip].append(now)
     return False
+
+
+def _get_client_ip(request: Request) -> str:
+    """Extract client IP, respecting X-Forwarded-For behind proxies."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        # First IP in the chain is the original client
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
 
 
 def _check_auth(request: Request) -> Optional[JSONResponse]:
@@ -281,7 +296,7 @@ def create_web_app(
             return JSONResponse(
                 {"error": "Missing X-Micromech-Action header"}, 403
             )
-        if _rate_limited("/api/setup/wallet", request.client.host if request.client else "unknown"):
+        if _rate_limited("/api/setup/wallet", _get_client_ip(request)):
             return JSONResponse({"error": "Too many attempts. Try again later."}, 429)
 
         body = await request.json()
@@ -564,44 +579,58 @@ def create_web_app(
     # --- SSE Stream ---
 
     @app.get("/api/metrics/stream")
-    async def metrics_stream() -> StreamingResponse:
+    async def metrics_stream(request: Request) -> StreamingResponse:
         """Server-Sent Events stream for real-time dashboard updates.
 
-        Pushes:
-        - Every 2s: live metrics snapshot (in-memory, no DB)
-        - Every 10s: queue status (light DB query)
-        - New events since last push
+        Requires auth via ?token= query param (SSE can't set headers).
+        Limited to _MAX_SSE_CONNECTIONS concurrent streams.
         """
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
+
+        global _sse_connection_count  # noqa: PLW0603
+        if _sse_connection_count >= _MAX_SSE_CONNECTIONS:
+            return JSONResponse(
+                {"error": "Too many SSE connections"},
+                status_code=429,
+            )
 
         async def event_generator():
-            last_event_ts = time.time()
-            tick = 0
-            while True:
-                await asyncio.sleep(2)
-                tick += 1
+            global _sse_connection_count  # noqa: PLW0603
+            _sse_connection_count += 1
+            try:
+                last_event_ts = time.time()
+                tick = 0
+                while True:
+                    await asyncio.sleep(2)
+                    tick += 1
 
-                payload: dict[str, Any] = {"type": "tick", "timestamp": time.time()}
+                    payload: dict[str, Any] = {
+                        "type": "tick",
+                        "timestamp": time.time(),
+                    }
 
-                # Include runtime state
-                if runtime_manager:
-                    payload["runtime_state"] = runtime_manager.state
+                    if runtime_manager:
+                        payload["runtime_state"] = runtime_manager.state
 
-                # Always include live metrics
-                if metrics:
-                    payload["live"] = metrics.get_live_snapshot()
-                    # Include new events since last push
-                    new_events = metrics.get_events_since(last_event_ts)
-                    if new_events:
-                        payload["events"] = new_events
-                        last_event_ts = time.time()
+                    if metrics:
+                        payload["live"] = metrics.get_live_snapshot()
+                        new_events = metrics.get_events_since(last_event_ts)
+                        if new_events:
+                            payload["events"] = new_events
+                            last_event_ts = time.time()
 
-                # Every 10s: include queue counts from DB
-                if tick % 5 == 0:
-                    status = get_status()
-                    payload["queue"] = status.get("queue", {})
-                    payload["delivered_total"] = status.get("delivered_total", 0)
+                    if tick % 5 == 0:
+                        status = get_status()
+                        payload["queue"] = status.get("queue", {})
+                        payload["delivered_total"] = status.get(
+                            "delivered_total", 0,
+                        )
 
-                yield f"data: {json.dumps(payload)}\n\n"
+                    yield f"data: {json.dumps(payload)}\n\n"
+            finally:
+                _sse_connection_count -= 1
 
         return StreamingResponse(
             event_generator(),

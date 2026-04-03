@@ -435,10 +435,12 @@
     </div>
 
     <script>
-    const AUTH_TOKEN = '{{ auth_token }}';
-    function authHeaders(extra) {
-        return Object.assign({'X-Auth-Token': AUTH_TOKEN}, extra || {});
-    }
+    const authHeaders = (function() {
+        const _t = '{{ auth_token }}';
+        return function(extra) {
+            return Object.assign({'X-Auth-Token': _t}, extra || {});
+        };
+    })();
 
     // State
     let currentStep = 1;

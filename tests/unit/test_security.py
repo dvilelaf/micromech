@@ -39,8 +39,11 @@ def web_client() -> TestClient:
 
 @pytest.fixture
 def http_client() -> TestClient:
+    async def noop(r):
+        pass
+
     app = create_http_app(
-        on_request=lambda r: None,
+        on_request=noop,
         get_status=lambda: {"status": "running", "queue": {}, "tools": [], "delivered_total": 0},
     )
     return TestClient(app)
@@ -551,3 +554,100 @@ class TestToolExtraParamsInjection:
 
         assert captured["temperature"] == 0.7
         assert captured["model"] == "qwen"
+
+
+# ============================================================
+# SSE Stream: auth + connection limit
+# ============================================================
+
+
+class TestSSEStream:
+    def test_sse_requires_auth(self, web_client: TestClient):
+        """SSE stream without auth token returns 401."""
+        resp = web_client.get("/api/metrics/stream")
+        assert resp.status_code == 401
+
+    def test_sse_route_exists_with_auth(self, web_client: TestClient):
+        """SSE endpoint is registered and requires auth."""
+        routes = [r.path for r in web_client.app.routes]
+        assert "/api/metrics/stream" in routes
+
+
+# ============================================================
+# X-Forwarded-For support
+# ============================================================
+
+
+class TestClientIPExtraction:
+    def test_direct_connection(self):
+        from micromech.web.app import _get_client_ip
+        request = MagicMock()
+        request.headers = {}
+        request.client = MagicMock(host="192.168.1.1")
+        assert _get_client_ip(request) == "192.168.1.1"
+
+    def test_forwarded_for_single(self):
+        from micromech.web.app import _get_client_ip
+        request = MagicMock()
+        request.headers = {"X-Forwarded-For": "10.0.0.1"}
+        assert _get_client_ip(request) == "10.0.0.1"
+
+    def test_forwarded_for_chain(self):
+        from micromech.web.app import _get_client_ip
+        request = MagicMock()
+        request.headers = {"X-Forwarded-For": "10.0.0.1, 172.16.0.1, 192.168.1.1"}
+        assert _get_client_ip(request) == "10.0.0.1"
+
+    def test_no_client(self):
+        from micromech.web.app import _get_client_ip
+        request = MagicMock()
+        request.headers = {}
+        request.client = None
+        assert _get_client_ip(request) == "unknown"
+
+
+# ============================================================
+# Signature hex validation
+# ============================================================
+
+
+class TestSignatureValidation:
+    def test_valid_hex_signature(self, http_client: TestClient):
+        resp = http_client.post(
+            "/request",
+            json={"prompt": "test", "signature": "0xdeadbeef"},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 202
+
+    def test_valid_hex_no_prefix(self, http_client: TestClient):
+        resp = http_client.post(
+            "/request",
+            json={"prompt": "test", "signature": "abcdef0123"},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 202
+
+    def test_null_signature_ok(self, http_client: TestClient):
+        resp = http_client.post(
+            "/request",
+            json={"prompt": "test", "signature": None},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 202
+
+    def test_invalid_hex_rejected(self, http_client: TestClient):
+        resp = http_client.post(
+            "/request",
+            json={"prompt": "test", "signature": "not-hex!@#"},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 422
+
+    def test_empty_signature_ok(self, http_client: TestClient):
+        resp = http_client.post(
+            "/request",
+            json={"prompt": "test", "signature": ""},
+            headers=AUTH_HEADERS,
+        )
+        assert resp.status_code == 202

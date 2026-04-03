@@ -6,11 +6,12 @@ Provides a FastAPI app for:
 - GET /health — simple health check
 """
 
+import re
 import uuid
 from typing import Any, Callable, Optional
 
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 try:
     from fastapi import FastAPI, HTTPException, Request
@@ -27,6 +28,9 @@ from micromech.core.models import MechRequest
 MAX_PROMPT_LENGTH = 10_000
 
 
+_HEX_RE = re.compile(r"^(0x)?[0-9a-fA-F]*$")
+
+
 class RequestPayload(BaseModel):
     """HTTP request payload (Valory-compatible)."""
 
@@ -35,8 +39,17 @@ class RequestPayload(BaseModel):
     chain: str = "gnosis"
     request_id: Optional[str] = None
     sender: Optional[str] = None
-    signature: Optional[str] = None  # hex-encoded signature for off-chain delivery
+    signature: Optional[str] = None
     extra_params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("signature")
+    @classmethod
+    def validate_signature_hex(cls, v: Optional[str]) -> Optional[str]:
+        """Reject non-hex signatures at acceptance, not at delivery."""
+        if v is not None and not _HEX_RE.match(v):
+            msg = "signature must be hex-encoded (optional 0x prefix)"
+            raise ValueError(msg)
+        return v
 
 
 class StatusResponse(BaseModel):
@@ -78,7 +91,7 @@ def create_app(
         request: Request, payload: RequestPayload,
     ) -> JSONResponse:
         """Submit an off-chain request."""
-        from micromech.web.app import _check_auth, _rate_limited
+        from micromech.web.app import _check_auth, _get_client_ip, _rate_limited
 
         auth_err = _check_auth(request)
         if auth_err:
@@ -90,8 +103,7 @@ def create_app(
                 {"error": "Missing X-Micromech-Action header"}, status_code=403
             )
 
-        client_ip = request.client.host if request.client else "unknown"
-        if _rate_limited("/request", client_ip):
+        if _rate_limited("/request", _get_client_ip(request)):
             return JSONResponse({"error": "Rate limit exceeded"}, status_code=429)
 
         request_id = payload.request_id or f"http-{uuid.uuid4().hex[:12]}"
