@@ -131,6 +131,14 @@ class IpfsConfig(BaseModel):
     timeout: int = Field(default=30, ge=5, le=120)
     enabled: bool = True
 
+    @field_validator("gateway", "api_url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            msg = f"URL must start with http:// or https://: {v}"
+            raise ValueError(msg)
+        return v
+
 
 class ToolConfig(BaseModel):
     """Configuration for a single tool."""

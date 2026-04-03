@@ -2,8 +2,11 @@
 
 import asyncio
 import json
+import os
 import queue as stdlib_queue
+import secrets
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -25,6 +28,49 @@ STATIC_DIR = Path(__file__).parent / "static"
 # CSRF header required on state-changing endpoints (browsers won't send
 # this in simple cross-origin requests)
 CSRF_HEADER = "X-Micromech-Action"
+
+# --- Auth token ---
+# Generated once at startup, printed to the console. Required on all
+# state-changing endpoints via X-Auth-Token header (or ?token= query param
+# for SSE streams). Read-only GET endpoints (status, health, metrics) are
+# open so monitoring tools work without auth.
+_AUTH_TOKEN: str = os.environ.get("MICROMECH_AUTH_TOKEN", "") or secrets.token_urlsafe(32)
+
+# --- Simple rate limiter ---
+_RATE_LIMITS: dict[str, tuple[int, int]] = {
+    # endpoint_key: (max_requests, window_seconds)
+    "/api/setup/wallet": (10, 60),  # 10 attempts per minute (brute-force protection)
+    "/request": (60, 60),  # 60 requests per minute
+}
+_rate_counters: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+
+
+def _rate_limited(endpoint: str, client_ip: str) -> bool:
+    """Check if a client has exceeded the rate limit for an endpoint."""
+    if endpoint not in _RATE_LIMITS:
+        return False
+    max_req, window = _RATE_LIMITS[endpoint]
+    now = time.time()
+    hits = _rate_counters[endpoint][client_ip]
+    # Prune old entries
+    _rate_counters[endpoint][client_ip] = [t for t in hits if now - t < window]
+    if len(_rate_counters[endpoint][client_ip]) >= max_req:
+        return True
+    _rate_counters[endpoint][client_ip].append(now)
+    return False
+
+
+def _check_auth(request: Request) -> Optional[JSONResponse]:
+    """Validate auth token from header or query param. Returns error response or None."""
+    token = request.headers.get("X-Auth-Token") or request.query_params.get("token")
+    if not token or not secrets.compare_digest(token, _AUTH_TOKEN):
+        return JSONResponse({"error": "Invalid or missing auth token"}, 401)
+    return None
+
+
+def get_auth_token() -> str:
+    """Return the current auth token (for CLI to display)."""
+    return _AUTH_TOKEN
 
 _setup_needed: Optional[bool] = None
 
@@ -89,6 +135,16 @@ def create_web_app(
     """
     app = FastAPI(title="micromech dashboard", docs_url=None, redoc_url=None)
 
+    # Security headers middleware
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
     if STATIC_DIR.exists():
@@ -98,11 +154,17 @@ def create_web_app(
     async def dashboard(request: Request):
         if _needs_setup():
             return RedirectResponse(url="/setup", status_code=302)
-        return templates.TemplateResponse(request=request, name="dashboard.html")
+        return templates.TemplateResponse(
+            request=request, name="dashboard.html",
+            context={"auth_token": _AUTH_TOKEN},
+        )
 
     @app.get("/setup", response_class=HTMLResponse)
     async def setup_page(request: Request) -> HTMLResponse:
-        return templates.TemplateResponse(request=request, name="setup.html")
+        return templates.TemplateResponse(
+            request=request, name="setup.html",
+            context={"auth_token": _AUTH_TOKEN},
+        )
 
     # --- Setup API ---
 
@@ -191,10 +253,15 @@ def create_web_app(
         If no wallet exists, creates a new one and returns address + mnemonic.
         If wallet exists but locked, unlocks it and returns address.
         """
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
         if not x_micromech_action:
             return JSONResponse(
                 {"error": "Missing X-Micromech-Action header"}, 403
             )
+        if _rate_limited("/api/setup/wallet", request.client.host if request.client else "unknown"):
+            return JSONResponse({"error": "Too many attempts. Try again later."}, 429)
 
         body = await request.json()
         password = body.get("password", "")
@@ -296,6 +363,9 @@ def create_web_app(
         Requires X-Micromech-Action header (CSRF protection).
         Only one deploy at a time (concurrency guard).
         """
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
         if not x_micromech_action:
             return JSONResponse(
                 {"error": "Missing X-Micromech-Action header"}, 403
@@ -590,9 +660,13 @@ def create_web_app(
     @app.post("/api/runtime/{action}")
     async def runtime_control(
         action: str,
+        request: Request,
         x_micromech_action: Optional[str] = Header(None),
     ) -> dict:
         """Start, stop, or restart the mech runtime."""
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
         if not x_micromech_action:
             return JSONResponse(
                 {"error": "Missing X-Micromech-Action header"}, 403
@@ -622,6 +696,9 @@ def create_web_app(
 
         Requires X-Micromech-Action header (CSRF protection).
         """
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
         if not x_micromech_action:
             return JSONResponse(
                 {"success": False, "error": "Missing X-Micromech-Action header"},

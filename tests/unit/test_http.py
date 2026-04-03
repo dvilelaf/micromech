@@ -6,6 +6,12 @@ from fastapi.testclient import TestClient
 from micromech.core.constants import STATUS_PENDING
 from micromech.core.models import MechRequest
 from micromech.runtime.http import create_app
+from micromech.web.app import get_auth_token
+
+AUTH = {
+    "X-Auth-Token": get_auth_token(),
+    "X-Micromech-Action": "test",
+}
 
 
 @pytest.fixture
@@ -52,6 +58,7 @@ class TestRequestEndpoint:
         resp = client.post(
             "/request",
             json={"prompt": "Will ETH hit 10k?", "tool": "llm"},
+            headers=AUTH,
         )
         assert resp.status_code == 202
         data = resp.json()
@@ -66,6 +73,7 @@ class TestRequestEndpoint:
         resp = client.post(
             "/request",
             json={"prompt": "test", "request_id": "custom-123"},
+            headers=AUTH,
         )
         assert resp.status_code == 202
         assert resp.json()["request_id"] == "custom-123"
@@ -76,6 +84,7 @@ class TestRequestEndpoint:
         resp = client.post(
             "/request",
             json={"prompt": "test", "sender": addr},
+            headers=AUTH,
         )
         assert resp.status_code == 202
 
@@ -83,6 +92,7 @@ class TestRequestEndpoint:
         resp = client.post(
             "/request",
             json={"prompt": "test", "sender": "bad"},
+            headers=AUTH,
         )
         assert resp.status_code == 400
 
@@ -94,16 +104,17 @@ class TestRequestEndpoint:
                 "tool": "llm",
                 "extra_params": {"model": "qwen", "temperature": 0.5},
             },
+            headers=AUTH,
         )
         assert resp.status_code == 202
         assert received_requests[0].extra_params["model"] == "qwen"
 
     def test_submit_missing_prompt(self, client: TestClient):
-        resp = client.post("/request", json={"tool": "echo"})
+        resp = client.post("/request", json={"tool": "echo"}, headers=AUTH)
         assert resp.status_code == 422  # Pydantic validation error
 
     def test_default_tool_is_echo(self, client: TestClient, received_requests: list):
-        resp = client.post("/request", json={"prompt": "test"})
+        resp = client.post("/request", json={"prompt": "test"}, headers=AUTH)
         assert resp.status_code == 202
         assert received_requests[0].tool == "echo"
 
@@ -111,12 +122,13 @@ class TestRequestEndpoint:
         resp = client.post(
             "/request",
             json={"prompt": "test", "chain": "gnosis"},
+            headers=AUTH,
         )
         assert resp.status_code == 202
         assert received_requests[0].chain == "gnosis"
 
     def test_default_chain_is_gnosis(self, client: TestClient, received_requests: list):
-        resp = client.post("/request", json={"prompt": "test"})
+        resp = client.post("/request", json={"prompt": "test"}, headers=AUTH)
         assert resp.status_code == 202
         assert received_requests[0].chain == "gnosis"
 
@@ -140,7 +152,7 @@ class TestChainValidation:
         app = create_app(on_request=on_request, get_status=get_status)
         c = TestClient(app)
 
-        resp = c.post("/request", json={"prompt": "test", "chain": "solana"})
+        resp = c.post("/request", json={"prompt": "test", "chain": "solana"}, headers=AUTH)
         assert resp.status_code == 400
         assert "solana" in resp.json()["detail"]
 
@@ -162,6 +174,6 @@ class TestChainValidation:
         app = create_app(on_request=on_request, get_status=get_status)
         c = TestClient(app)
 
-        resp = c.post("/request", json={"prompt": "test", "chain": "base"})
+        resp = c.post("/request", json={"prompt": "test", "chain": "base"}, headers=AUTH)
         assert resp.status_code == 202
         assert received[0].chain == "base"

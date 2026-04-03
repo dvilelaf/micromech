@@ -18,9 +18,14 @@ if TYPE_CHECKING:
     from micromech.runtime.metrics import MetricsCollector
 
 
+TX_RECEIPT_TIMEOUT = 120  # seconds
+
+
 def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
     """Wait for transaction receipt and return hex hash. Raises on revert."""
-    receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
+    receipt = web3.eth.wait_for_transaction_receipt(
+        tx_hash, timeout=TX_RECEIPT_TIMEOUT,
+    )
     if receipt["status"] != 1:
         msg = f"{error_prefix} transaction reverted: {tx_hash.hex()}"
         raise RuntimeError(msg)
@@ -376,6 +381,7 @@ class DeliveryManager:
         payment_data: bytes,
     ) -> str:
         """Submit deliverMarketplaceWithSignatures via signed transaction."""
+        chain_id = self.bridge.web3.eth.chain_id
         tx = contract.functions.deliverMarketplaceWithSignatures(
             requester,
             deliver_with_sigs,
@@ -387,6 +393,7 @@ class DeliveryManager:
                 "gas": 500_000,
                 "gasPrice": self.bridge.web3.eth.gas_price,
                 "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
+                "chainId": chain_id,
             }
         )
 
@@ -414,6 +421,7 @@ class DeliveryManager:
         self, contract: Any, from_addr: str, req_id_bytes: bytes, data: bytes
     ) -> str:
         """Submit via signed transaction using iwa wallet key."""
+        chain_id = self.bridge.web3.eth.chain_id
         tx = contract.functions.deliverToMarketplace(
             [req_id_bytes],
             [data],
@@ -423,6 +431,7 @@ class DeliveryManager:
                 "gas": 500_000,
                 "gasPrice": self.bridge.web3.eth.gas_price,
                 "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
+                "chainId": chain_id,
             }
         )
 

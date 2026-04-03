@@ -13,11 +13,12 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 try:
-    from fastapi import FastAPI, HTTPException
+    from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import JSONResponse
 except ImportError as e:
     raise ImportError(
-        "HTTP server requires fastapi. Install with: pip install micromech[web]"
+        "HTTP server requires fastapi. "
+        "Install with: pip install micromech[web]"
     ) from e
 
 from micromech.core.constants import validate_eth_address
@@ -70,11 +71,29 @@ def create_app(
         get_status: callable returning StatusResponse dict.
         get_result: optional callable(request_id) returning RequestRecord or None.
     """
-    app = FastAPI(title="micromech", version="0.0.1")
+    app = FastAPI(title="micromech", version="0.0.1", docs_url=None, redoc_url=None)
 
     @app.post("/request")
-    async def submit_request(payload: RequestPayload) -> JSONResponse:
+    async def submit_request(
+        request: Request, payload: RequestPayload,
+    ) -> JSONResponse:
         """Submit an off-chain request."""
+        from micromech.web.app import _check_auth, _rate_limited
+
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
+
+        csrf = request.headers.get("X-Micromech-Action")
+        if not csrf:
+            return JSONResponse(
+                {"error": "Missing X-Micromech-Action header"}, status_code=403
+            )
+
+        client_ip = request.client.host if request.client else "unknown"
+        if _rate_limited("/request", client_ip):
+            return JSONResponse({"error": "Rate limit exceeded"}, status_code=429)
+
         request_id = payload.request_id or f"http-{uuid.uuid4().hex[:12]}"
         sender = payload.sender or ""
 

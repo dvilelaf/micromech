@@ -5,9 +5,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from micromech.core.config import MicromechConfig
+from micromech.core.constants import CHAIN_DEFAULTS
 from micromech.management import MechLifecycle
 
 CHAIN_NAME = "gnosis"
+MARKETPLACE = CHAIN_DEFAULTS["gnosis"]["marketplace"]
 
 
 class TestMechLifecycleInit:
@@ -147,6 +149,7 @@ class TestCreateMech:
             "status": 1,
             "logs": [
                 {
+                    "address": MARKETPLACE,
                     "topics": [
                         bytes(32),
                         bytes.fromhex("00" * 12 + mech_addr_hex),

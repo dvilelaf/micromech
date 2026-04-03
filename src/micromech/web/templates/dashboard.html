@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
     <style>
         :root {
             --bg-color: #0c0e14;
@@ -353,6 +353,11 @@
     </div>
 
     <script>
+    const AUTH_TOKEN = '{{ auth_token }}';
+    function authHeaders(extra) {
+        return Object.assign({'X-Auth-Token': AUTH_TOKEN}, extra || {});
+    }
+
     // --- State ---
     const state = {
         events: [],
@@ -662,7 +667,7 @@
         try {
             const resp = await fetch('/api/management/' + action, {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-Micromech-Action': action},
+                headers: authHeaders({'Content-Type': 'application/json', 'X-Micromech-Action': action}),
                 body: JSON.stringify({service_key: serviceKey, chain: document.getElementById('mgmt-chain').value || 'gnosis'}),
             });
             const data = await resp.json();
@@ -792,7 +797,7 @@
         try {
             const resp = await fetch('/api/runtime/' + action, {
                 method: 'POST',
-                headers: {'X-Micromech-Action': action},
+                headers: authHeaders({'X-Micromech-Action': action}),
             });
             const data = await resp.json();
             if (data.state) updateRuntimeIndicator(data.state);

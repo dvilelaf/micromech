@@ -453,7 +453,11 @@ def web(
             else:
                 logger.warning("Runtime auto-start failed: {}", mgr.error)
 
+    from micromech.web.app import get_auth_token
+    token = get_auth_token()
     typer.echo(f"Dashboard at http://{host}:{port}")
+    typer.echo(f"Auth token: {token}")
+    typer.echo("Set MICROMECH_AUTH_TOKEN env var to use a fixed token.")
     uvicorn.run(web_app, host=host, port=port)
 
 

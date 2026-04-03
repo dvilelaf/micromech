@@ -148,16 +148,35 @@ class MechLifecycle:
                 payload,
             ).transact({"from": EthereumAddress(owner), "gas": 10_000_000})
 
-            receipt = web3.eth.wait_for_transaction_receipt(tx)
+            receipt = web3.eth.wait_for_transaction_receipt(
+                tx, timeout=120,
+            )
             if receipt["status"] != 1:
                 logger.error("Mech creation TX reverted")
                 return None
 
+            # CreateMech event signature:
+            # keccak256("CreateMech(address,uint256,uint256)")
+            CREATE_MECH_TOPIC = (
+                "0x77a90008a218c5064bde1361c8b142"
+                "3c2957f2adfe2953940cc88e2e6b15"
+                "7c49"
+            )
             for log_entry in receipt.get("logs", []):
-                if len(log_entry.get("topics", [])) >= 2:
-                    mech_addr = "0x" + log_entry["topics"][1].hex()[-40:]
-                    logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
-                    return mech_addr
+                topics = log_entry.get("topics", [])
+                if len(topics) >= 2:
+                    sig = topics[0].hex() if isinstance(topics[0], bytes) else str(topics[0])
+                    if not sig.startswith("0x"):
+                        sig = "0x" + sig
+                    # Match event sig or accept log from marketplace
+                    log_addr = log_entry.get("address", "")
+                    mkt = self.chain_config.marketplace_address
+                    is_marketplace = log_addr.lower() == mkt.lower()
+                    if sig == CREATE_MECH_TOPIC or is_marketplace:
+                        raw = topics[1].hex() if isinstance(topics[1], bytes) else str(topics[1])
+                        mech_addr = "0x" + raw[-40:]
+                        logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
+                        return mech_addr
 
             logger.warning("Mech created but address not found in logs")
             return None

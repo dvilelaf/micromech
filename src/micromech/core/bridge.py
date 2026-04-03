@@ -90,7 +90,7 @@ def get_wallet() -> Any:
     Falls back to manual construction with cached KeyStorage/password
     from the web setup wizard.
     """
-    global _cached_wallet  # noqa: PLW0603
+    global _cached_wallet, _wallet_password  # noqa: PLW0603
 
     if _cached_wallet is not None:
         return _cached_wallet
@@ -144,6 +144,10 @@ def get_wallet() -> Any:
     init_db()
 
     _cached_wallet = wallet
+
+    # Clear password from memory now that KeyStorage is initialized
+    _wallet_password = None
+
     return _cached_wallet
 
 

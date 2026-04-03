@@ -435,6 +435,11 @@
     </div>
 
     <script>
+    const AUTH_TOKEN = '{{ auth_token }}';
+    function authHeaders(extra) {
+        return Object.assign({'X-Auth-Token': AUTH_TOKEN}, extra || {});
+    }
+
     // State
     let currentStep = 1;
     let selectedChains = new Set(['gnosis']);
@@ -595,10 +600,10 @@
         try {
             const res = await fetch('/api/setup/wallet', {
                 method: 'POST',
-                headers: {
+                headers: authHeaders({
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'wallet',
-                },
+                }),
                 body: JSON.stringify({ password }),
             });
             const data = await res.json();
@@ -846,10 +851,10 @@
         try {
             const res = await fetch('/api/setup/deploy', {
                 method: 'POST',
-                headers: {
+                headers: authHeaders({
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'deploy',
-                },
+                }),
                 body: JSON.stringify({ chain: chainName })
             });
 

@@ -6,7 +6,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from micromech.core.models import MechRequest, MechResponse, RequestRecord, ToolResult
-from micromech.web.app import create_web_app
+from micromech.web.app import create_web_app, get_auth_token
+
+AUTH_TOKEN = get_auth_token()
 
 
 def _make_record(req_id: str, status: str = "pending", tool: str = "echo") -> RequestRecord:
@@ -248,7 +250,7 @@ class TestChainAPI:
 class TestManagementAPI:
     """Test the /api/management/{action} endpoint."""
 
-    CSRF = {"X-Micromech-Action": "test"}
+    CSRF = {"X-Micromech-Action": "test", "X-Auth-Token": AUTH_TOKEN}
 
     @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
@@ -363,8 +365,18 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/stake",
             json={"service_key": "svc-1"},
+            headers={"X-Auth-Token": AUTH_TOKEN},
         )
         assert resp.status_code == 403
+
+    def test_management_auth_required(self, web_client: TestClient):
+        """Requests without X-Auth-Token header are rejected."""
+        resp = web_client.post(
+            "/api/management/stake",
+            json={"service_key": "svc-1"},
+            headers={"X-Micromech-Action": "test"},
+        )
+        assert resp.status_code == 401
 
 
 class TestRecordToDict:
