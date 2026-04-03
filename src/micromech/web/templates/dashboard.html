@@ -348,6 +348,24 @@
                     </div>
                     <pre class="mgmt-result" id="mgmt-result"></pre>
                 </div>
+
+                <!-- Deploy on new chains -->
+                <div class="glass mgmt-section" id="deploy-new-section" style="margin-top:1.5rem;">
+                    <h3 style="font-size:0.95rem; color:var(--text-muted);">Deploy on new chains</h3>
+                    <p id="deploy-new-desc" style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem;">Loading...</p>
+                    <div id="deploy-new-chains" style="display:flex; flex-wrap:wrap; gap:0.5rem;"></div>
+                    <div id="deploy-new-fund" style="display:none; margin-top:1rem;">
+                        <p style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem;">
+                            Fund your wallet on the selected chains before deploying.
+                        </p>
+                        <div id="deploy-new-balances" style="font-size:0.8rem; font-family:var(--font-mono); margin-bottom:0.75rem;"></div>
+                        <button class="btn btn-primary" id="btn-deploy-new" onclick="startNewDeploy()">Deploy</button>
+                    </div>
+                    <div id="deploy-new-progress" style="display:none; margin-top:1rem;">
+                        <div id="deploy-new-log" style="font-size:0.8rem; font-family:var(--font-mono); max-height:300px; overflow-y:auto;"></div>
+                    </div>
+                    <pre class="mgmt-result" id="deploy-new-result" style="display:none;"></pre>
+                </div>
             </section>
         </main>
     </div>
@@ -691,6 +709,182 @@
         }
     }
 
+    // --- Deploy on new chains ---
+    const NATIVE_SYM = { gnosis:'xDAI', base:'ETH', ethereum:'ETH', polygon:'POL', optimism:'ETH', arbitrum:'ETH', celo:'CELO' };
+    let newDeploySelected = new Set();
+    let newDeployBalancePoll = null;
+
+    async function loadNewChainOptions() {
+        const section = document.getElementById('deploy-new-section');
+        const desc = document.getElementById('deploy-new-desc');
+        const grid = document.getElementById('deploy-new-chains');
+        try {
+            const [chainsRes, stateRes] = await Promise.all([
+                fetch('/api/setup/chains').then(r => r.json()),
+                fetch('/api/setup/state').then(r => r.json()),
+            ]);
+            const deployed = new Set(
+                Object.entries(stateRes.chains || {})
+                    .filter(([_, v]) => v.complete)
+                    .map(([k]) => k)
+            );
+            const available = chainsRes.filter(c => !deployed.has(c.name));
+            if (available.length === 0) {
+                desc.textContent = 'Your mech is deployed on all available chains.';
+                grid.style.display = 'none';
+                return;
+            }
+            desc.textContent = 'Select chains to deploy on:';
+            grid.innerHTML = '';
+            available.forEach(c => {
+                const btn = document.createElement('button');
+                btn.className = 'btn btn-secondary';
+                btn.textContent = c.name.charAt(0).toUpperCase() + c.name.slice(1);
+                btn.dataset.chain = c.name;
+                btn.style.cssText = 'padding:6px 16px; font-size:0.8rem; border-radius:6px;';
+                btn.onclick = () => toggleNewChain(c.name, btn);
+                grid.appendChild(btn);
+            });
+        } catch (e) {
+            desc.textContent = 'Failed to load chains.';
+        }
+    }
+
+    function toggleNewChain(name, btn) {
+        if (newDeploySelected.has(name)) {
+            newDeploySelected.delete(name);
+            btn.style.background = 'transparent';
+            btn.style.borderColor = 'var(--glass-border)';
+            btn.style.color = 'var(--text-muted)';
+        } else {
+            newDeploySelected.add(name);
+            btn.style.background = 'var(--primary-color)';
+            btn.style.borderColor = 'var(--primary-color)';
+            btn.style.color = 'white';
+        }
+        const fundDiv = document.getElementById('deploy-new-fund');
+        if (newDeploySelected.size > 0) {
+            fundDiv.style.display = 'block';
+            startBalancePolling();
+        } else {
+            fundDiv.style.display = 'none';
+            stopBalancePolling();
+        }
+    }
+
+    function startBalancePolling() {
+        stopBalancePolling();
+        checkNewChainBalances();
+        newDeployBalancePoll = setInterval(checkNewChainBalances, 5000);
+    }
+    function stopBalancePolling() {
+        if (newDeployBalancePoll) { clearInterval(newDeployBalancePoll); newDeployBalancePoll = null; }
+    }
+
+    async function checkNewChainBalances() {
+        const el = document.getElementById('deploy-new-balances');
+        const lines = [];
+        let allOk = true;
+        for (const chain of newDeploySelected) {
+            try {
+                const r = await fetch('/api/setup/balance?chain=' + chain);
+                const d = await r.json();
+                const sym = NATIVE_SYM[chain] || 'Native';
+                const nOk = d.native_sufficient ? '✓' : '✗';
+                const oOk = d.olas_sufficient ? '✓' : '✗';
+                lines.push(`${chain}: ${nOk} ${(d.native_balance||0).toFixed(4)} ${sym}  ${oOk} ${(d.olas_balance||0).toLocaleString()} OLAS`);
+                if (!d.sufficient) allOk = false;
+            } catch (e) {
+                lines.push(chain + ': error checking balance');
+                allOk = false;
+            }
+        }
+        el.textContent = lines.join('\n');
+        document.getElementById('btn-deploy-new').disabled = !allOk;
+        if (!allOk) {
+            document.getElementById('btn-deploy-new').textContent = 'Waiting for funds...';
+        } else {
+            document.getElementById('btn-deploy-new').textContent = 'Deploy on ' + newDeploySelected.size + ' chain(s)';
+            stopBalancePolling();
+        }
+    }
+
+    async function startNewDeploy() {
+        stopBalancePolling();
+        const chains = [...newDeploySelected];
+        const fundDiv = document.getElementById('deploy-new-fund');
+        const progress = document.getElementById('deploy-new-progress');
+        const log = document.getElementById('deploy-new-log');
+        const result = document.getElementById('deploy-new-result');
+        fundDiv.style.display = 'none';
+        progress.style.display = 'block';
+        result.style.display = 'none';
+        log.innerHTML = '';
+
+        for (let i = 0; i < chains.length; i++) {
+            const chain = chains[i];
+            const prefix = chains.length > 1 ? `[${i+1}/${chains.length} ${chain}] ` : '';
+            addDeployLog(log, prefix + 'Starting deployment...');
+
+            try {
+                const res = await fetch('/api/setup/deploy', {
+                    method: 'POST',
+                    headers: authHeaders({'Content-Type':'application/json','X-Micromech-Action':'deploy'}),
+                    body: JSON.stringify({ chain })
+                });
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let chainOk = false;
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop();
+                    for (const line of lines) {
+                        if (!line.startsWith('data: ')) continue;
+                        try {
+                            const evt = JSON.parse(line.slice(6));
+                            if (evt.step === 'done') {
+                                addDeployLog(log, prefix + 'Deployed successfully!', 'var(--success)');
+                                chainOk = true;
+                            } else if (evt.step === 'error') {
+                                addDeployLog(log, prefix + 'Failed: ' + (evt.message || 'unknown'), 'var(--error)');
+                                result.style.display = 'block';
+                                result.style.color = 'var(--error)';
+                                result.textContent = 'Deployment stopped. Fix the issue and retry.';
+                                return;
+                            } else if (evt.message) {
+                                const color = evt.success === false ? 'var(--error)' : 'var(--text-muted)';
+                                addDeployLog(log, prefix + evt.message, color);
+                            }
+                        } catch (e) { /* skip */ }
+                    }
+                }
+                if (!chainOk) {
+                    addDeployLog(log, prefix + 'Stream ended without completion.', 'var(--error)');
+                }
+            } catch (e) {
+                addDeployLog(log, prefix + 'Error: ' + e.message, 'var(--error)');
+                return;
+            }
+        }
+        result.style.display = 'block';
+        result.style.color = 'var(--success)';
+        result.textContent = 'All ' + chains.length + ' chain(s) deployed! Reload to see updated status.';
+        // Refresh chain options
+        setTimeout(() => loadNewChainOptions(), 2000);
+    }
+
+    function addDeployLog(container, msg, color) {
+        const line = document.createElement('div');
+        line.style.cssText = 'padding:2px 0; color:' + (color || 'var(--text-color)');
+        line.textContent = msg;
+        container.appendChild(line);
+        container.scrollTop = container.scrollHeight;
+    }
+
     // --- Helpers ---
     function setText(id, val) { document.getElementById(id).textContent = val; }
     function escapeHtml(s) {
@@ -817,6 +1011,7 @@
     initChannelChart();
     loadRecentRequests();
     connectSSE();
+    loadNewChainOptions();
 
     // Refresh recent requests every 30s
     setInterval(loadRecentRequests, 30000);
