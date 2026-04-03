@@ -172,7 +172,7 @@ def create_web_app(
         )
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' https://cdn.jsdelivr.net/npm/chart.js@4/; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/chart.js@4/; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; "
             "connect-src 'self'; "
