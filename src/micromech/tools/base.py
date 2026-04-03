@@ -61,14 +61,19 @@ class Tool:
         self._run_fn = run_fn
         self.ALLOWED_TOOLS = allowed_tools or [metadata.id]
 
+    # Reserved kwargs that must not be overridden by user-supplied extra_params
+    _RESERVED_KWARGS = frozenset({"prompt", "tool", "counter_callback"})
+
     async def execute(self, prompt: str, **kwargs: Any) -> str:
         """Execute the tool asynchronously (offloaded to thread pool).
 
         Catches all exceptions from the tool — a broken tool must never crash the mech.
         """
+        # Strip reserved keys to prevent parameter injection
+        safe_kwargs = {k: v for k, v in kwargs.items() if k not in self._RESERVED_KWARGS}
         try:
             result = await asyncio.to_thread(
-                self._run_fn, prompt=prompt, tool=self.metadata.id, **kwargs
+                self._run_fn, prompt=prompt, tool=self.metadata.id, **safe_kwargs
             )
         except Exception as e:
             raise ToolExecutionError(self.metadata.id, str(e)) from e

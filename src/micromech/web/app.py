@@ -53,12 +53,17 @@ def _rate_limited(endpoint: str, client_ip: str) -> bool:
     max_req, window = _RATE_LIMITS[endpoint]
     now = time.time()
     bucket = _rate_counters[endpoint]
-    # Prune old entries for this IP
-    bucket[client_ip] = [t for t in bucket.get(client_ip, []) if now - t < window]
-    # Evict oldest IPs if we exceed the cap
-    if len(bucket) > _MAX_TRACKED_IPS:
-        oldest_ip = min(bucket, key=lambda ip: bucket[ip][-1] if bucket[ip] else 0)
+    # Evict oldest IPs if we exceed the cap (before adding new ones)
+    while len(bucket) >= _MAX_TRACKED_IPS and client_ip not in bucket:
+        oldest_ip = min(
+            bucket,
+            key=lambda ip: bucket[ip][-1] if bucket[ip] else 0,
+        )
         del bucket[oldest_ip]
+    # Prune old entries for this IP
+    bucket[client_ip] = [
+        t for t in bucket.get(client_ip, []) if now - t < window
+    ]
     if len(bucket[client_ip]) >= max_req:
         return True
     bucket[client_ip].append(now)
@@ -152,7 +157,7 @@ def create_web_app(
         )
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' https://cdn.jsdelivr.net; "
+            "script-src 'self' https://cdn.jsdelivr.net/npm/chart.js@4/; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; "
             "connect-src 'self'; "
