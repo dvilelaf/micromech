@@ -43,7 +43,7 @@ test-anvil:
     trap "kill $ANVIL_PID 2>/dev/null" EXIT
     sleep 3
     echo "Anvil running (PID $ANVIL_PID)"
-    ANVIL_URL=http://localhost:18545 uv run pytest tests/integration/test_anvil_e2e.py -v -s
+    ANVIL_URL=http://localhost:18545 chainlist_enrichment=false uv run pytest tests/integration/test_anvil_e2e.py -v -s
     echo "Anvil E2E tests passed"
 
 # Run multi-chain E2E tests (forks Gnosis, Base, Ethereum, Polygon)
@@ -96,6 +96,7 @@ test-multichain:
     ANVIL_OPTIMISM=http://localhost:18549 \
     ANVIL_ARBITRUM=http://localhost:18550 \
     ANVIL_CELO=http://localhost:18551 \
+    chainlist_enrichment=false \
     uv run pytest tests/integration/test_multichain_e2e.py -v -s
 
     echo "Multi-chain E2E tests passed"
@@ -200,7 +201,7 @@ run-anvil:
         exit 1
     fi
     echo "Detected forks:$ENV_VARS"
-    env $ENV_VARS testing=true uv run micromech run
+    env $ENV_VARS testing=true chainlist_enrichment=false uv run micromech run
 
 # Run web dashboard against Anvil forks (auto-detects running forks)
 web-anvil port="8000":
@@ -222,7 +223,7 @@ web-anvil port="8000":
     fi
     echo "Detected forks:$ENV_VARS"
     echo "Open http://localhost:{{port}}/setup"
-    env $ENV_VARS testing=true uv run micromech web --port {{port}}
+    env $ENV_VARS testing=true chainlist_enrichment=false uv run micromech web --port {{port}}
 
 # Run CLI init wizard against Anvil fork
 init-anvil chain="gnosis":
@@ -238,7 +239,7 @@ init-anvil chain="gnosis":
             ENV_VARS="$ENV_VARS ${c}_rpc=http://localhost:$p"
         fi
     done
-    env $ENV_VARS testing=true uv run micromech init --chain {{chain}}
+    env $ENV_VARS testing=true chainlist_enrichment=false uv run micromech init --chain {{chain}}
 
 # Build package
 build:
