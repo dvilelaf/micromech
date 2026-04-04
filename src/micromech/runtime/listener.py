@@ -130,14 +130,26 @@ class EventListener:
             self._polled_to_block = None
 
     def _fetch_events(self, from_block: int, to_block: int) -> list[MechRequest]:
-        """Fetch Request events from marketplace contract (sync, runs in thread)."""
+        """Fetch Request events from marketplace contract (sync, runs in thread).
+
+        Filters by priorityMech on-chain (indexed param) so only requests
+        directed at this mech are returned. Falls back to unfiltered if
+        mech_address is not yet configured.
+        """
         mech_addr = self.chain_config.mech_address
 
         try:
             contract = self._get_marketplace_contract()
+            # Filter at RPC level — priorityMech is indexed
+            filter_args: dict = {}
+            if mech_addr:
+                filter_args["priorityMech"] = self.bridge.web3.to_checksum_address(
+                    mech_addr,
+                )
             event_filter = contract.events.MarketplaceRequest.create_filter(
                 from_block=from_block,
                 to_block=to_block,
+                argument_filters=filter_args,
             )
             logs = self.bridge.with_retry(lambda: event_filter.get_all_entries())
         except Exception as e:
