@@ -156,11 +156,11 @@ class MechLifecycle:
                 return None
 
             # CreateMech event signature:
-            # keccak256("CreateMech(address,uint256,uint256)")
+            # keccak256("CreateMech(address,uint256,address)")
             CREATE_MECH_TOPIC = (
-                "0x67a2e45041c70013518c5b9b849a69"
-                "44a6c17ff44d66be1c707020460ecb"
-                "d1db"
+                "0x46e1ca45c09520471c4394cc3f2207"
+                "5442ca6fe5ab4850962e1e19c4dafd"
+                "4e10"
             )
             mkt = self.chain_config.marketplace_address
             for log_entry in receipt.get("logs", []):

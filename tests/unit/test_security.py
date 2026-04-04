@@ -422,8 +422,8 @@ class TestDeliveryChainId:
 class TestCreateMechEventMatching:
     MARKETPLACE = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
     CORRECT_TOPIC = bytes.fromhex(
-        "67a2e45041c70013518c5b9b849a6944"
-        "a6c17ff44d66be1c707020460ecbd1db"
+        "46e1ca45c09520471c4394cc3f220754"
+        "42ca6fe5ab4850962e1e19c4dafd4e10"
     )
 
     @patch("micromech.core.bridge.get_wallet")
