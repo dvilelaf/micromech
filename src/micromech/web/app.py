@@ -221,7 +221,9 @@ def create_web_app(
         try:
             import micromech.core.bridge as _bridge
 
-            # Try cached key_storage first (set by POST /api/setup/wallet)
+            # Only report cached wallet (already unlocked in this session).
+            # Never auto-unlock via Wallet() — user must confirm password
+            # through POST /api/setup/wallet first.
             if _bridge._cached_key_storage is not None:
                 wallet_exists = True
                 wallet_address = str(
@@ -231,13 +233,8 @@ def create_web_app(
                 wallet_exists = True
                 wallet_address = _bridge._cached_wallet.master_account.address
             else:
-                # Try loading wallet (needs password in env)
-                from iwa.core.wallet import Wallet
-                _bridge._cached_wallet = Wallet()
-                wallet_exists = True
-                wallet_address = _bridge._cached_wallet.master_account.address
+                needs_password = True
         except Exception:
-            # Wallet() failed — user needs to provide password via web form.
             needs_password = True
 
         # Check if wallet file exists on disk (to distinguish create vs unlock)
