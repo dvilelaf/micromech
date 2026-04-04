@@ -13,15 +13,30 @@ from loguru import logger
 from micromech.core.config import ChainConfig, MicromechConfig
 
 
-def _get_service_manager(config: MicromechConfig, service_key: Optional[str] = None) -> Any:
-    """Get an iwa ServiceManager instance."""
+def _get_service_manager(
+    config: MicromechConfig,
+    service_key: Optional[str] = None,
+    chain_name: Optional[str] = None,
+) -> Any:
+    """Get an iwa ServiceManager instance.
+
+    Args:
+        service_key: "chain:id" string for existing services.
+        chain_name: Target chain. When creating a new service (no service_key),
+                    this ensures contracts are initialized for the right chain.
+    """
     try:
         from iwa.plugins.olas.service_manager import ServiceManager
 
         from micromech.core.bridge import get_wallet
 
         wallet = get_wallet()
-        return ServiceManager(wallet, service_key=service_key)
+        mgr = ServiceManager(wallet, service_key=service_key)
+        # Ensure contracts are initialized for the target chain
+        # (ServiceManager defaults to gnosis if no service_key is given)
+        if chain_name and not service_key:
+            mgr._init_contracts(chain_name)
+        return mgr
     except ImportError as e:
         msg = (
             "iwa is required for management operations. "
@@ -56,7 +71,7 @@ class MechLifecycle:
         """
         from web3 import Web3
 
-        mgr = _get_service_manager(self.config)
+        mgr = _get_service_manager(self.config, chain_name=self.chain_name)
         try:
             bond_wei = Web3.to_wei(bond_olas, "ether")
             service_id = mgr.create(
