@@ -161,25 +161,11 @@ def get_wallet() -> Any:
     return _cached_wallet
 
 
-def _get_raw_web3(ci: Any) -> Any:
-    """Get a raw Web3 instance from the chain interface's primary RPC.
-
-    iwa wraps web3.eth with a rate limiter that intercepts all calls and
-    may route them to a different RPC than the Anvil fork. For balance
-    checks we need to hit the primary RPC directly.
-    """
-    from web3 import Web3
-
-    rpc_url = ci.web3.provider.endpoint_uri
-    return Web3(Web3.HTTPProvider(rpc_url))
-
-
 def check_balances(chain_name: str) -> tuple[float, float]:
     """Check native token and OLAS balances for the wallet on a chain.
 
     Returns (native_balance, olas_balance) in whole units.
-    Uses a raw Web3 instance to bypass iwa's RPC rotation layer, ensuring
-    Anvil fork state is read correctly.
+    All RPC calls go through iwa's ChainInterface.
     """
     global _cached_wallet, _cached_interfaces  # noqa: PLW0603
 
@@ -206,9 +192,9 @@ def check_balances(chain_name: str) -> tuple[float, float]:
         if not ci:
             return 0.0, 0.0
 
-        # Raw web3 — bypasses iwa rate limiter to hit primary RPC directly
-        w3 = _get_raw_web3(ci)
-        native_wei = w3.eth.get_balance(address)
+        native_wei = ci.with_retry(
+            lambda: ci.web3.eth.get_balance(address),
+        )
         native = native_wei / 1e18
 
         # Get OLAS balance
@@ -226,11 +212,12 @@ def check_balances(chain_name: str) -> tuple[float, float]:
                         "type": "function",
                     }
                 ]
-                contract = w3.eth.contract(
+                contract = ci.web3.eth.contract(
                     address=str(olas_addr), abi=erc20_abi
                 )
-                raw = contract.functions.balanceOf(address).call()
-                olas_balance = raw / 1e18
+                raw = ci.with_retry(
+                    lambda: contract.functions.balanceOf(address).call(),
+                )
         except Exception:
             logger.debug("Failed to check OLAS balance on {}", chain_name)
 

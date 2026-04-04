@@ -649,3 +649,47 @@ class TestSignatureValidation:
             headers=AUTH_HEADERS,
         )
         assert resp.status_code == 202
+
+
+# ============================================================
+# No direct web3 RPC usage — all calls must go through iwa
+# ============================================================
+
+
+class TestNoDirectWeb3:
+    """Ensure micromech source never creates Web3 instances or calls web3.eth directly.
+
+    web3.to_wei / web3.keccak (pure utilities) are allowed.
+    Web3(HTTPProvider(...)) and web3.eth.* bypass iwa's RPC rotation.
+    """
+
+    def test_no_web3_http_provider_in_src(self):
+        """No file in src/ creates a Web3(HTTPProvider(...)) instance."""
+        import pathlib
+
+        src = pathlib.Path("src/micromech")
+        violations = []
+        for f in src.rglob("*.py"):
+            text = f.read_text()
+            if "HTTPProvider" in text:
+                violations.append(str(f))
+        assert violations == [], f"Direct Web3 HTTPProvider in: {violations}"
+
+    def test_no_standalone_web3_instances(self):
+        """No file creates standalone Web3 instances (bypassing iwa).
+
+        Using bridge.web3 or ci.web3 is fine — those come from iwa.
+        Standalone `Web3(...)` constructor calls are forbidden.
+        """
+        import pathlib
+        import re
+
+        src = pathlib.Path("src/micromech")
+        # Match Web3( constructor calls, but not Web3.to_wei/keccak (utilities)
+        pattern = re.compile(r"Web3\(\s*Web3\.HTTP")
+        violations = []
+        for f in src.rglob("*.py"):
+            text = f.read_text()
+            if pattern.search(text):
+                violations.append(str(f))
+        assert violations == [], f"Standalone Web3 instances: {violations}"
