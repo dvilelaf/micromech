@@ -683,6 +683,92 @@ def create_web_app(
             logger.exception("Staking status check failed")
             return {"error": "Staking status check failed"}
 
+    @app.get("/api/karma")
+    async def karma_status(chain: Optional[str] = None) -> dict:
+        """Get mech karma and delivery counts for configured chains."""
+        def _get_karma() -> dict:
+            from micromech.core.bridge import IwaBridge
+            from micromech.runtime.contracts import (
+                KARMA_ABI,
+                MARKETPLACE_KARMA_ABI,
+                load_marketplace_abi,
+            )
+
+            # Minimal ABI for delivery count query
+            delivery_count_abi = [{
+                "inputs": [{"name": "", "type": "address"}],
+                "name": "mapMechServiceDeliveryCounts",
+                "outputs": [{"name": "", "type": "uint256"}],
+                "stateMutability": "view",
+                "type": "function",
+            }]
+
+            config = MicromechConfig.load()
+            results = {}
+            chains_to_check = (
+                {chain: config.chains[chain]}
+                if chain and chain in config.chains
+                else config.enabled_chains
+            )
+            for name, cfg in chains_to_check.items():
+                if not cfg.mech_address:
+                    results[name] = {"karma": None, "error": "no mech address"}
+                    continue
+                try:
+                    bridge = IwaBridge(chain_name=name)
+                    w3 = bridge.web3
+
+                    marketplace_abi = (
+                        load_marketplace_abi()
+                        + MARKETPLACE_KARMA_ABI
+                        + delivery_count_abi
+                    )
+                    marketplace = w3.eth.contract(
+                        address=cfg.marketplace_address,
+                        abi=marketplace_abi,
+                    )
+
+                    # Get karma contract address and query mech karma
+                    karma_addr = bridge.with_retry(
+                        lambda: marketplace.functions.karma().call()
+                    )
+                    karma_contract = w3.eth.contract(
+                        address=karma_addr, abi=KARMA_ABI,
+                    )
+                    mech_karma = bridge.with_retry(
+                        lambda: karma_contract.functions.mapMechKarma(
+                            cfg.mech_address
+                        ).call()
+                    )
+
+                    # Get delivery count (uses multisig address)
+                    deliveries = 0
+                    if cfg.multisig_address:
+                        deliveries = bridge.with_retry(
+                            lambda: marketplace.functions.mapMechServiceDeliveryCounts(
+                                cfg.multisig_address
+                            ).call()
+                        )
+
+                    # Timeouts = deliveries - karma (karma = deliveries - penalties)
+                    timeouts = max(0, deliveries - mech_karma)
+
+                    results[name] = {
+                        "karma": mech_karma,
+                        "deliveries": deliveries,
+                        "timeouts": timeouts,
+                    }
+                except Exception as e:
+                    logger.warning("Karma check failed for {}: {}", name, e)
+                    results[name] = {"karma": None, "error": str(e)}
+            return results
+
+        try:
+            return await asyncio.to_thread(_get_karma)
+        except Exception:
+            logger.exception("Karma check failed")
+            return {"error": "Karma check failed"}
+
     @app.get("/api/health")
     async def health_check() -> dict:
         """Health check with per-chain RPC status."""

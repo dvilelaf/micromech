@@ -128,6 +128,38 @@ except ImportError:
         "gnosis": "0x0598081D48FB80B0A7E52FAD2905AE9beCd6fC69",
     }
 
+# Karma contract — minimal ABI for reading mech reputation
+KARMA_ABI = [
+    {
+        "inputs": [{"internalType": "address", "name": "", "type": "address"}],
+        "name": "mapMechKarma",
+        "outputs": [{"internalType": "int256", "name": "", "type": "int256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"internalType": "address", "name": "", "type": "address"},
+            {"internalType": "address", "name": "", "type": "address"},
+        ],
+        "name": "mapRequesterMechKarma",
+        "outputs": [{"internalType": "int256", "name": "", "type": "int256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+]
+
+# Marketplace karma() view — returns the Karma contract address
+MARKETPLACE_KARMA_ABI = [
+    {
+        "inputs": [],
+        "name": "karma",
+        "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+]
+
 COMPLEMENTARY_SERVICE_METADATA_ABI = [
     {
         "inputs": [

@@ -248,6 +248,11 @@
                         <div class="metric-value" id="m-uptime">0m</div>
                         <div class="metric-label">Uptime</div>
                     </div>
+                    <div class="glass metric-card" id="karma-card">
+                        <div class="metric-value" id="m-karma" style="font-size:1.4rem;">-</div>
+                        <div class="metric-label">Reputation</div>
+                        <div id="karma-detail" style="font-size:0.7rem;color:var(--text-muted);margin-top:0.25rem;display:none;"></div>
+                    </div>
                 </div>
 
                 <div class="charts-grid">
@@ -347,6 +352,14 @@
                         <button class="btn btn-secondary" onclick="mgmtAction('status')">Status</button>
                     </div>
                     <pre class="mgmt-result" id="mgmt-result"></pre>
+                </div>
+
+                <!-- Reputation -->
+                <div class="glass mgmt-section" id="karma-section" style="margin-top:1.5rem;">
+                    <h3 style="font-size:0.95rem; color:var(--text-muted);">Reputation</h3>
+                    <div id="karma-breakdown">
+                        <span style="color:var(--text-muted); font-size:0.85rem;">Loading reputation data...</span>
+                    </div>
                 </div>
 
                 <!-- Deploy on new chains -->
@@ -1007,16 +1020,123 @@
         }
     }
 
+    // --- Reputation ---
+    function reputationLabel(deliveries, timeouts) {
+        // Returns {text, color, icon} for human-readable reputation
+        if (deliveries === 0) return {text: 'No activity yet', color: 'var(--text-muted)', icon: '\u2014'};
+        const reliability = (deliveries - timeouts) / deliveries;
+        if (reliability >= 0.99) return {text: 'Excellent', color: 'var(--success)', icon: '\u2605'};
+        if (reliability >= 0.95) return {text: 'Good', color: 'var(--success)', icon: '\u2605'};
+        if (reliability >= 0.90) return {text: 'Fair', color: 'var(--warning)', icon: '\u25CB'};
+        if (reliability >= 0.80) return {text: 'Needs attention', color: 'var(--warning)', icon: '\u25CB'};
+        return {text: 'Poor', color: 'var(--error)', icon: '\u25CF'};
+    }
+
+    async function loadKarma() {
+        try {
+            const r = await fetch('/api/karma' + chainQueryPrefix());
+            const data = await r.json();
+            if (data.error) {
+                setText('m-karma', '-');
+                document.getElementById('karma-detail').style.display = 'none';
+                return;
+            }
+
+            let totalDeliveries = 0, totalTimeouts = 0, found = false;
+            const rows = [];
+
+            for (const chain in data) {
+                const d = data[chain];
+                if (d.karma === null || d.karma === undefined) continue;
+                found = true;
+                totalDeliveries += d.deliveries || 0;
+                totalTimeouts += d.timeouts || 0;
+                rows.push({chain, deliveries: d.deliveries || 0, timeouts: d.timeouts || 0});
+            }
+
+            // Overview card — show human label instead of raw number
+            const el = document.getElementById('m-karma');
+            const detail = document.getElementById('karma-detail');
+            if (!found) {
+                el.textContent = '-';
+                detail.style.display = 'none';
+                return;
+            }
+
+            const rep = reputationLabel(totalDeliveries, totalTimeouts);
+            el.textContent = rep.icon + ' ' + rep.text;
+            el.style.color = rep.color;
+            el.className = 'metric-value';
+
+            if (totalDeliveries > 0) {
+                const pct = ((totalDeliveries - totalTimeouts) / totalDeliveries * 100).toFixed(1);
+                detail.style.display = 'block';
+                detail.textContent = pct + '% reliability';
+            } else {
+                detail.style.display = 'none';
+            }
+
+            // Management tab — detailed breakdown per chain
+            const breakdown = document.getElementById('karma-breakdown');
+            if (!found) {
+                breakdown.innerHTML = '<span style="color:var(--text-muted)">No reputation data yet</span>';
+                return;
+            }
+
+            let html = '';
+            for (const row of rows) {
+                const r = reputationLabel(row.deliveries, row.timeouts);
+                const pct = row.deliveries > 0 ? ((row.deliveries - row.timeouts) / row.deliveries * 100).toFixed(1) + '%' : '-';
+
+                html += `<div style="display:flex;align-items:center;gap:1rem;padding:0.75rem 0;border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <div style="min-width:80px;font-size:0.85rem;color:var(--text-muted);text-transform:capitalize;">${escapeHtml(row.chain)}</div>
+                    <div style="flex:1;">
+                        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.35rem;">
+                            <span style="color:${r.color};font-weight:600;font-size:0.9rem;">${r.icon} ${r.text}</span>
+                            <span style="color:var(--text-muted);font-size:0.75rem;">${pct} reliability</span>
+                        </div>
+                        <div style="background:rgba(255,255,255,0.05);border-radius:4px;height:6px;overflow:hidden;">
+                            <div style="height:100%;border-radius:4px;background:${r.color};width:${row.deliveries > 0 ? pct : '0%'};transition:width 0.5s;"></div>
+                        </div>
+                    </div>
+                    <div style="text-align:right;min-width:100px;">
+                        <div style="font-family:var(--font-mono);font-size:0.85rem;">${row.deliveries.toLocaleString()} delivered</div>
+                        ${row.timeouts > 0 ? `<div style="font-family:var(--font-mono);font-size:0.75rem;color:var(--error);">${row.timeouts} missed</div>` : ''}
+                    </div>
+                </div>`;
+            }
+
+            if (rows.length > 1) {
+                const totalR = reputationLabel(totalDeliveries, totalTimeouts);
+                const totalPct = totalDeliveries > 0 ? ((totalDeliveries - totalTimeouts) / totalDeliveries * 100).toFixed(1) + '%' : '-';
+                html += `<div style="display:flex;align-items:center;gap:1rem;padding:0.75rem 0;font-weight:600;">
+                    <div style="min-width:80px;font-size:0.85rem;color:var(--text-muted);">Overall</div>
+                    <div style="flex:1;display:flex;align-items:center;gap:0.5rem;">
+                        <span style="color:${totalR.color};font-size:0.9rem;">${totalR.icon} ${totalR.text}</span>
+                        <span style="color:var(--text-muted);font-size:0.75rem;">${totalPct} reliability</span>
+                    </div>
+                    <div style="text-align:right;min-width:100px;">
+                        <div style="font-family:var(--font-mono);font-size:0.85rem;">${totalDeliveries.toLocaleString()} total</div>
+                    </div>
+                </div>`;
+            }
+
+            breakdown.innerHTML = html;
+        } catch (e) { /* silent */ }
+    }
+
     // --- Init ---
     loadChains();
     initQueueChart();
     initChannelChart();
     loadRecentRequests();
+    loadKarma();
     connectSSE();
     loadNewChainOptions();
 
-    // Refresh recent requests every 30s
+    // Refresh recent requests every 30s, karma every 60s
     setInterval(loadRecentRequests, 30000);
+    setInterval(loadKarma, 60000);
     </script>
 </body>
 </html>
