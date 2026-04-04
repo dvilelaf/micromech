@@ -84,11 +84,15 @@ class ToolExecutor:
                 self._metrics.record_execution_done(
                     req_id, tool.metadata.id, elapsed, chain=request.chain
                 )
+            prompt_short = (request.prompt[:80] + "...") if len(request.prompt) > 80 else request.prompt
+            result_short = (result.output[:80] + "...") if result.output and len(result.output) > 80 else (result.output or "")
             logger.info(
-                "Executed {} with tool {} in {:.2f}s",
+                "Executed {} with tool {} in {:.2f}s | prompt={} | result={}",
                 req_id,
                 tool.metadata.id,
                 elapsed,
+                prompt_short,
+                result_short,
             )
             return result
 

@@ -137,10 +137,13 @@ class DeliveryManager:
                         self._metrics.record_delivery(
                             record.request.request_id, chain=self._chain_name
                         )
+                    prompt_short = record.request.prompt[:60] if record.request.prompt else ""
                     logger.info(
-                        "Delivered {} (tx: {})",
-                        record.request.request_id,
+                        "Delivered {} tool={} tx={} prompt={}",
+                        record.request.request_id[:16] + "...",
+                        record.request.tool,
                         tx_hash[:18] + "...",
+                        prompt_short,
                     )
             except Exception as e:
                 logger.error(

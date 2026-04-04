@@ -89,6 +89,13 @@ class EventListener:
                     from_block,
                     to_block,
                 )
+                for req in resolved:
+                    logger.info(
+                        "  Request {} tool={} prompt={}",
+                        req.request_id[:16] + "...",
+                        req.tool or "(ipfs)",
+                        (req.prompt[:60] + "...") if len(req.prompt) > 60 else req.prompt or "(pending)",
+                    )
             return resolved
 
         except Exception as e:
