@@ -93,3 +93,11 @@ class ToolRegistry:
             description="Prediction market analysis using local LLM.",
             timeout=120,
         )
+
+        self._load_tool_package(
+            "micromech.tools.gemma4_api_tool.gemma4_api_tool",
+            "gemma4-api",
+            name="Gemma 4 API",
+            description="Gemma 4 LLM via Google AI Studio API.",
+            timeout=60,
+        )
