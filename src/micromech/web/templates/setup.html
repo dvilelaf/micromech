@@ -359,16 +359,7 @@
             <div class="step" id="step-4">
                 <h2>Tools</h2>
                 <p>Your mech will use these tools to respond to on-chain requests.</p>
-                <div style="margin-bottom: 1rem;">
-                    <div class="balance-row">
-                        <span>echo</span>
-                        <span style="color: var(--success);">enabled</span>
-                    </div>
-                    <div class="balance-row">
-                        <span>llm (Qwen 0.5B, CPU)</span>
-                        <span style="color: var(--success);">enabled</span>
-                    </div>
-                </div>
+                <div id="tools-list" style="margin-bottom: 1rem;"></div>
                 <p style="font-size: 0.8rem;">Edit <code style="font-family: var(--font-mono);">~/.micromech/config.yaml</code> to customize tools later.</p>
                 <div class="btn-row">
                     <button class="btn btn-primary" onclick="goStep(3)">Back</button>
@@ -790,6 +781,30 @@
         }
     }
 
+    // --- Step 4: Tools (dynamic) ---
+    async function loadTools() {
+        const container = document.getElementById('tools-list');
+        try {
+            const res = await fetch('/api/tools');
+            const tools = await res.json();
+            container.innerHTML = '';
+            if (tools.length === 0) {
+                container.innerHTML = '<p style="color:var(--text-muted);">No tools loaded.</p>';
+                return;
+            }
+            tools.forEach(t => {
+                const row = document.createElement('div');
+                row.className = 'balance-row';
+                row.innerHTML = '<span>' + (t.id || 'unknown') +
+                    (t.version ? ' <span style="color:var(--text-muted);font-size:0.75rem;">v' + t.version + '</span>' : '') +
+                    '</span><span style="color:var(--success);">enabled</span>';
+                container.appendChild(row);
+            });
+        } catch (e) {
+            container.innerHTML = '<p style="color:var(--text-muted);">Failed to load tools.</p>';
+        }
+    }
+
     // --- Step 5: Deploy ---
     let lastRunningStep = 0;
     let deployChainIndex = 0;
@@ -1007,7 +1022,7 @@
     // --- Init ---
     document.getElementById('btn-wallet-next').onclick = () => goStep(2);
     document.getElementById('btn-chain-next').onclick = () => goStep(3);
-    document.getElementById('btn-fund-next').onclick = () => goStep(4);
+    document.getElementById('btn-fund-next').onclick = () => { loadTools(); goStep(4); };
 
     goStep(1);
     checkWallet();

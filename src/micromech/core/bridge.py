@@ -115,10 +115,10 @@ def get_wallet() -> Any:
     except (AttributeError, TypeError):
         logger.debug("Wallet() failed, falling back to manual construction")
 
-    # Fall back to manual construction with cached password
+    # Fall back to manual construction with cached key_storage or password
     logger.debug("get_wallet fallback: _wallet_password={}, _cached_key_storage={}",
                  bool(_wallet_password), _cached_key_storage is not None)
-    if not _wallet_password:
+    if not _cached_key_storage and not _wallet_password:
         msg = "No wallet password available. Provide wallet_password env var or use the web wizard."
         raise RuntimeError(msg)
 
