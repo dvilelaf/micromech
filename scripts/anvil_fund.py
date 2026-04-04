@@ -117,9 +117,13 @@ def fund_chain(address: str, chain_name: str, chain_cfg: dict) -> bool:
         "jsonrpc": "2.0", "method": "eth_call",
         "params": [{"to": olas, "data": data}, "latest"], "id": 3,
     })
-    bal = int(r.json()["result"], 16) / 1e18
+    resp = r.json()
+    if "result" in resp:
+        bal = int(resp["result"], 16) / 1e18
+        print(f"  {chain_name}: {sym} funded + {bal:,.0f} OLAS")
+    else:
+        print(f"  {chain_name}: {sym} funded + OLAS verify failed (wrong slot?)")
 
-    print(f"  {chain_name}: {sym} funded + {bal:,.0f} OLAS")
     return True
 
 
