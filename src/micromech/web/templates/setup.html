@@ -342,24 +342,12 @@
             <!-- Step 3: Fund Wallet -->
             <div class="step" id="step-3">
                 <h2>Fund Your Wallet</h2>
-                <p>Send the following to your wallet address:</p>
-                <div style="margin-bottom: 1rem; padding: 0.75rem; background: rgba(0,210,255,0.08); border-radius: 8px; font-size: 0.9rem;">
-                    <span id="fund-requirements">~0.1 xDAI (gas) + 10,000 OLAS (staking bond)</span>
-                </div>
+                <p>Send funds to your wallet on each selected chain:</p>
                 <div class="address-box">
                     <span id="fund-address">...</span>
                     <button class="copy-btn" onclick="copyAddress()">Copy</button>
                 </div>
-                <div id="balance-display">
-                    <div class="balance-row">
-                        <span class="balance-label" id="native-label">Native</span>
-                        <span class="balance-value balance-waiting" id="native-bal">checking...</span>
-                    </div>
-                    <div class="balance-row">
-                        <span class="balance-label">OLAS</span>
-                        <span class="balance-value balance-waiting" id="olas-bal">checking...</span>
-                    </div>
-                </div>
+                <div id="balance-display" style="margin-top:1rem;"></div>
                 <p id="balance-updated" style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.5rem; text-align: right;"></p>
                 <div class="btn-row">
                     <button class="btn btn-primary" onclick="goStep(2)">Back</button>
@@ -470,17 +458,6 @@
 
         if (n === 3) {
             startBalancePoll();
-            // Update fund requirements for selected chains
-            const reqEl = document.getElementById('fund-requirements');
-            if (reqEl) {
-                const chains = [...selectedChains];
-                const parts = chains.map(c => {
-                    const sym = NATIVE_SYMBOLS[c] || 'ETH';
-                    return `~0.1 ${sym} on ${c.charAt(0).toUpperCase() + c.slice(1)}`;
-                });
-                const olasTotal = chains.length * 10000;
-                reqEl.textContent = parts.join(' + ') + ` + ${olasTotal.toLocaleString()} OLAS total (${chains.length} x 10,000 bond)`;
-            }
         } else {
             stopBalancePoll();
         }
@@ -739,51 +716,66 @@
         document.getElementById('btn-chain-next').disabled = selectedChains.size === 0;
     }
 
-    // --- Step 3: Balance polling ---
-    function primaryChain() {
-        // Prefer gnosis (cheapest), otherwise first selected
-        if (selectedChains.has('gnosis')) return 'gnosis';
-        return [...selectedChains][0] || 'gnosis';
-    }
-
+    // --- Step 3: Balance polling (all selected chains) ---
     function startBalancePoll() {
         document.getElementById('fund-address').textContent = walletAddress || '...';
-        const chain = primaryChain();
-        document.getElementById('native-label').textContent =
-            (NATIVE_SYMBOLS[chain] || 'Native') + ' (' + chain + ')';
-        pollBalance();
-        balancePollId = setInterval(pollBalance, 5000);
+        buildBalanceRows();
+        pollAllBalances();
+        balancePollId = setInterval(pollAllBalances, 5000);
     }
 
     function stopBalancePoll() {
         if (balancePollId) { clearInterval(balancePollId); balancePollId = null; }
     }
 
-    async function pollBalance() {
-        const chain = primaryChain();
-        try {
-            const res = await fetch(`/api/setup/balance?chain=${chain}`);
-            const data = await res.json();
-
-            if (data.error) return;
-
-            const nativeEl = document.getElementById('native-bal');
-            const olasEl = document.getElementById('olas-bal');
-
-            nativeEl.textContent = `${data.native_balance.toFixed(4)} / ${data.native_required} needed`;
-            nativeEl.className = 'balance-value ' + (data.native_sufficient ? 'balance-ok' : 'balance-waiting');
-
-            const olasNeeded = selectedChains.size * data.olas_required;
-            const olasOk = data.olas_balance >= olasNeeded;
-            olasEl.textContent = `${data.olas_balance.toLocaleString()} / ${olasNeeded.toLocaleString()} needed`;
-            olasEl.className = 'balance-value ' + (olasOk ? 'balance-ok' : 'balance-waiting');
-
-            document.getElementById('btn-fund-next').disabled = !(data.native_sufficient && olasOk);
-
-            lastBalanceUpdate = Date.now();
-        } catch (e) {
-            console.error('Balance poll error:', e);
+    function buildBalanceRows() {
+        const container = document.getElementById('balance-display');
+        container.innerHTML = '';
+        for (const chain of selectedChains) {
+            const sym = NATIVE_SYMBOLS[chain] || 'Native';
+            const row = document.createElement('div');
+            row.style.cssText = 'margin-bottom:0.75rem; padding:0.6rem 0.75rem; background:rgba(255,255,255,0.03); border-radius:8px;';
+            row.innerHTML = `
+                <div style="font-size:0.85rem; font-weight:500; margin-bottom:0.3rem;">${chain.charAt(0).toUpperCase() + chain.slice(1)}</div>
+                <div class="balance-row">
+                    <span class="balance-label">${sym}</span>
+                    <span class="balance-value balance-waiting" id="bal-native-${chain}">checking...</span>
+                </div>
+                <div class="balance-row">
+                    <span class="balance-label">OLAS</span>
+                    <span class="balance-value balance-waiting" id="bal-olas-${chain}">checking...</span>
+                </div>
+            `;
+            container.appendChild(row);
         }
+    }
+
+    async function pollAllBalances() {
+        let allOk = true;
+        for (const chain of selectedChains) {
+            try {
+                const res = await fetch(`/api/setup/balance?chain=${chain}`);
+                const data = await res.json();
+                if (data.error) { allOk = false; continue; }
+
+                const sym = NATIVE_SYMBOLS[chain] || 'Native';
+                const nEl = document.getElementById('bal-native-' + chain);
+                const oEl = document.getElementById('bal-olas-' + chain);
+                if (!nEl || !oEl) continue;
+
+                nEl.textContent = `${data.native_balance.toFixed(4)} / ${data.native_required} ${sym}`;
+                nEl.className = 'balance-value ' + (data.native_sufficient ? 'balance-ok' : 'balance-waiting');
+
+                oEl.textContent = `${data.olas_balance.toLocaleString()} / ${data.olas_required.toLocaleString()} OLAS`;
+                oEl.className = 'balance-value ' + (data.olas_sufficient ? 'balance-ok' : 'balance-waiting');
+
+                if (!data.sufficient) allOk = false;
+            } catch (e) {
+                allOk = false;
+            }
+        }
+        document.getElementById('btn-fund-next').disabled = !allOk;
+        lastBalanceUpdate = Date.now();
     }
 
     function copyAddress() {
