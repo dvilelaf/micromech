@@ -288,7 +288,7 @@
                                 font-size: 1.1rem; padding: 0.25rem;"
                                 onclick="togglePasswordVisibility()"
                                 title="Show/hide password"
-                            >&#128065;</button>
+                            ><svg id="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
                         </div>
                     </div>
                     <button class="btn btn-accent" id="btn-wallet-create" onclick="createOrUnlockWallet()">
@@ -656,13 +656,15 @@
 
     function togglePasswordVisibility() {
         const input = document.getElementById('wallet-password');
-        const btn = document.getElementById('toggle-password');
+        const icon = document.getElementById('eye-icon');
         if (input.type === 'password') {
             input.type = 'text';
-            btn.innerHTML = '&#128064;';  // closed eye
+            // Eye with slash (hidden → visible)
+            icon.innerHTML = '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/>';
         } else {
             input.type = 'password';
-            btn.innerHTML = '&#128065;';  // open eye
+            // Open eye (visible → hidden)
+            icon.innerHTML = '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
         }
     }
 
