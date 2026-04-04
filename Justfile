@@ -160,7 +160,9 @@ anvil-stop:
     #!/usr/bin/env bash
     STOPPED=0
     for port in 18545 18546 18547 18548 18549 18550 18551; do
-        if lsof -ti:$port | xargs -r kill 2>/dev/null; then
+        PIDS=$(lsof -ti:$port 2>/dev/null)
+        if [ -n "$PIDS" ]; then
+            echo "$PIDS" | xargs kill 2>/dev/null
             STOPPED=$((STOPPED + 1))
         fi
     done
