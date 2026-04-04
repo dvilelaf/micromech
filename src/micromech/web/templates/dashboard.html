@@ -821,60 +821,62 @@
         result.style.display = 'none';
         log.innerHTML = '';
 
-        for (let i = 0; i < chains.length; i++) {
-            const chain = chains[i];
-            const prefix = chains.length > 1 ? `[${i+1}/${chains.length} ${chain}] ` : '';
-            addDeployLog(log, prefix + 'Starting deployment...');
+        // Launch all chains in parallel
+        const promises = chains.map(chain => deployNewChain(chain, log));
+        const results = await Promise.allSettled(promises);
 
-            try {
-                const res = await fetch('/api/setup/deploy', {
-                    method: 'POST',
-                    headers: authHeaders({'Content-Type':'application/json','X-Micromech-Action':'deploy'}),
-                    body: JSON.stringify({ chain })
-                });
-                const reader = res.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-                let chainOk = false;
-                while (true) {
-                    const { done, value } = await reader.read();
-                    if (done) break;
-                    buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n');
-                    buffer = lines.pop();
-                    for (const line of lines) {
-                        if (!line.startsWith('data: ')) continue;
-                        try {
-                            const evt = JSON.parse(line.slice(6));
-                            if (evt.step === 'done') {
-                                addDeployLog(log, prefix + 'Deployed successfully!', 'var(--success)');
-                                chainOk = true;
-                            } else if (evt.step === 'error') {
-                                addDeployLog(log, prefix + 'Failed: ' + (evt.message || 'unknown'), 'var(--error)');
-                                result.style.display = 'block';
-                                result.style.color = 'var(--error)';
-                                result.textContent = 'Deployment stopped. Fix the issue and retry.';
-                                return;
-                            } else if (evt.message) {
-                                const color = evt.success === false ? 'var(--error)' : 'var(--text-muted)';
-                                addDeployLog(log, prefix + evt.message, color);
-                            }
-                        } catch (e) { /* skip */ }
-                    }
-                }
-                if (!chainOk) {
-                    addDeployLog(log, prefix + 'Stream ended without completion.', 'var(--error)');
-                }
-            } catch (e) {
-                addDeployLog(log, prefix + 'Error: ' + e.message, 'var(--error)');
-                return;
-            }
-        }
+        const ok = results.filter(r => r.status === 'fulfilled' && r.value).length;
+        const failed = chains.length - ok;
         result.style.display = 'block';
-        result.style.color = 'var(--success)';
-        result.textContent = 'All ' + chains.length + ' chain(s) deployed! Reload to see updated status.';
-        // Refresh chain options
+        if (failed === 0) {
+            result.style.color = 'var(--success)';
+            result.textContent = `All ${chains.length} chain(s) deployed!`;
+        } else {
+            result.style.color = 'var(--error)';
+            result.textContent = `${ok} deployed, ${failed} failed. Fix issues and retry.`;
+        }
         setTimeout(() => loadNewChainOptions(), 2000);
+    }
+
+    async function deployNewChain(chain, log) {
+        addDeployLog(log, `[${chain}] Starting deployment...`);
+        try {
+            const res = await fetch('/api/setup/deploy', {
+                method: 'POST',
+                headers: authHeaders({'Content-Type':'application/json','X-Micromech-Action':'deploy'}),
+                body: JSON.stringify({ chain })
+            });
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let ok = false;
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    try {
+                        const evt = JSON.parse(line.slice(6));
+                        if (evt.step === 'done') {
+                            addDeployLog(log, `[${chain}] Deployed successfully!`, 'var(--success)');
+                            ok = true;
+                        } else if (evt.step === 'error') {
+                            addDeployLog(log, `[${chain}] Failed: ${evt.message || 'unknown'}`, 'var(--error)');
+                        } else if (evt.message) {
+                            const color = evt.success === false ? 'var(--error)' : 'var(--text-muted)';
+                            addDeployLog(log, `[${chain}] ${evt.message}`, color);
+                        }
+                    } catch (e) { /* skip */ }
+                }
+            }
+            return ok;
+        } catch (e) {
+            addDeployLog(log, `[${chain}] Error: ${e.message}`, 'var(--error)');
+            return false;
+        }
     }
 
     function addDeployLog(container, msg, color) {

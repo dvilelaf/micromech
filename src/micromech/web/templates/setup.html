@@ -369,34 +369,9 @@
 
             <!-- Step 5: Deploy -->
             <div class="step" id="step-5">
-                <h2>Deploying to OLAS Protocol</h2>
+                <h2 id="deploy-header">Deploying to OLAS Protocol</h2>
                 <p>Executing on-chain transactions. This may take a minute...</p>
-                <div id="deploy-progress">
-                    <div class="deploy-step" id="ds-1">
-                        <div class="deploy-icon pending">1</div>
-                        <span class="deploy-msg muted">Create service</span>
-                    </div>
-                    <div class="deploy-step" id="ds-2">
-                        <div class="deploy-icon pending">2</div>
-                        <span class="deploy-msg muted">Activate registration</span>
-                    </div>
-                    <div class="deploy-step" id="ds-3">
-                        <div class="deploy-icon pending">3</div>
-                        <span class="deploy-msg muted">Register agent</span>
-                    </div>
-                    <div class="deploy-step" id="ds-4">
-                        <div class="deploy-icon pending">4</div>
-                        <span class="deploy-msg muted">Deploy Safe multisig</span>
-                    </div>
-                    <div class="deploy-step" id="ds-5">
-                        <div class="deploy-icon pending">5</div>
-                        <span class="deploy-msg muted">Create mech on marketplace</span>
-                    </div>
-                    <div class="deploy-step" id="ds-6">
-                        <div class="deploy-icon pending">6</div>
-                        <span class="deploy-msg muted">Stake service</span>
-                    </div>
-                </div>
+                <div id="deploy-progress"></div>
             </div>
 
             <!-- Step 6: Done -->
@@ -805,59 +780,73 @@
         }
     }
 
-    // --- Step 5: Deploy ---
-    let lastRunningStep = 0;
-    let deployChainIndex = 0;
-    let deployChainList = [];
+    // --- Step 5: Parallel Deploy ---
+    const DEPLOY_STEPS = [
+        'Create service', 'Activate registration', 'Register agent',
+        'Deploy Safe multisig', 'Create mech on marketplace', 'Stake service',
+    ];
+
+    function buildChainPanel(chain) {
+        const panel = document.createElement('div');
+        panel.id = 'deploy-' + chain;
+        panel.style.cssText = 'margin-bottom:1.5rem; padding:0.75rem; background:rgba(255,255,255,0.03); border-radius:8px;';
+        const title = document.createElement('div');
+        title.style.cssText = 'font-weight:500; margin-bottom:0.5rem; font-size:0.9rem;';
+        title.textContent = chain.charAt(0).toUpperCase() + chain.slice(1);
+        panel.appendChild(title);
+        for (let i = 0; i < 6; i++) {
+            const row = document.createElement('div');
+            row.className = 'deploy-step';
+            row.id = `ds-${chain}-${i + 1}`;
+            row.innerHTML = `<div class="deploy-icon pending">${i + 1}</div><span class="deploy-msg muted">${DEPLOY_STEPS[i]}</span>`;
+            panel.appendChild(row);
+        }
+        return panel;
+    }
 
     async function startDeploy() {
         goStep(5);
         document.getElementById('btn-deploy').disabled = true;
-        const retryBtn = document.getElementById('btn-deploy-retry');
-        if (retryBtn) retryBtn.style.display = 'none';
-        const errMsg = document.getElementById('deploy-error-msg');
-        if (errMsg) errMsg.textContent = '';
+        const container = document.getElementById('deploy-progress');
+        container.innerHTML = '';
 
-        deployChainList = [...selectedChains];
-        deployChainIndex = 0;
+        const chains = [...selectedChains];
+        const header = document.getElementById('deploy-header');
+        header.textContent = chains.length > 1
+            ? `Deploying on ${chains.length} chains (parallel)`
+            : 'Deploying to OLAS Protocol';
 
-        // Update deploy header to show chain progress
-        updateDeployHeader();
-        resetDeploySteps();
-        markStepRunning(1);
+        // Build per-chain panels
+        chains.forEach(c => container.appendChild(buildChainPanel(c)));
 
-        await deployNextChain();
-    }
+        // Launch all deploys in parallel
+        const results = await Promise.allSettled(chains.map(c => deployOneChain(c)));
 
-    function updateDeployHeader() {
-        const h = document.querySelector('#step-5 h2');
-        if (deployChainList.length > 1) {
-            const name = deployChainList[deployChainIndex];
-            h.textContent = `Deploying ${deployChainIndex + 1}/${deployChainList.length}: ${name.charAt(0).toUpperCase() + name.slice(1)}`;
+        const allOk = results.every(r => r.status === 'fulfilled' && r.value);
+        if (allOk) {
+            setTimeout(() => {
+                goStep(6);
+                document.getElementById('success-title').textContent =
+                    chains.length > 1 ? `Deployed on ${chains.length} chains!` : 'Your mech is ready!';
+                document.getElementById('success-desc').textContent = 'Starting runtime...';
+                document.getElementById('btn-go-dashboard').style.display = 'inline-block';
+                setTimeout(() => { window.location.href = '/'; }, 3000);
+            }, 1000);
         } else {
-            h.textContent = 'Deploying to OLAS Protocol';
+            // Show retry
+            const btn = document.createElement('button');
+            btn.className = 'btn btn-primary';
+            btn.textContent = 'Retry failed chains';
+            btn.style.marginTop = '1rem';
+            btn.onclick = startDeploy;
+            container.appendChild(btn);
         }
     }
 
-    function resetDeploySteps() {
-        for (let i = 1; i <= 6; i++) {
-            const icon = document.querySelector(`#ds-${i} .deploy-icon`);
-            if (icon) { icon.className = 'deploy-icon pending'; icon.textContent = i; }
-            const msg = document.querySelector(`#ds-${i} .deploy-msg`);
-            if (msg) msg.classList.add('muted');
-        }
-        lastRunningStep = 0;
-    }
-
-    async function deployNextChain() {
-        if (deployChainIndex >= deployChainList.length) {
-            // All chains deployed
-            setTimeout(() => goStep(6), 1000);
-            return;
-        }
-
-        const chainName = deployChainList[deployChainIndex];
-        updateDeployHeader();
+    async function deployOneChain(chain) {
+        const prefix = `ds-${chain}-`;
+        // Mark step 1 running
+        setStepState(prefix, 1, 'running');
 
         try {
             const res = await fetch('/api/setup/deploy', {
@@ -866,18 +855,17 @@
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'deploy',
                 }),
-                body: JSON.stringify({ chain: chainName })
+                body: JSON.stringify({ chain })
             });
 
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buffer = '';
-            let chainDone = false;
+            let ok = false;
 
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
-
                 buffer += decoder.decode(value, { stream: true });
                 const lines = buffer.split('\n');
                 buffer = lines.pop();
@@ -887,136 +875,50 @@
                     try {
                         const evt = JSON.parse(line.slice(6));
                         if (evt.step === 'done') {
-                            chainDone = true;
-                            // Mark all steps done for this chain
-                            document.querySelectorAll('.deploy-icon').forEach(el => {
-                                el.className = 'deploy-icon done';
-                                el.innerHTML = '&#10003;';
-                            });
+                            for (let i = 1; i <= 6; i++) setStepState(prefix, i, 'done');
+                            ok = true;
                         } else if (evt.step === 'error') {
-                            handleDeployEvent(evt);
-                            return; // Stop, user can retry
-                        } else {
-                            handleDeployEvent(evt);
+                            setStepState(prefix, findRunning(prefix) || 6, 'error', evt.message);
+                            return false;
+                        } else if (typeof evt.step === 'number') {
+                            for (let i = 1; i < evt.step; i++) setStepState(prefix, i, 'done');
+                            if (evt.success === false) {
+                                setStepState(prefix, evt.step, 'error', evt.message);
+                            } else {
+                                setStepState(prefix, evt.step, 'done', evt.message);
+                                if (evt.step < 6) setStepState(prefix, evt.step + 1, 'running');
+                            }
                         }
                     } catch (e) { /* skip */ }
                 }
             }
-
-            if (chainDone) {
-                deployChainIndex++;
-                if (deployChainIndex < deployChainList.length) {
-                    // Short pause then next chain
-                    await new Promise(r => setTimeout(r, 1000));
-                    resetDeploySteps();
-                    markStepRunning(1);
-                    await deployNextChain();
-                } else {
-                    setTimeout(() => goStep(6), 1000);
-                }
-            }
+            return ok;
         } catch (e) {
-            showDeployError('Connection lost. Click Retry to resume.');
+            setStepState(prefix, findRunning(prefix) || 1, 'error', 'Connection lost');
+            return false;
         }
     }
 
-    function markStepRunning(n) {
-        lastRunningStep = n;
-        const icon = document.querySelector(`#ds-${n} .deploy-icon`);
-        if (icon) { icon.className = 'deploy-icon running'; icon.textContent = n; }
-        const msg = document.querySelector(`#ds-${n} .deploy-msg`);
-        if (msg) msg.classList.remove('muted');
+    function setStepState(prefix, n, state, msg) {
+        const icon = document.querySelector(`#${prefix}${n} .deploy-icon`);
+        const msgEl = document.querySelector(`#${prefix}${n} .deploy-msg`);
+        if (!icon) return;
+        icon.className = 'deploy-icon ' + state;
+        if (state === 'done') icon.innerHTML = '&#10003;';
+        else if (state === 'error') icon.textContent = '!';
+        else icon.textContent = n;
+        if (msgEl) {
+            if (msg) msgEl.textContent = msg;
+            msgEl.classList.toggle('muted', state === 'pending');
+        }
     }
 
-    function showDeployError(message) {
-        // Show retry button
-        let retryBtn = document.getElementById('btn-deploy-retry');
-        if (!retryBtn) {
-            retryBtn = document.createElement('button');
-            retryBtn.id = 'btn-deploy-retry';
-            retryBtn.className = 'btn btn-primary';
-            retryBtn.textContent = 'Retry';
-            retryBtn.style.marginTop = '1.5rem';
-            retryBtn.onclick = startDeploy;
-            document.getElementById('deploy-progress').appendChild(retryBtn);
+    function findRunning(prefix) {
+        for (let i = 1; i <= 6; i++) {
+            const el = document.querySelector(`#${prefix}${i} .deploy-icon`);
+            if (el && el.classList.contains('running')) return i;
         }
-        retryBtn.style.display = 'inline-block';
-
-        // Show error message
-        let errMsg = document.getElementById('deploy-error-msg');
-        if (!errMsg) {
-            errMsg = document.createElement('p');
-            errMsg.id = 'deploy-error-msg';
-            errMsg.style.cssText = 'color: var(--error); font-size: 0.85rem; margin-top: 0.75rem;';
-            document.getElementById('deploy-progress').appendChild(errMsg);
-        }
-        errMsg.textContent = message;
-    }
-
-    function handleDeployEvent(evt) {
-        if (evt.step === 'done') {
-            document.querySelectorAll('.deploy-icon').forEach(el => {
-                el.className = 'deploy-icon done';
-                el.innerHTML = '&#10003;';
-            });
-            document.querySelectorAll('.deploy-msg').forEach(el => el.classList.remove('muted'));
-
-            setTimeout(() => {
-                goStep(6);
-                if (evt.runtime_started) {
-                    document.getElementById('success-title').textContent = 'Your mech is live!';
-                    document.getElementById('success-desc').textContent =
-                        'Runtime started. Your mech is listening for requests and earning rewards.';
-                    document.getElementById('btn-go-dashboard').style.display = 'inline-block';
-                    // Auto-redirect to dashboard after 3 seconds
-                    setTimeout(() => { window.location.href = '/'; }, 3000);
-                } else {
-                    document.getElementById('success-title').textContent = 'Service deployed!';
-                    document.getElementById('success-desc').textContent =
-                        'Restart micromech to activate the runtime.';
-                    document.getElementById('btn-go-dashboard').style.display = 'inline-block';
-                }
-            }, 1000);
-            return;
-        }
-
-        if (evt.step === 'error') {
-            const running = document.querySelector('.deploy-icon.running');
-            if (running) {
-                running.className = 'deploy-icon error';
-                running.textContent = '!';
-            }
-            showDeployError(evt.message || 'Deployment failed. Click Retry to resume.');
-            return;
-        }
-
-        if (typeof evt.step === 'number') {
-            // Mark previous steps as done
-            for (let i = 1; i < evt.step; i++) {
-                const icon = document.querySelector(`#ds-${i} .deploy-icon`);
-                if (icon && !icon.classList.contains('done')) {
-                    icon.className = 'deploy-icon done';
-                    icon.innerHTML = '&#10003;';
-                }
-                const msg = document.querySelector(`#ds-${i} .deploy-msg`);
-                if (msg) msg.classList.remove('muted');
-            }
-
-            const curIcon = document.querySelector(`#ds-${evt.step} .deploy-icon`);
-            const curMsg = document.querySelector(`#ds-${evt.step} .deploy-msg`);
-
-            if (evt.success) {
-                // Step completed successfully — mark done, set next as running
-                if (curIcon) { curIcon.className = 'deploy-icon done'; curIcon.innerHTML = '&#10003;'; }
-                if (curMsg) { curMsg.textContent = evt.message; curMsg.classList.remove('muted'); }
-                // Mark next step as running (if not last)
-                if (evt.step < 6) markStepRunning(evt.step + 1);
-            } else {
-                // Step failed
-                if (curIcon) { curIcon.className = 'deploy-icon error'; curIcon.textContent = '!'; }
-                if (curMsg) { curMsg.textContent = evt.message; curMsg.classList.remove('muted'); }
-            }
-        }
+        return null;
     }
 
     // --- Init ---

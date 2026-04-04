@@ -99,8 +99,15 @@ def get_auth_token() -> str:
 
 _setup_needed: Optional[bool] = None
 
-# Deploy concurrency guard
-_deploy_lock = asyncio.Lock()
+# Deploy concurrency guard — per-chain locks allow parallel multi-chain deploy
+_deploy_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_deploy_lock(chain_name: str) -> asyncio.Lock:
+    """Get or create a per-chain deploy lock."""
+    if chain_name not in _deploy_locks:
+        _deploy_locks[chain_name] = asyncio.Lock()
+    return _deploy_locks[chain_name]
 
 
 def _needs_setup() -> bool:
@@ -414,9 +421,10 @@ def create_web_app(
         if not _valid_chain(chain_name):
             return JSONResponse({"error": f"Unknown chain: {chain_name}"}, 400)
 
-        if _deploy_lock.locked():
+        chain_lock = _get_deploy_lock(chain_name)
+        if chain_lock.locked():
             return JSONResponse(
-                {"error": "Deploy already in progress"}, 409
+                {"error": f"Deploy already in progress for {chain_name}"}, 409
             )
 
         progress_q: stdlib_queue.Queue[dict] = stdlib_queue.Queue()
@@ -457,7 +465,7 @@ def create_web_app(
             return result
 
         async def deploy_stream():
-            async with _deploy_lock:
+            async with chain_lock:
                 loop = asyncio.get_event_loop()
                 future = loop.run_in_executor(None, _run_deploy)
                 try:
