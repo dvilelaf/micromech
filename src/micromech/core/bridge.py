@@ -105,15 +105,18 @@ def get_wallet() -> Any:
     if _cached_wallet is not None:
         return _cached_wallet
 
-    # Try normal Wallet() first (works if wallet_password in env)
-    try:
-        _cached_wallet = Wallet()
-        # Ensure chain_interfaces is available (used by MechSupplyMixin)
-        if not hasattr(_cached_wallet, "chain_interfaces"):
-            _cached_wallet.chain_interfaces = ChainInterfaces()
-        return _cached_wallet
-    except (AttributeError, TypeError):
-        logger.debug("Wallet() failed, falling back to manual construction")
+    # Try normal Wallet() — but only if wallet file already exists.
+    # Never auto-create a wallet; that's the web wizard's job.
+    from pathlib import Path
+    from iwa.core.constants import WALLET_PATH
+    if Path(WALLET_PATH).exists():
+        try:
+            _cached_wallet = Wallet()
+            if not hasattr(_cached_wallet, "chain_interfaces"):
+                _cached_wallet.chain_interfaces = ChainInterfaces()
+            return _cached_wallet
+        except (AttributeError, TypeError):
+            logger.debug("Wallet() failed, falling back to manual construction")
 
     # Fall back to manual construction with cached key_storage or password
     logger.debug("get_wallet fallback: _wallet_password={}, _cached_key_storage={}",
@@ -173,15 +176,15 @@ def check_balances(chain_name: str) -> tuple[float, float]:
         if not _IWA_AVAILABLE:
             return 0.0, 0.0
 
-        # Get address from cached key_storage (web wizard) or Wallet
+        # Get address from cached key_storage (web wizard) or Wallet.
+        # Never create a new Wallet — only use what's already unlocked.
         address = None
         if _cached_key_storage is not None:
             address = str(_cached_key_storage.get_address_by_tag("master"))
         elif _cached_wallet is not None:
             address = _cached_wallet.master_account.address
         else:
-            _cached_wallet = Wallet()
-            address = _cached_wallet.master_account.address
+            return 0.0, 0.0
 
         if not address:
             return 0.0, 0.0

@@ -29,19 +29,24 @@ class TestGetWallet:
 
     @patch("micromech.core.bridge.Wallet")
     @patch("micromech.core.bridge.ChainInterfaces")
-    def test_normal_wallet_creation(self, mock_ci, mock_wallet_cls):
-        mock_wallet = MagicMock()
-        mock_wallet_cls.return_value = mock_wallet
-        result = bridge.get_wallet()
-        assert result is mock_wallet
-        assert bridge._cached_wallet is mock_wallet
+    def test_normal_wallet_creation(self, mock_ci, mock_wallet_cls, tmp_path):
+        # Create wallet file so get_wallet() tries Wallet()
+        (tmp_path / "wallet.json").touch()
+        with patch("iwa.core.constants.WALLET_PATH", str(tmp_path / "wallet.json")):
+            mock_wallet = MagicMock()
+            mock_wallet_cls.return_value = mock_wallet
+            result = bridge.get_wallet()
+            assert result is mock_wallet
+            assert bridge._cached_wallet is mock_wallet
 
     @patch("micromech.core.bridge.Wallet")
     @patch("micromech.core.bridge.ChainInterfaces")
-    def test_injects_chain_interfaces(self, mock_ci, mock_wallet_cls):
-        mock_wallet = MagicMock(spec=[])  # no chain_interfaces attr
-        mock_wallet_cls.return_value = mock_wallet
-        result = bridge.get_wallet()
+    def test_injects_chain_interfaces(self, mock_ci, mock_wallet_cls, tmp_path):
+        (tmp_path / "wallet.json").touch()
+        with patch("iwa.core.constants.WALLET_PATH", str(tmp_path / "wallet.json")):
+            mock_wallet = MagicMock(spec=[])  # no chain_interfaces attr
+            mock_wallet_cls.return_value = mock_wallet
+            result = bridge.get_wallet()
         assert hasattr(result, "chain_interfaces")
 
     @patch("micromech.core.bridge.Wallet", side_effect=AttributeError("no password"))
@@ -57,11 +62,13 @@ class TestGetWallet:
             with pytest.raises(RuntimeError, match="No wallet password"):
                 bridge.get_wallet()
 
-    def test_fallback_caches_result(self):
+    def test_fallback_caches_result(self, tmp_path):
         """When get_wallet succeeds, result is cached for next call."""
+        (tmp_path / "wallet.json").touch()
         mock_wallet = MagicMock()
-        with patch("micromech.core.bridge.Wallet", return_value=mock_wallet):
-            result1 = bridge.get_wallet()
+        with patch("iwa.core.constants.WALLET_PATH", str(tmp_path / "wallet.json")):
+            with patch("micromech.core.bridge.Wallet", return_value=mock_wallet):
+                result1 = bridge.get_wallet()
         # Second call returns cached
         result2 = bridge.get_wallet()
         assert result1 is result2 is mock_wallet
