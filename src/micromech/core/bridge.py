@@ -195,7 +195,7 @@ def check_balances(chain_name: str) -> tuple[float, float]:
         native_wei = ci.with_retry(
             lambda: ci.web3.eth.get_balance(address),
         )
-        native = native_wei / 1e18
+        native = float(ci.web3.from_wei(native_wei, "ether"))
 
         # Get OLAS balance
         olas_balance = 0.0
@@ -218,6 +218,7 @@ def check_balances(chain_name: str) -> tuple[float, float]:
                 raw = ci.with_retry(
                     lambda: contract.functions.balanceOf(address).call(),
                 )
+                olas_balance = float(ci.web3.from_wei(raw, "ether"))
         except Exception:
             logger.debug("Failed to check OLAS balance on {}", chain_name)
 
