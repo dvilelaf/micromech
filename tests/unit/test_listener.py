@@ -150,13 +150,13 @@ class TestFetchEvents:
         bridge = MagicMock()
         data = json.dumps({"prompt": "q1", "tool": "echo"}).encode()
 
-        mock_filter = MagicMock()
-        mock_filter.get_all_entries.return_value = [_make_event(MECH_ADDR, request_datas=[data])]
         bridge.with_retry.side_effect = lambda fn, **kw: fn()
 
         listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH, bridge=bridge)
         mock_contract = MagicMock()
-        mock_contract.events.MarketplaceRequest.create_filter.return_value = mock_filter
+        mock_contract.events.MarketplaceRequest.get_logs.return_value = [
+            _make_event(MECH_ADDR, request_datas=[data])
+        ]
         listener._marketplace_contract = mock_contract
 
         requests = listener._fetch_events(100, 200)
@@ -168,11 +168,55 @@ class TestFetchEvents:
 
         listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH, bridge=bridge)
         mock_contract = MagicMock()
-        mock_contract.events.MarketplaceRequest.create_filter.side_effect = Exception("rpc")
+        mock_contract.events.MarketplaceRequest.get_logs.side_effect = Exception("rpc")
         listener._marketplace_contract = mock_contract
 
         requests = listener._fetch_events(100, 200)
         assert requests == []
+
+    def test_fetch_passes_mech_address_filter(self):
+        """Verify get_logs receives argument_filters with priorityMech."""
+        bridge = MagicMock()
+        bridge.with_retry.side_effect = lambda fn, **kw: fn()
+        bridge.web3.to_checksum_address.side_effect = lambda a: a
+
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH, bridge=bridge)
+        mock_contract = MagicMock()
+        mock_contract.events.MarketplaceRequest.get_logs.return_value = []
+        listener._marketplace_contract = mock_contract
+
+        listener._fetch_events(100, 200)
+
+        mock_contract.events.MarketplaceRequest.get_logs.assert_called_once_with(
+            from_block=100,
+            to_block=200,
+            argument_filters={"priorityMech": MECH_ADDR},
+        )
+
+    def test_fetch_no_filter_when_no_mech_address(self):
+        """Without mech_address, get_logs is called with empty argument_filters."""
+        bridge = MagicMock()
+        bridge.with_retry.side_effect = lambda fn, **kw: fn()
+
+        # Use a chain config without mech_address
+        chain_cfg = ChainConfig(
+            chain="gnosis",
+            marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+            factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+            staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+        )
+        listener = EventListener(MicromechConfig(), chain_cfg, bridge=bridge)
+        mock_contract = MagicMock()
+        mock_contract.events.MarketplaceRequest.get_logs.return_value = []
+        listener._marketplace_contract = mock_contract
+
+        listener._fetch_events(100, 200)
+
+        mock_contract.events.MarketplaceRequest.get_logs.assert_called_once_with(
+            from_block=100,
+            to_block=200,
+            argument_filters={},
+        )
 
 
 class TestPollOnce:

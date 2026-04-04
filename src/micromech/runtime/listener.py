@@ -142,6 +142,11 @@ class EventListener:
         Filters by priorityMech on-chain (indexed param) so only requests
         directed at this mech are returned. Falls back to unfiltered if
         mech_address is not yet configured.
+
+        Uses get_logs() instead of create_filter() because many RPC providers
+        don't support eth_newFilter reliably, and argument_filters on
+        create_filter silently ignores indexed params on some providers.
+        get_logs() builds proper topic filters for indexed params.
         """
         mech_addr = self.chain_config.mech_address
 
@@ -153,12 +158,13 @@ class EventListener:
                 filter_args["priorityMech"] = self.bridge.web3.to_checksum_address(
                     mech_addr,
                 )
-            event_filter = contract.events.MarketplaceRequest.create_filter(
-                from_block=from_block,
-                to_block=to_block,
-                argument_filters=filter_args,
+            logs = self.bridge.with_retry(
+                lambda: contract.events.MarketplaceRequest.get_logs(
+                    from_block=from_block,
+                    to_block=to_block,
+                    argument_filters=filter_args,
+                )
             )
-            logs = self.bridge.with_retry(lambda: event_filter.get_all_entries())
         except Exception as e:
             logger.error("Failed to fetch events: {}", e)
             return []
