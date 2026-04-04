@@ -421,50 +421,11 @@ class TestDeliveryChainId:
 
 class TestCreateMechEventMatching:
     MARKETPLACE = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
-    CORRECT_TOPIC = bytes.fromhex(
-        "46e1ca45c09520471c4394cc3f220754"
-        "42ca6fe5ab4850962e1e19c4dafd4e10"
-    )
-
-    @patch("micromech.core.bridge.get_wallet")
-    @patch("micromech.management._get_service_manager")
-    def test_ignores_wrong_topic(self, mock_get_mgr, mock_get_wallet):
-        """Log with correct address but wrong topic should NOT match."""
-        from micromech.management import MechLifecycle
-
-        mock_mgr = MagicMock()
-        mock_mgr.service.service_id = 42
-        mock_mgr.service.service_owner_eoa_address = "0x" + "aa" * 20
-        mock_get_mgr.return_value = mock_mgr
-
-        mock_web3 = MagicMock()
-        mock_wallet = MagicMock()
-        mock_wallet.chain_interfaces.get.return_value.web3 = mock_web3
-        mock_get_wallet.return_value = mock_wallet
-
-        tx_hash = b"\xde\xad" + b"\x00" * 30
-        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = tx_hash
-        mock_web3.eth.wait_for_transaction_receipt.return_value = {
-            "status": 1,
-            "logs": [
-                {
-                    "address": self.MARKETPLACE,
-                    "topics": [
-                        bytes(32),  # wrong topic
-                        bytes.fromhex("00" * 12 + "cd" * 20),
-                    ],
-                }
-            ],
-        }
-
-        lc = MechLifecycle(MicromechConfig(), chain_name="gnosis")
-        result = lc.create_mech("svc-1")
-        assert result is None
 
     @patch("micromech.core.bridge.get_wallet")
     @patch("micromech.management._get_service_manager")
     def test_ignores_wrong_address(self, mock_get_mgr, mock_get_wallet):
-        """Log with correct topic but wrong emitting address should NOT match."""
+        """Log from a different contract should NOT match."""
         from micromech.management import MechLifecycle
 
         mock_mgr = MagicMock()
@@ -485,7 +446,7 @@ class TestCreateMechEventMatching:
                 {
                     "address": "0x" + "ff" * 20,  # wrong address
                     "topics": [
-                        self.CORRECT_TOPIC,
+                        bytes(32),
                         bytes.fromhex("00" * 12 + "cd" * 20),
                     ],
                 }
@@ -495,6 +456,43 @@ class TestCreateMechEventMatching:
         lc = MechLifecycle(MicromechConfig(), chain_name="gnosis")
         result = lc.create_mech("svc-1")
         assert result is None
+
+    @patch("micromech.core.bridge.get_wallet")
+    @patch("micromech.management._get_service_manager")
+    def test_matches_marketplace_address(self, mock_get_mgr, mock_get_wallet):
+        """Log from marketplace with >=2 topics extracts mech address."""
+        from micromech.management import MechLifecycle
+
+        mock_mgr = MagicMock()
+        mock_mgr.service.service_id = 42
+        mock_mgr.service.service_owner_eoa_address = "0x" + "aa" * 20
+        mock_get_mgr.return_value = mock_mgr
+
+        mock_web3 = MagicMock()
+        mock_wallet = MagicMock()
+        mock_wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_get_wallet.return_value = mock_wallet
+
+        tx_hash = b"\xde\xad" + b"\x00" * 30
+        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = tx_hash
+        mech_hex = "cd" * 20
+        mock_web3.eth.wait_for_transaction_receipt.return_value = {
+            "status": 1,
+            "logs": [
+                {
+                    "address": self.MARKETPLACE,
+                    "topics": [
+                        bytes(32),  # any event topic
+                        bytes.fromhex("00" * 12 + mech_hex),
+                    ],
+                }
+            ],
+        }
+
+        lc = MechLifecycle(MicromechConfig(), chain_name="gnosis")
+        result = lc.create_mech("svc-1")
+        assert result is not None
+        assert mech_hex in result
 
 
 # ============================================================

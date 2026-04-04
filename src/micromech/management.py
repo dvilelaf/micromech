@@ -155,27 +155,19 @@ class MechLifecycle:
                 logger.error("Mech creation TX reverted")
                 return None
 
-            # CreateMech event signature:
-            # keccak256("CreateMech(address,uint256,address)")
-            CREATE_MECH_TOPIC = (
-                "0x46e1ca45c09520471c4394cc3f2207"
-                "5442ca6fe5ab4850962e1e19c4dafd"
-                "4e10"
-            )
-            mkt = self.chain_config.marketplace_address
+            # Extract mech address from CreateMech event emitted by marketplace.
+            # Match by marketplace address (not topic hash — marketplace is a
+            # proxy whose implementation can change the event signature).
+            # CreateMech has indexed `mech` address as topics[1].
+            mkt = self.chain_config.marketplace_address.lower()
             for log_entry in receipt.get("logs", []):
                 topics = log_entry.get("topics", [])
-                if len(topics) >= 2:
-                    sig = topics[0].hex() if isinstance(topics[0], bytes) else str(topics[0])
-                    if not sig.startswith("0x"):
-                        sig = "0x" + sig
-                    log_addr = log_entry.get("address", "")
-                    is_marketplace = log_addr.lower() == mkt.lower()
-                    if sig == CREATE_MECH_TOPIC and is_marketplace:
-                        raw = topics[1].hex() if isinstance(topics[1], bytes) else str(topics[1])
-                        mech_addr = "0x" + raw[-40:]
-                        logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
-                        return mech_addr
+                log_addr = (log_entry.get("address") or "").lower()
+                if log_addr == mkt and len(topics) >= 2:
+                    raw = topics[1].hex() if isinstance(topics[1], bytes) else str(topics[1])
+                    mech_addr = "0x" + raw[-40:]
+                    logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
+                    return mech_addr
 
             logger.warning("Mech created but address not found in logs")
             return None
