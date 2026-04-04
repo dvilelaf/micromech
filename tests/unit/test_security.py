@@ -675,6 +675,14 @@ class TestNoDirectWeb3:
                 violations.append(str(f))
         assert violations == [], f"Direct Web3 HTTPProvider in: {violations}"
 
+    def test_wallet_path_not_real(self):
+        """WALLET_PATH must point to tmp during tests, never data/wallet.json."""
+        from iwa.core.constants import WALLET_PATH
+        assert "tmp" in WALLET_PATH.lower() or "pytest" in WALLET_PATH.lower(), \
+            f"WALLET_PATH points to real wallet: {WALLET_PATH}"
+        assert not WALLET_PATH.endswith("data/wallet.json"), \
+            f"WALLET_PATH points to real wallet: {WALLET_PATH}"
+
     def test_no_standalone_web3_instances(self):
         """No file creates standalone Web3 instances (bypassing iwa).
 
