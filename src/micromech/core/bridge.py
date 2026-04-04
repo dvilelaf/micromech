@@ -42,9 +42,9 @@ class IwaBridge:
 
     @property
     def wallet(self) -> Any:
-        """Lazy-load wallet."""
+        """Lazy-load wallet via get_wallet() (respects wizard password)."""
         if self._wallet is None:
-            self._wallet = Wallet()
+            self._wallet = get_wallet()
             logger.debug("iwa Wallet initialized")
         return self._wallet
 
@@ -85,28 +85,69 @@ def create_bridges(config: Any) -> dict[str, "IwaBridge"]:
     return bridges
 
 
-# Cached instances for balance checking (avoid re-probing RPCs on every call)
+# Cached instances (avoid re-probing RPCs on every call)
 _cached_wallet: Optional[Any] = None
 _cached_interfaces: Optional[Any] = None
 # Set by web setup wizard (POST /api/setup/wallet)
 _cached_key_storage: Optional[Any] = None
-_wallet_password: Optional[str] = None
 
 
 def get_wallet() -> Any:
-    """Get or create a Wallet instance, using cached password if needed.
+    """Get or create a Wallet instance.
 
-    Uses the standard Wallet() if wallet_password is in the environment.
-    Falls back to manual construction with cached KeyStorage/password
-    from the web setup wizard.
+    Priority:
+    1. Return cached wallet if available.
+    2. If web wizard set _cached_key_storage, build Wallet from it
+       (uses the password the user entered in the wizard).
+    3. Try standard Wallet() which reads wallet_password from env/secrets.
+       Only if wallet file already exists (never auto-create).
     """
-    global _cached_wallet, _wallet_password  # noqa: PLW0603
+    global _cached_wallet  # noqa: PLW0603
 
     if _cached_wallet is not None:
         return _cached_wallet
 
-    # Try normal Wallet() — but only if wallet file already exists.
-    # Never auto-create a wallet; that's the web wizard's job.
+    # Path A: Web wizard provided a KeyStorage with user's password.
+    # Build Wallet manually to ensure the wizard password is used for signing.
+    if _cached_key_storage is not None:
+        logger.debug("get_wallet: building from wizard KeyStorage")
+
+        from iwa.core.db import init_db
+        from iwa.core.wallet import (
+            AccountService,
+            BalanceService,
+            PluginService,
+            SafeService,
+            TransactionService,
+            TransferService,
+        )
+
+        wallet = object.__new__(Wallet)
+        wallet.key_storage = _cached_key_storage
+        wallet.account_service = AccountService(_cached_key_storage)
+        wallet.balance_service = BalanceService(
+            _cached_key_storage, wallet.account_service,
+        )
+        wallet.safe_service = SafeService(
+            _cached_key_storage, wallet.account_service,
+        )
+        wallet.transaction_service = TransactionService(
+            _cached_key_storage, wallet.account_service, wallet.safe_service,
+        )
+        wallet.transfer_service = TransferService(
+            _cached_key_storage, wallet.account_service,
+            wallet.balance_service, wallet.safe_service,
+            wallet.transaction_service,
+        )
+        wallet.plugin_service = PluginService()
+        wallet.chain_interfaces = ChainInterfaces()
+        init_db()
+
+        _cached_wallet = wallet
+        return _cached_wallet
+
+    # Path B: No wizard — try standard Wallet() (env password).
+    # Only if wallet file exists (never auto-create).
     from pathlib import Path
     from iwa.core.constants import WALLET_PATH
     if Path(WALLET_PATH).exists():
@@ -116,52 +157,10 @@ def get_wallet() -> Any:
                 _cached_wallet.chain_interfaces = ChainInterfaces()
             return _cached_wallet
         except (AttributeError, TypeError):
-            logger.debug("Wallet() failed, falling back to manual construction")
+            logger.debug("Wallet() failed")
 
-    # Fall back to manual construction with cached key_storage or password
-    logger.debug("get_wallet fallback: _wallet_password={}, _cached_key_storage={}",
-                 bool(_wallet_password), _cached_key_storage is not None)
-    if not _cached_key_storage and not _wallet_password:
-        msg = "No wallet password available. Provide wallet_password env var or use the web wizard."
-        raise RuntimeError(msg)
-
-    from pathlib import Path
-
-    from iwa.core.constants import WALLET_PATH
-    from iwa.core.db import init_db
-    from iwa.core.keys import KeyStorage
-    from iwa.core.wallet import (
-        AccountService,
-        BalanceService,
-        PluginService,
-        SafeService,
-        TransactionService,
-        TransferService,
-    )
-
-    ks = _cached_key_storage or KeyStorage(path=Path(WALLET_PATH), password=_wallet_password)
-    wallet = object.__new__(Wallet)
-    wallet.key_storage = ks
-    wallet.account_service = AccountService(ks)
-    wallet.balance_service = BalanceService(ks, wallet.account_service)
-    wallet.safe_service = SafeService(ks, wallet.account_service)
-    wallet.transaction_service = TransactionService(
-        ks, wallet.account_service, wallet.safe_service
-    )
-    wallet.transfer_service = TransferService(
-        ks, wallet.account_service, wallet.balance_service,
-        wallet.safe_service, wallet.transaction_service,
-    )
-    wallet.plugin_service = PluginService()
-    wallet.chain_interfaces = ChainInterfaces()
-    init_db()
-
-    _cached_wallet = wallet
-
-    # Clear password from memory now that KeyStorage is initialized
-    _wallet_password = None
-
-    return _cached_wallet
+    msg = "No wallet available. Use the web wizard or set wallet_password in secrets.env."
+    raise RuntimeError(msg)
 
 
 def check_balances(chain_name: str) -> tuple[float, float]:

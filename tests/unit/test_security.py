@@ -318,56 +318,52 @@ class TestIpfsConfigValidation:
 # ============================================================
 
 
-class TestBridgePasswordClearing:
-    def test_password_cleared_after_get_wallet(self):
-        """After get_wallet() via fallback, _wallet_password is None."""
+class TestBridgeWalletConstruction:
+    def test_cached_key_storage_used_over_env(self):
+        """get_wallet() uses _cached_key_storage, not Wallet()/env."""
         import micromech.core.bridge as bridge
 
-        # Use a real class that supports object.__new__
-        class FakeWallet:
-            pass
-
-        # Make FakeWallet() raise to trigger fallback path,
-        # but keep the class usable for object.__new__
-        def failing_init(self, *a, **kw):
-            raise AttributeError("no password")
-
-        FakeWallet.__init__ = failing_init
-
+        mock_ks = MagicMock()
         bridge._cached_wallet = None
-        bridge._wallet_password = "test_password"
-        bridge._cached_key_storage = MagicMock()
+        bridge._cached_key_storage = mock_ks
 
-        fake_mod = type("m", (), {
-            "Wallet": FakeWallet,
-            "AccountService": lambda *a: MagicMock(),
-            "BalanceService": lambda *a: MagicMock(),
-            "SafeService": lambda *a: MagicMock(),
-            "TransactionService": lambda *a: MagicMock(),
-            "TransferService": lambda *a: MagicMock(),
-            "PluginService": lambda *a: MagicMock(),
-        })()
+        FakeWallet = type("Wallet", (), {})
 
         with (
             patch("micromech.core.bridge.Wallet", FakeWallet),
             patch("micromech.core.bridge.ChainInterfaces"),
             patch.dict("sys.modules", {
-                "iwa.core.constants": MagicMock(WALLET_PATH="/tmp/t"),
                 "iwa.core.db": MagicMock(),
-                "iwa.core.keys": MagicMock(
-                    KeyStorage=MagicMock(return_value=MagicMock()),
-                ),
-                "iwa.core.wallet": fake_mod,
+                "iwa.core.wallet": type("m", (), {
+                    "Wallet": FakeWallet,
+                    "AccountService": lambda *a: MagicMock(),
+                    "BalanceService": lambda *a: MagicMock(),
+                    "SafeService": lambda *a: MagicMock(),
+                    "TransactionService": lambda *a: MagicMock(),
+                    "TransferService": lambda *a: MagicMock(),
+                    "PluginService": lambda *a: MagicMock(),
+                })(),
             }),
         ):
             wallet = bridge.get_wallet()
 
         assert wallet is not None
-        assert bridge._wallet_password is None
+        assert wallet.key_storage is mock_ks
 
-        # cleanup
         bridge._cached_wallet = None
         bridge._cached_key_storage = None
+
+    def test_no_wallet_no_ks_raises(self):
+        """get_wallet() raises when no wallet file and no cached ks."""
+        import micromech.core.bridge as bridge
+
+        bridge._cached_wallet = None
+        bridge._cached_key_storage = None
+
+        with pytest.raises(RuntimeError, match="No wallet"):
+            bridge.get_wallet()
+
+        bridge._cached_wallet = None
 
 
 # ============================================================

@@ -13,12 +13,10 @@ def reset_bridge_cache():
     bridge._cached_wallet = None
     bridge._cached_interfaces = None
     bridge._cached_key_storage = None
-    bridge._wallet_password = None
     yield
     bridge._cached_wallet = None
     bridge._cached_interfaces = None
     bridge._cached_key_storage = None
-    bridge._wallet_password = None
 
 
 class TestGetWallet:
@@ -49,18 +47,11 @@ class TestGetWallet:
             result = bridge.get_wallet()
         assert hasattr(result, "chain_interfaces")
 
-    @patch("micromech.core.bridge.Wallet", side_effect=AttributeError("no password"))
-    def test_fallback_without_password_raises(self, mock_wallet_cls):
-        with pytest.raises(RuntimeError, match="No wallet password"):
-            bridge.get_wallet()
-
-    def test_fallback_without_password_and_no_wallet_raises(self):
-        """When Wallet() fails and no cached password, get_wallet raises."""
-        bridge._wallet_password = None
+    def test_no_wallet_no_ks_raises(self):
+        """When no wallet file and no cached ks, get_wallet raises."""
         bridge._cached_key_storage = None
-        with patch("micromech.core.bridge.Wallet", side_effect=AttributeError):
-            with pytest.raises(RuntimeError, match="No wallet password"):
-                bridge.get_wallet()
+        with pytest.raises(RuntimeError, match="No wallet"):
+            bridge.get_wallet()
 
     def test_fallback_caches_result(self, tmp_path):
         """When get_wallet succeeds, result is cached for next call."""

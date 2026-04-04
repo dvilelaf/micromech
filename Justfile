@@ -33,7 +33,7 @@ test-integration:
 test-anvil:
     #!/usr/bin/env bash
     set -e
-    RPC_URL=$(grep -m1 'gnosis_rpc=' /media/david/DATA/repos/triton/secrets.env | cut -d= -f2 | cut -d, -f1)
+    RPC_URL=$(grep -m1 'gnosis_rpc=' secrets.env | cut -d= -f2 | cut -d, -f1)
     if [ -z "$RPC_URL" ]; then
         echo "No gnosis_rpc found"
         exit 1
@@ -50,7 +50,7 @@ test-anvil:
 test-multichain:
     #!/usr/bin/env bash
     set -e
-    SECRETS=/media/david/DATA/repos/triton/secrets.env
+    SECRETS=secrets.env
     ANVIL=~/.foundry/bin/anvil
     PIDS=()
 
@@ -113,7 +113,7 @@ test-multichain:
 anvil-fork chains="gnosis":
     #!/usr/bin/env bash
     set -e
-    SECRETS=/media/david/DATA/repos/triton/secrets.env
+    SECRETS=secrets.env
     ANVIL=~/.foundry/bin/anvil
 
     declare -A RPC_KEYS=( [gnosis]=gnosis_rpc [base]=base_rpc [ethereum]=ethereum_rpc \
