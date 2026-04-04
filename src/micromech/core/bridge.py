@@ -166,6 +166,7 @@ def check_balances(chain_name: str) -> tuple[float, float]:
 
     Returns (native_balance, olas_balance) in whole units.
     Caches Wallet and ChainInterfaces across calls to avoid repeated RPC probing.
+    Uses the first (primary) RPC directly to ensure Anvil fork hits are consistent.
     """
     global _cached_wallet, _cached_interfaces  # noqa: PLW0603
 
@@ -192,7 +193,10 @@ def check_balances(chain_name: str) -> tuple[float, float]:
         if not ci:
             return 0.0, 0.0
 
-        native_wei = ci.with_retry(lambda: ci.web3.eth.get_balance(address))
+        # Use the primary web3 instance directly (first RPC = Anvil fork if set).
+        # with_retry rotates RPCs and may skip the fork on first call.
+        w3 = ci.web3
+        native_wei = w3.eth.get_balance(address)
         native = native_wei / 1e18
 
         # Get OLAS balance
@@ -210,13 +214,10 @@ def check_balances(chain_name: str) -> tuple[float, float]:
                         "type": "function",
                     }
                 ]
-                # olas_addr is already an EthereumAddress (checksummed)
-                contract = ci.web3.eth.contract(
+                contract = w3.eth.contract(
                     address=str(olas_addr), abi=erc20_abi
                 )
-                raw = ci.with_retry(
-                    lambda: contract.functions.balanceOf(address).call()
-                )
+                raw = contract.functions.balanceOf(address).call()
                 olas_balance = raw / 1e18
         except Exception:
             logger.debug("Failed to check OLAS balance on {}", chain_name)
