@@ -21,9 +21,11 @@ from micromech.core.constants import (
     DEFAULT_LLM_FILE,
     DEFAULT_LLM_MAX_TOKENS,
     DEFAULT_LLM_MODEL,
+    DEFAULT_LLM_PRESET,
     DEFAULT_MAX_CONCURRENT,
     DEFAULT_PORT,
     DEFAULT_REQUEST_TIMEOUT,
+    LLM_MODEL_PRESETS,
     validate_eth_address,
 )
 
@@ -114,13 +116,30 @@ class PersistenceConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
-    """Built-in LLM tool settings."""
+    """Built-in LLM tool settings.
 
+    Use ``model`` to select a preset (e.g. "qwen", "gemma4"), or override
+    ``model_repo`` / ``model_file`` directly for a custom GGUF model.
+    """
+
+    model: str = DEFAULT_LLM_PRESET
     model_repo: str = DEFAULT_LLM_MODEL
     model_file: str = DEFAULT_LLM_FILE
     max_tokens: int = Field(default=DEFAULT_LLM_MAX_TOKENS, ge=1, le=4096)
     context_size: int = Field(default=DEFAULT_LLM_CONTEXT_SIZE, ge=256, le=32768)
     models_dir: Path = Field(default=DEFAULT_CONFIG_DIR / "models")
+
+    @model_validator(mode="before")
+    @classmethod
+    def resolve_preset(cls, data: Any) -> Any:
+        """If model preset is given, fill in model_repo/model_file from it."""
+        if isinstance(data, dict):
+            preset = data.get("model", DEFAULT_LLM_PRESET)
+            if preset in LLM_MODEL_PRESETS:
+                repo, fname = LLM_MODEL_PRESETS[preset]
+                data.setdefault("model_repo", repo)
+                data.setdefault("model_file", fname)
+        return data
 
 
 class IpfsConfig(BaseModel):

@@ -1,6 +1,7 @@
 """Local LLM tool using llama-cpp-python.
 
 Valory-compatible: ALLOWED_TOOLS + run(**kwargs) -> MechResponse.
+Supports multiple models via presets (qwen, gemma4) or custom repo/file.
 Default model: Qwen2.5-0.5B-Instruct (Q4_K_M). Runs on CPU, ~400MB RAM.
 """
 
@@ -16,44 +17,64 @@ from micromech.core.constants import (
     DEFAULT_LLM_FILE,
     DEFAULT_LLM_MAX_TOKENS,
     DEFAULT_LLM_MODEL,
+    LLM_MODEL_PRESETS,
 )
 
 ALLOWED_TOOLS = ["llm"]
 
-_llm_instance: Optional[Any] = None
+_llm_instances: dict[str, Any] = {}
 _llm_lock = threading.Lock()
 
 
 def _get_llm(
     model_repo: str = DEFAULT_LLM_MODEL,
     model_file: str = DEFAULT_LLM_FILE,
+    context_size: int = DEFAULT_LLM_CONTEXT_SIZE,
+    models_dir: Optional[Path] = None,
 ) -> Any:
-    """Get or create the singleton LLM instance (thread-safe)."""
-    global _llm_instance
-    if _llm_instance is None:
-        with _llm_lock:
-            if _llm_instance is None:
-                from huggingface_hub import hf_hub_download
-                from llama_cpp import Llama
+    """Get or create an LLM instance for the given model (thread-safe).
 
-                models_dir = Path.home() / ".micromech" / "models"
-                models_dir.mkdir(parents=True, exist_ok=True)
-                model_path = models_dir / model_file
-                if not model_path.exists():
-                    logger.info("Downloading {} from {}", model_file, model_repo)
-                    hf_hub_download(
-                        repo_id=model_repo,
-                        filename=model_file,
-                        local_dir=str(models_dir),
-                    )
-                logger.info("Loading LLM from {}", model_path)
-                _llm_instance = Llama(
-                    model_path=str(model_path),
-                    n_ctx=DEFAULT_LLM_CONTEXT_SIZE,
-                    n_threads=4,
-                    verbose=False,
-                )
-    return _llm_instance
+    Instances are cached by model_file so switching models doesn't reload.
+    """
+    if model_file in _llm_instances:
+        return _llm_instances[model_file]
+
+    with _llm_lock:
+        if model_file in _llm_instances:
+            return _llm_instances[model_file]
+
+        from huggingface_hub import hf_hub_download
+        from llama_cpp import Llama
+
+        mdir = models_dir or (Path.home() / ".micromech" / "models")
+        mdir.mkdir(parents=True, exist_ok=True)
+        model_path = mdir / model_file
+        if not model_path.exists():
+            logger.info("Downloading {} from {}", model_file, model_repo)
+            hf_hub_download(
+                repo_id=model_repo,
+                filename=model_file,
+                local_dir=str(mdir),
+            )
+        logger.info("Loading LLM from {}", model_path)
+        instance = Llama(
+            model_path=str(model_path),
+            n_ctx=context_size,
+            n_threads=4,
+            verbose=False,
+        )
+        _llm_instances[model_file] = instance
+    return instance
+
+
+def _resolve_model(kwargs: dict[str, Any]) -> tuple[str, str]:
+    """Resolve model_repo and model_file from kwargs (preset or explicit)."""
+    model_preset = kwargs.get("model")
+    if model_preset and model_preset in LLM_MODEL_PRESETS:
+        return LLM_MODEL_PRESETS[model_preset]
+    model_repo = kwargs.get("model_repo", DEFAULT_LLM_MODEL)
+    model_file = kwargs.get("model_file", DEFAULT_LLM_FILE)
+    return model_repo, model_file
 
 
 def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str, Any]], Any]:
@@ -61,6 +82,9 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
 
     kwargs:
         prompt: The input text.
+        model: Optional preset name ("qwen", "gemma4").
+        model_repo: Optional HuggingFace repo (overrides preset).
+        model_file: Optional GGUF filename (overrides preset).
         system_prompt: Optional system prompt (default: "You are a helpful assistant.").
         max_tokens: Optional max tokens.
         temperature: Optional temperature.
@@ -72,7 +96,8 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
     temperature = kwargs.get("temperature", 0.3)
     counter_callback = kwargs.get("counter_callback")
 
-    llm = _get_llm()
+    model_repo, model_file = _resolve_model(kwargs)
+    llm = _get_llm(model_repo=model_repo, model_file=model_file)
 
     response = llm.create_chat_completion(
         messages=[
@@ -89,7 +114,7 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
     result = json.dumps(
         {
             "result": content,
-            "model": DEFAULT_LLM_MODEL,
+            "model": model_repo,
             "tokens": usage.get("total_tokens", 0),
         }
     )

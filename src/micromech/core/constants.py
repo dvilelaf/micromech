@@ -51,10 +51,18 @@ DEFAULT_DB_NAME = "micromech.db"
 DEFAULT_CLEANUP_DAYS = 30
 
 # LLM defaults
-DEFAULT_LLM_MODEL = "Qwen/Qwen2.5-0.5B-Instruct-GGUF"
-DEFAULT_LLM_FILE = "qwen2.5-0.5b-instruct-q4_k_m.gguf"
 DEFAULT_LLM_MAX_TOKENS = 256
 DEFAULT_LLM_CONTEXT_SIZE = 2048
+
+# Available model presets: {preset_name: (repo_id, gguf_filename)}
+LLM_MODEL_PRESETS: dict[str, tuple[str, str]] = {
+    "qwen": ("Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q4_k_m.gguf"),
+    "gemma4": ("unsloth/gemma-4-E2B-it-GGUF", "gemma-4-E2B-it-Q4_K_M.gguf"),
+}
+
+DEFAULT_LLM_PRESET = "qwen"
+DEFAULT_LLM_MODEL = LLM_MODEL_PRESETS[DEFAULT_LLM_PRESET][0]
+DEFAULT_LLM_FILE = LLM_MODEL_PRESETS[DEFAULT_LLM_PRESET][1]
 
 # Request statuses (Final for mypy Literal compatibility)
 STATUS_PENDING: Final = "pending"

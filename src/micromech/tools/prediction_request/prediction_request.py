@@ -105,9 +105,10 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
 
     # Use local LLM for inference
     try:
-        from micromech.tools.llm_tool.llm_tool import _get_llm
+        from micromech.tools.llm_tool.llm_tool import _get_llm, _resolve_model
 
-        llm = _get_llm()
+        model_repo, model_file = _resolve_model(kwargs)
+        llm = _get_llm(model_repo=model_repo, model_file=model_file)
         response = llm.create_chat_completion(
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
