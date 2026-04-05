@@ -1,8 +1,8 @@
-"""Demo: send random on-chain requests to micromech.
+"""Demo: send random on-chain requests to micromech and display results.
 
-Auto-discovers all deployed chains and mech addresses from config.
-Creates a temporary wallet, funds it via Anvil impersonation,
-and sends marketplace.request() every 5 seconds.
+Auto-discovers deployed chains and mech addresses from config.
+Creates a temporary wallet, funds it via Anvil, sends marketplace
+requests every 5 seconds, and polls for results — all in a live table.
 
 Usage:
     uv run python scripts/demo_requests.py
@@ -11,10 +11,20 @@ Usage:
 import json
 import random
 import sys
+import threading
 import time
+import warnings
 
+import requests as http_requests
 from eth_account import Account
+from rich.console import Console
+from rich.live import Live
+from rich.table import Table
+from rich.text import Text
 from web3 import Web3
+
+# Suppress web3 ABI mismatch warnings (marketplace ABI is minimal)
+warnings.filterwarnings("ignore", message=".*MismatchedABI.*")
 
 TOOL_PROMPTS: dict[str, list[str]] = {
     "echo": [
@@ -45,46 +55,53 @@ TOOL_PROMPTS: dict[str, list[str]] = {
     ],
 }
 
-# ANSI
-RST = "\033[0m"
-B = "\033[1m"
-DIM = "\033[2m"
-CYN = "\033[36m"
-GRN = "\033[32m"
-YEL = "\033[33m"
-RED = "\033[31m"
-MAG = "\033[35m"
-BLU = "\033[34m"
-
-TOOL_CLR = {"echo": BLU, "llm": CYN, "prediction-offline": MAG, "gemma4-api": GRN}
+TOOL_STYLES = {
+    "echo": "blue",
+    "llm": "cyan",
+    "prediction-offline": "magenta",
+    "gemma4-api": "green",
+}
 
 PAYMENT_TYPE_NATIVE = bytes.fromhex(
     "ba699a34be8fe0e7725e93dcbce1701b0211a8ca61330aaeb8a05bf2ec7abed1"
 )
 
-# Anvil ports per chain
 ANVIL_PORTS: dict[str, int] = {
     "gnosis": 18545, "base": 18546, "ethereum": 18547,
     "polygon": 18548, "optimism": 18549, "arbitrum": 18550, "celo": 18551,
 }
 
 
+# ── Row model ────────────────────────────────────────────────────────
+
+class RequestRow:
+    def __init__(self, idx: int, chain: str, tool: str, prompt: str):
+        self.idx = idx
+        self.chain = chain
+        self.tool = tool
+        self.prompt = prompt
+        self.status = "sending"
+        self.request_id: str | None = None
+        self.response: str | None = None
+        self.elapsed: float = 0
+        self.t0 = time.time()
+
+
+# ── Helpers ──────────────────────────────────────────────────────────
+
 def get_anvil_w3(chain: str) -> Web3 | None:
-    """Connect to a running Anvil fork for this chain."""
     port = ANVIL_PORTS.get(chain)
     if not port:
         return None
-    url = f"http://localhost:{port}"
-    w3 = Web3(Web3.HTTPProvider(url))
+    w3 = Web3(Web3.HTTPProvider(f"http://localhost:{port}"))
     try:
-        w3.eth.chain_id  # test connection
+        w3.eth.chain_id
         return w3
     except Exception:
         return None
 
 
 def fund_via_anvil(w3: Web3, address: str, amount_wei: int) -> bool:
-    """Fund an address on Anvil via anvil_setBalance."""
     try:
         w3.provider.make_request("anvil_setBalance", [address, hex(amount_wei)])
         return True
@@ -92,10 +109,138 @@ def fund_via_anvil(w3: Web3, address: str, amount_wei: int) -> bool:
         return False
 
 
+def extract_request_id(receipt: dict, marketplace_addr: str) -> str | None:
+    """Extract the first requestId from MarketplaceRequest event logs."""
+    mp_lower = marketplace_addr.lower()
+    for log in receipt.get("logs", []):
+        log_addr = (log.get("address") or "").lower()
+        if log_addr != mp_lower:
+            continue
+        # requestIds is in the data (non-indexed), decode from ABI
+        # Simpler: topic[0] is event sig, data contains requestIds array
+        # The requestIds bytes32[] is the 4th field in data
+        topics = log.get("topics", [])
+        data = log.get("data", b"")
+        if isinstance(data, bytes) and len(data) >= 128 and len(topics) >= 1:
+            # Skip to requestIds: offset(0) + offset(32) + numRequests(64) + ...
+            # ABI decode: first 32 bytes = numRequests offset, complex.
+            # Easier: just grab from decoded event if available
+            pass
+    # Fallback: use web3 receipt processing
+    return None
+
+
+def format_response(result_data: dict | None) -> str:
+    """Format a mech response for display."""
+    if not result_data:
+        return ""
+
+    # Prediction tools
+    if "p_yes" in result_data:
+        p_yes = result_data["p_yes"]
+        p_no = result_data["p_no"]
+        conf = result_data.get("confidence", 0)
+        yes_bar = "█" * round(p_yes * 20)
+        no_bar = "█" * (20 - round(p_yes * 20))
+        return f"[green]{yes_bar}[/green][red]{no_bar}[/red] YES {p_yes:.0%} / NO {p_no:.0%} (conf {conf:.0%})"
+
+    # LLM tools
+    if "result" in result_data:
+        text = result_data["result"]
+        if len(text) > 120:
+            text = text[:120] + "..."
+        model = result_data.get("model", "")
+        suffix = f" [dim]\\[{model.split('/')[-1]}][/dim]" if model else ""
+        return text + suffix
+
+    return json.dumps(result_data)[:120]
+
+
+def build_table(rows: list[RequestRow], title: str) -> Table:
+    """Build a rich Table from current rows."""
+    table = Table(title=title, expand=True, border_style="dim", title_style="bold")
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Chain", width=8)
+    table.add_column("Tool", width=20)
+    table.add_column("Prompt", width=40, no_wrap=True)
+    table.add_column("Status", width=12)
+    table.add_column("Response", ratio=1)
+    table.add_column("Time", width=6, justify="right")
+
+    # Show last 15 rows
+    for row in rows[-15:]:
+        style = TOOL_STYLES.get(row.tool, "white")
+
+        if row.status == "sending":
+            status = Text("sending", style="yellow")
+        elif row.status == "pending":
+            status = Text("pending", style="yellow")
+        elif row.status == "done":
+            status = Text("done", style="green")
+        elif row.status == "failed":
+            status = Text("failed", style="red")
+        else:
+            status = Text(row.status, style="dim")
+
+        prompt_text = row.prompt
+        if len(prompt_text) > 38:
+            prompt_text = prompt_text[:38] + "..."
+
+        response_text = Text.from_markup(row.response or "") if row.response else Text("")
+
+        elapsed = f"{row.elapsed:.1f}s" if row.elapsed > 0 else ""
+
+        table.add_row(
+            str(row.idx),
+            row.chain,
+            Text(row.tool, style=style),
+            prompt_text,
+            status,
+            response_text,
+            elapsed,
+        )
+
+    return table
+
+
+# ── Result poller (background) ───────────────────────────────────────
+
+def poll_results(rows: list[RequestRow], base_url: str, stop_event: threading.Event):
+    """Background thread: poll mech HTTP API for results of pending requests."""
+    while not stop_event.is_set():
+        for row in rows:
+            if row.status not in ("pending",):
+                continue
+            if not row.request_id:
+                continue
+            try:
+                resp = http_requests.get(
+                    f"{base_url}/result/{row.request_id}", timeout=3,
+                )
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                status = data.get("status", "")
+                if status in ("executed", "delivered"):
+                    row.status = "done"
+                    row.elapsed = time.time() - row.t0
+                    row.response = format_response(data.get("result"))
+                elif status == "failed":
+                    row.status = "failed"
+                    row.elapsed = time.time() - row.t0
+                    row.response = data.get("error", "unknown error")
+            except Exception:
+                pass
+        stop_event.wait(1)
+
+
+# ── Main ─────────────────────────────────────────────────────────────
+
 def main():
     from micromech.core.config import MicromechConfig
     from micromech.runtime.contracts import load_marketplace_abi
 
+    console = Console(force_terminal=True)
     cfg = MicromechConfig.load()
 
     # Discover deployed chains with running Anvil forks
@@ -110,99 +255,133 @@ def main():
             anvil_w3s[name] = w3
 
     if not chains:
-        print(f"{RED}No deployed chains with running Anvil forks found.{RST}")
-        print(f"{DIM}Start Anvil with: just anvil-fork{RST}")
+        console.print("[red]No deployed chains with running Anvil forks found.[/red]")
+        console.print("[dim]Start Anvil with: just anvil-fork[/dim]")
         sys.exit(1)
 
-    # Create temporary wallet
+    # Create temporary wallet + fund
     acct = Account.create()
     sender = acct.address
     private_key = acct.key
 
-    # Fund on all chains
     abi = load_marketplace_abi()
     marketplaces: dict[str, any] = {}
     fund_amount = Web3.to_wei(1, "ether")
 
-    print(f"\n{B}micromech on-chain demo{RST}")
-    print(f"{DIM}{'─' * 60}{RST}")
-    print(f"  Sender: {DIM}{sender} (temporary){RST}")
+    console.print()
+    console.print("[bold]micromech on-chain demo[/bold]")
+    console.print(f"[dim]Sender: {sender} (temporary)[/dim]")
 
     for ch in chains:
         w3 = anvil_w3s[ch]
         cc = cfg.chains[ch]
         ok = fund_via_anvil(w3, sender, fund_amount)
         bal = w3.from_wei(w3.eth.get_balance(sender), "ether")
-        status = f"{GRN}funded {bal:.2f}{RST}" if ok else f"{RED}fund failed{RST}"
-        print(f"  {CYN}{ch}{RST}: mech {DIM}{cc.mech_address}{RST}  [{status}]")
+        status = f"[green]funded {bal:.2f}[/green]" if ok else "[red]failed[/red]"
+        console.print(f"  [cyan]{ch}[/cyan]: {status}  mech [dim]{cc.mech_address}[/dim]")
         marketplaces[ch] = w3.eth.contract(
             address=w3.to_checksum_address(cc.marketplace_address), abi=abi,
         )
 
-    tools = list(TOOL_PROMPTS.keys())
-    print(f"  Tools:  {', '.join(f'{TOOL_CLR.get(t, CYN)}{B}{t}{RST}' for t in tools)}")
-    print(f"{DIM}{'─' * 60}{RST}")
-    print(f"{DIM}Sending requests every 5s. Ctrl+C to stop.{RST}\n")
+    # Exclude tools that require missing API keys
+    import os
+    tools = [t for t in TOOL_PROMPTS if t != "gemma4-api" or os.environ.get("GOOGLE_API_KEY")]
+
+    # Detect mech HTTP API URL from config
+    host = cfg.runtime.host
+    port = cfg.runtime.port
+    if host in ("0.0.0.0", "::"):
+        host = "127.0.0.1"
+    base_url = f"http://{host}:{port}"
+
+    console.print(f"  API: [dim]{base_url}[/dim]")
+    console.print()
+
+    # State
+    rows: list[RequestRow] = []
+    stop_event = threading.Event()
+
+    # Start background poller
+    poller = threading.Thread(
+        target=poll_results, args=(rows, base_url, stop_event), daemon=True,
+    )
+    poller.start()
 
     count = 0
     try:
-        while True:
-            count += 1
-            chain = random.choice(chains)
-            tool = random.choice(tools)
-            prompt = random.choice(TOOL_PROMPTS[tool])
-            cc = cfg.chains[chain]
-            w3 = anvil_w3s[chain]
-            mp = marketplaces[chain]
+        with Live(
+            build_table(rows, "micromech demo"),
+            console=console,
+            refresh_per_second=2,
+        ) as live:
+            while True:
+                count += 1
+                chain = random.choice(chains)
+                tool = random.choice(tools)
+                prompt = random.choice(TOOL_PROMPTS[tool])
+                cc = cfg.chains[chain]
+                w3 = anvil_w3s[chain]
+                mp = marketplaces[chain]
 
-            ts = time.strftime("%H:%M:%S")
-            tc = TOOL_CLR.get(tool, CYN)
-            print(f"{DIM}[{ts}]{RST}  #{count}  {CYN}{chain}{RST}  {tc}{B}{tool}{RST}")
-            print(f"  {YEL}> {prompt}{RST}")
+                row = RequestRow(count, chain, tool, prompt)
+                rows.append(row)
+                live.update(build_table(rows, "micromech demo"))
 
-            t0 = time.time()
-            try:
-                request_data = json.dumps({"prompt": prompt, "tool": tool}).encode()
-                fee = mp.functions.fee().call()
-                value = cc.delivery_rate + fee
+                # Send on-chain request
+                try:
+                    request_data = json.dumps({"prompt": prompt, "tool": tool}).encode()
+                    fee = mp.functions.fee().call()
+                    value = cc.delivery_rate + fee
 
-                fn_call = mp.functions.request(
-                    request_data,
-                    cc.delivery_rate,
-                    PAYMENT_TYPE_NATIVE,
-                    w3.to_checksum_address(cc.mech_address),
-                    300,
-                    b"",
-                )
+                    fn_call = mp.functions.request(
+                        request_data, cc.delivery_rate, PAYMENT_TYPE_NATIVE,
+                        w3.to_checksum_address(cc.mech_address), 300, b"",
+                    )
 
-                tx = fn_call.build_transaction({
-                    "from": sender,
-                    "value": value,
-                    "gas": 500_000,
-                    "gasPrice": w3.eth.gas_price,
-                    "nonce": w3.eth.get_transaction_count(sender),
-                    "chainId": w3.eth.chain_id,
-                })
+                    tx = fn_call.build_transaction({
+                        "from": sender,
+                        "value": value,
+                        "gas": 500_000,
+                        "gasPrice": w3.eth.gas_price,
+                        "nonce": w3.eth.get_transaction_count(sender),
+                        "chainId": w3.eth.chain_id,
+                    })
 
-                signed = w3.eth.account.sign_transaction(tx, private_key=private_key)
-                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-                receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+                    signed = w3.eth.account.sign_transaction(tx, private_key=private_key)
+                    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
 
-                elapsed = time.time() - t0
-                if receipt["status"] == 1:
-                    h = tx_hash.hex()
-                    print(f"  {GRN}OK{RST}  {DIM}{h[:20]}...  ({elapsed:.1f}s){RST}")
-                else:
-                    print(f"  {RED}TX reverted{RST}  {DIM}({elapsed:.1f}s){RST}")
-            except Exception as e:
-                elapsed = time.time() - t0
-                print(f"  {RED}Error: {e}{RST}  {DIM}({elapsed:.1f}s){RST}")
+                    if receipt["status"] == 1:
+                        # Extract request_id from MarketplaceRequest event
+                        req_id = None
+                        try:
+                            parsed = mp.events.MarketplaceRequest().process_receipt(
+                                receipt, errors=mp.events.MarketplaceRequest.EventLogErrorFlags.Discard,
+                            )
+                            if parsed:
+                                rid = parsed[0]["args"]["requestIds"][0]
+                                req_id = rid.hex() if isinstance(rid, bytes) else str(rid)
+                        except Exception:
+                            pass
 
-            print()
-            time.sleep(5)
+                        row.request_id = req_id
+                        row.status = "pending"
+                        row.elapsed = time.time() - row.t0
+                    else:
+                        row.status = "failed"
+                        row.response = "TX reverted"
+                        row.elapsed = time.time() - row.t0
+                except Exception as e:
+                    row.status = "failed"
+                    row.response = str(e)[:80]
+                    row.elapsed = time.time() - row.t0
+
+                live.update(build_table(rows, "micromech demo"))
+                time.sleep(5)
 
     except KeyboardInterrupt:
-        print(f"\n{DIM}Stopped after {count} request(s).{RST}")
+        stop_event.set()
+        console.print(f"\n[dim]Stopped after {count} request(s).[/dim]")
 
 
 if __name__ == "__main__":
