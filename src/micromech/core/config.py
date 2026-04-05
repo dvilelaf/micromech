@@ -146,7 +146,7 @@ class IpfsConfig(BaseModel):
     """IPFS settings."""
 
     gateway: str = "https://gateway.autonolas.tech/ipfs/"
-    api_url: str = "http://localhost:5001"
+    api_url: str = "https://registry.autonolas.tech"
     timeout: int = Field(default=30, ge=5, le=120)
     enabled: bool = True
 
