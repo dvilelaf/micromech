@@ -626,12 +626,16 @@ def create_web_app(
                             payload["events"] = new_events
                             last_event_ts = time.time()
 
-                    if tick % 5 == 0:
+                    # Include queue counts on first tick and every 5 ticks
+                    if tick <= 1 or tick % 5 == 0:
                         status = get_status()
                         payload["queue"] = status.get("queue", {})
                         payload["delivered_total"] = status.get(
                             "delivered_total", 0,
                         )
+                        # Populate live from status if no metrics collector
+                        if not metrics and "metrics" in status:
+                            payload["live"] = status["metrics"]
 
                     yield f"data: {json.dumps(payload)}\n\n"
             finally:

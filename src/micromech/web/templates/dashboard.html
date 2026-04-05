@@ -255,12 +255,12 @@
                     </div>
                 </div>
 
-                <div class="charts-grid">
-                    <div class="glass chart-card">
+                <div class="charts-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 250px));">
+                    <div class="glass chart-card" style="max-width:250px;">
                         <h3>Queue Status</h3>
                         <canvas id="queueChart"></canvas>
                     </div>
-                    <div class="glass chart-card">
+                    <div class="glass chart-card" style="max-width:250px;">
                         <h3>Request Channels</h3>
                         <canvas id="channelChart"></canvas>
                     </div>
@@ -1008,16 +1008,25 @@
     }
 
     async function runtimeAction(action) {
+        // Disable all popover buttons during action
+        document.querySelectorAll('#popover-buttons button').forEach(b => b.disabled = true);
         try {
             const resp = await fetch('/api/runtime/' + action, {
                 method: 'POST',
                 headers: authHeaders({'X-Micromech-Action': action}),
             });
             const data = await resp.json();
-            if (data.state) updateRuntimeIndicator(data.state);
+            if (data.error) {
+                console.error('Runtime action error:', data.error);
+            }
+            if (data.state) {
+                updateRuntimeIndicator(data.state);
+                updatePopoverContent(data.state);
+            }
         } catch (e) {
             console.error('Runtime action failed:', e);
         }
+        document.querySelectorAll('#popover-buttons button').forEach(b => b.disabled = false);
     }
 
     // --- Reputation ---
