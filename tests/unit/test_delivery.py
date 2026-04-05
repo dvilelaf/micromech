@@ -4,6 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# lxml (from ddgs) and llama_cpp C extensions segfault in the same process
+pytestmark = pytest.mark.forked
+
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import STATUS_EXECUTED
 from micromech.core.models import MechRequest, ToolResult

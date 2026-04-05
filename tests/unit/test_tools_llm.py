@@ -3,6 +3,11 @@
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+# lxml (from ddgs) and llama_cpp C extensions segfault in the same process
+pytestmark = pytest.mark.forked
+
 
 class TestLlmTool:
     """Test llm_tool.run() with mocked llama-cpp and huggingface-hub."""
