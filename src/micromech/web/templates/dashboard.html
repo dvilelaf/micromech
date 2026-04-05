@@ -241,7 +241,7 @@
                         <div class="metric-label">Avg Exec Time</div>
                     </div>
                     <div class="glass metric-card">
-                        <div class="metric-value" id="m-success-rate">100%</div>
+                        <div class="metric-value" id="m-success-rate">-</div>
                         <div class="metric-label">Success Rate</div>
                     </div>
                     <div class="glass metric-card">
@@ -255,12 +255,12 @@
                     </div>
                 </div>
 
-                <div class="charts-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 250px));">
-                    <div class="glass chart-card" style="max-width:250px;">
+                <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:1.5rem; max-width:700px; margin-bottom:1.5rem;">
+                    <div class="glass chart-card">
                         <h3>Queue Status</h3>
                         <canvas id="queueChart"></canvas>
                     </div>
-                    <div class="glass chart-card" style="max-width:250px;">
+                    <div class="glass chart-card">
                         <h3>Request Channels</h3>
                         <canvas id="channelChart"></canvas>
                     </div>
@@ -459,7 +459,8 @@
         setText('m-delivered', (data.delivered_total ?? live.deliveries_completed) ?? 0);
         setText('m-failed', live.executions_failed ?? 0);
         setText('m-avg-time', (live.avg_execution_time ?? 0).toFixed(2) + 's');
-        setText('m-success-rate', (live.success_rate ?? 100).toFixed(1) + '%');
+        const received = live.requests_received ?? 0;
+        setText('m-success-rate', received > 0 ? (live.success_rate ?? 100).toFixed(1) + '%' : '-');
         setText('m-uptime', formatUptime(live.uptime ?? 0));
     }
 
