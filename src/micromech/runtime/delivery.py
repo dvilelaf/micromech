@@ -116,6 +116,16 @@ class DeliveryManager:
         if self.bridge is None:
             return 0
 
+        # Check if wallet is available for signing
+        try:
+            _ = self.bridge.wallet.key_storage
+        except Exception:
+            if not getattr(self, "_wallet_warning_logged", False):
+                logger.warning("Delivery skipped: no wallet available. "
+                               "Set wallet_password in secrets.env or use the web wizard.")
+                self._wallet_warning_logged = True
+            return 0
+
         records = self.queue.get_undelivered(
             limit=self.config.runtime.delivery_batch_size, chain=self._chain_name
         )
