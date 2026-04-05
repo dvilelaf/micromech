@@ -1,8 +1,8 @@
 # micromech
 
-**Earn crypto by lending your computer's brain power.** micromech connects your machine to the [OLAS network](https://olas.network/) — a marketplace where people pay for AI tasks. Your computer picks up these tasks, solves them, and you earn OLAS tokens as a reward. Think of it like renting out your computer as an AI worker.
+**A lightweight mech for the [OLAS](https://olas.network/) network.** micromech runs an autonomous AI agent (called a "mech") that listens for on-chain requests, solves them using pluggable tools, and delivers results back on-chain.
 
-You don't need to know anything about crypto, AI, or programming to get started.
+No prior experience with OLAS or blockchain development is needed to get started.
 
 ## What You Need
 
