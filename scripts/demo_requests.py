@@ -208,76 +208,42 @@ def build_table(rows: list[RequestRow], title: str) -> Table:
 
 def poll_results(
     rows: list[RequestRow],
-    marketplaces: dict,
-    anvil_w3s: dict,
-    cfg: Any,
+    base_url: str,
     stop_event: threading.Event,
 ):
-    """Background thread: poll on-chain MarketplaceDelivery events."""
-    # Track the earliest pending block per chain (never advance past pending requests)
-    scan_from: dict[str, int] = {}
-
+    """Background thread: poll HTTP /result/{request_id} for pending requests."""
     while not stop_event.is_set():
-        pending = {r.request_id: r for r in rows if r.status == "pending" and r.request_id}
-        if not pending:
-            stop_event.wait(2)
-            continue
-
-        for chain_name, w3 in anvil_w3s.items():
-            mp = marketplaces.get(chain_name)
-            if not mp:
+        try:
+            pending = [r for r in rows if r.status == "pending" and r.request_id]
+            if not pending:
+                stop_event.wait(2)
                 continue
-            try:
-                current = w3.eth.block_number
-                # Always scan from a few blocks before the earliest pending request
-                # to never miss a delivery event
-                if chain_name not in scan_from:
-                    scan_from[chain_name] = max(0, current - 10)
-                from_blk = scan_from[chain_name]
 
-                # Scan MarketplaceDelivery to detect delivered requests,
-                # then fetch full response from mech's /result endpoint.
-                logs = mp.events.MarketplaceDelivery.get_logs(
-                    from_block=from_blk, to_block=current,
-                )
-                for log in logs:
-                    rids = log.args.get("requestIds", [])
-                    for rid in rids:
-                        rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
-                        if rid_hex not in pending:
-                            continue
-                        row = pending[rid_hex]
-                        # Fetch response from mech HTTP API
-                        try:
-                            cc = cfg.chains.get(chain_name)
-                            host = cfg.runtime.host
-                            if host in ("0.0.0.0", "::"):
-                                host = "127.0.0.1"
-                            url = f"http://{host}:{cfg.runtime.port}"
-                            resp = http_requests.get(
-                                f"{url}/result/{rid_hex}", timeout=3,
-                            )
-                            if resp.status_code == 200:
-                                data = resp.json()
-                                row.response = format_response(
-                                    data.get("result"),
-                                )
-                        except Exception:
-                            row.response = "delivered"
-                        row.status = "done"
-                        row.elapsed = time.time() - row.t0
+            for row in pending:
+                try:
+                    resp = http_requests.get(
+                        f"{base_url}/result/{row.request_id}", timeout=5,
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        status = data.get("status", "")
+                        if status in ("executed", "delivered"):
+                            row.response = format_response(data.get("result"))
+                            row.status = "done"
+                            row.elapsed = time.time() - row.t0
+                    elif resp.status_code == 404:
+                        # Not yet known to the mech, keep polling
+                        pass
+                except http_requests.RequestException as e:
+                    # Log but don't crash the poller
+                    import sys
+                    print(f"[poller] HTTP error for {row.request_id}: {e}", file=sys.stderr)
 
-                # Only advance scan_from if no pending requests remain
-                still_pending = any(
-                    r.status == "pending" for r in rows
-                    if hasattr(r, "chain") and r.chain == chain_name
-                )
-                if not still_pending:
-                    scan_from[chain_name] = current
-            except Exception:
-                pass
-
-        stop_event.wait(3)
+            stop_event.wait(2.5)
+        except Exception as e:
+            import sys
+            print(f"[poller] Unexpected error: {e}", file=sys.stderr)
+            stop_event.wait(5)
 
 
 # ── Main ─────────────────────────────────────────────────────────────
@@ -350,7 +316,7 @@ def main():
     # Start background poller
     poller = threading.Thread(
         target=poll_results,
-        args=(rows, marketplaces, anvil_w3s, cfg, stop_event),
+        args=(rows, base_url, stop_event),
         daemon=True,
     )
     poller.start()
@@ -403,14 +369,15 @@ def main():
                         # Extract request_id from MarketplaceRequest event
                         req_id = None
                         try:
+                            from web3._utils.events import EventLogErrorFlags
                             parsed = mp.events.MarketplaceRequest().process_receipt(
-                                receipt, errors=mp.events.MarketplaceRequest.EventLogErrorFlags.Discard,
+                                receipt, errors=EventLogErrorFlags.Discard,
                             )
                             if parsed:
                                 rid = parsed[0]["args"]["requestIds"][0]
                                 req_id = rid.hex() if isinstance(rid, bytes) else str(rid)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            console.print(f"[red]Event parse error: {e}[/red]")
 
                         row.request_id = req_id
                         row.status = "pending"
