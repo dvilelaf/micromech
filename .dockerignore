@@ -11,4 +11,6 @@ __pycache__
 .venv
 *.key
 *.pem
-scripts/
+scripts/*
+!scripts/quickstart.sh
+!scripts/updater.sh
