@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import warnings
+from typing import Any
 
 import requests as http_requests
 from eth_account import Account
@@ -205,35 +206,70 @@ def build_table(rows: list[RequestRow], title: str) -> Table:
 
 # ── Result poller (background) ───────────────────────────────────────
 
-def poll_results(rows: list[RequestRow], base_url: str, stop_event: threading.Event):
-    """Background thread: poll mech HTTP API for results of pending requests."""
+def poll_results(
+    rows: list[RequestRow],
+    marketplaces: dict,
+    anvil_w3s: dict,
+    cfg: Any,
+    stop_event: threading.Event,
+):
+    """Background thread: poll on-chain Deliver events for pending requests."""
+    # Track last scanned block per chain
+    last_block: dict[str, int] = {}
+
     while not stop_event.is_set():
-        for row in rows:
-            if row.status not in ("pending",):
-                continue
-            if not row.request_id:
+        pending = {r.request_id: r for r in rows if r.status == "pending" and r.request_id}
+        if not pending:
+            stop_event.wait(2)
+            continue
+
+        for chain_name, w3 in anvil_w3s.items():
+            mp = marketplaces.get(chain_name)
+            if not mp:
                 continue
             try:
-                resp = http_requests.get(
-                    f"{base_url}/result/{row.request_id}", timeout=3,
+                current = w3.eth.block_number
+                from_blk = last_block.get(chain_name, current - 50)
+
+                # Scan Deliver events
+                logs = mp.events.Deliver.get_logs(
+                    from_block=from_blk, to_block=current,
                 )
-                if resp.status_code == 404:
-                    continue  # Not processed yet
-                if resp.status_code != 200:
-                    continue
-                data = resp.json()
-                status = data.get("status", "")
-                if status in ("executed", "delivered"):
-                    row.status = "done"
-                    row.elapsed = time.time() - row.t0
-                    row.response = format_response(data.get("result"))
-                elif status == "failed":
-                    row.status = "failed"
-                    row.elapsed = time.time() - row.t0
-                    row.response = data.get("error") or data.get("result", {}).get("error", "unknown")
+                for log in logs:
+                    rid = log.args.get("requestId", b"")
+                    rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
+                    if rid_hex in pending:
+                        row = pending[rid_hex]
+                        delivery_data = log.args.get("deliveryData", b"")
+                        # Parse delivery data (JSON or IPFS)
+                        try:
+                            result_dict = json.loads(delivery_data.decode("utf-8"))
+                            row.response = format_response(result_dict)
+                        except Exception:
+                            # Try IPFS fetch
+                            try:
+                                from micromech.ipfs.client import (
+                                    fetch_json_from_ipfs,
+                                    is_ipfs_multihash,
+                                    multihash_to_cid,
+                                )
+                                import asyncio
+                                if is_ipfs_multihash(delivery_data):
+                                    cid = multihash_to_cid(delivery_data)
+                                    payload = asyncio.run(fetch_json_from_ipfs(cid))
+                                    row.response = format_response(payload)
+                                else:
+                                    row.response = delivery_data[:80].hex() + "..."
+                            except Exception:
+                                row.response = f"delivered ({len(delivery_data)}B)"
+                        row.status = "done"
+                        row.elapsed = time.time() - row.t0
+
+                last_block[chain_name] = current
             except Exception:
                 pass
-        stop_event.wait(2)
+
+        stop_event.wait(3)
 
 
 # ── Main ─────────────────────────────────────────────────────────────
@@ -305,7 +341,9 @@ def main():
 
     # Start background poller
     poller = threading.Thread(
-        target=poll_results, args=(rows, base_url, stop_event), daemon=True,
+        target=poll_results,
+        args=(rows, marketplaces, anvil_w3s, cfg, stop_event),
+        daemon=True,
     )
     poller.start()
 
