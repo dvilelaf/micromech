@@ -231,37 +231,35 @@ def poll_results(
                 current = w3.eth.block_number
                 from_blk = last_block.get(chain_name, current - 50)
 
-                # Scan Deliver events
-                logs = mp.events.Deliver.get_logs(
+                # Scan MarketplaceDelivery to detect delivered requests,
+                # then fetch full response from mech's /result endpoint.
+                logs = mp.events.MarketplaceDelivery.get_logs(
                     from_block=from_blk, to_block=current,
                 )
                 for log in logs:
-                    rid = log.args.get("requestId", b"")
-                    rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
-                    if rid_hex in pending:
+                    rids = log.args.get("requestIds", [])
+                    for rid in rids:
+                        rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
+                        if rid_hex not in pending:
+                            continue
                         row = pending[rid_hex]
-                        delivery_data = log.args.get("deliveryData", b"")
-                        # Parse delivery data (JSON or IPFS)
+                        # Fetch response from mech HTTP API
                         try:
-                            result_dict = json.loads(delivery_data.decode("utf-8"))
-                            row.response = format_response(result_dict)
-                        except Exception:
-                            # Try IPFS fetch
-                            try:
-                                from micromech.ipfs.client import (
-                                    fetch_json_from_ipfs,
-                                    is_ipfs_multihash,
-                                    multihash_to_cid,
+                            cc = cfg.chains.get(chain_name)
+                            host = cfg.runtime.host
+                            if host in ("0.0.0.0", "::"):
+                                host = "127.0.0.1"
+                            url = f"http://{host}:{cfg.runtime.port}"
+                            resp = http_requests.get(
+                                f"{url}/result/{rid_hex}", timeout=3,
+                            )
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                row.response = format_response(
+                                    data.get("result"),
                                 )
-                                import asyncio
-                                if is_ipfs_multihash(delivery_data):
-                                    cid = multihash_to_cid(delivery_data)
-                                    payload = asyncio.run(fetch_json_from_ipfs(cid))
-                                    row.response = format_response(payload)
-                                else:
-                                    row.response = delivery_data[:80].hex() + "..."
-                            except Exception:
-                                row.response = f"delivered ({len(delivery_data)}B)"
+                        except Exception:
+                            row.response = "delivered"
                         row.status = "done"
                         row.elapsed = time.time() - row.t0
 
