@@ -217,6 +217,8 @@ def poll_results(rows: list[RequestRow], base_url: str, stop_event: threading.Ev
                 resp = http_requests.get(
                     f"{base_url}/result/{row.request_id}", timeout=3,
                 )
+                if resp.status_code == 404:
+                    continue  # Not processed yet
                 if resp.status_code != 200:
                     continue
                 data = resp.json()
@@ -228,10 +230,10 @@ def poll_results(rows: list[RequestRow], base_url: str, stop_event: threading.Ev
                 elif status == "failed":
                     row.status = "failed"
                     row.elapsed = time.time() - row.t0
-                    row.response = data.get("error", "unknown error")
+                    row.response = data.get("error") or data.get("result", {}).get("error", "unknown")
             except Exception:
                 pass
-        stop_event.wait(1)
+        stop_event.wait(2)
 
 
 # ── Main ─────────────────────────────────────────────────────────────
@@ -313,6 +315,7 @@ def main():
             build_table(rows, "micromech demo"),
             console=console,
             refresh_per_second=2,
+            get_renderable=lambda: build_table(rows, "micromech demo"),
         ) as live:
             while True:
                 count += 1
@@ -325,7 +328,6 @@ def main():
 
                 row = RequestRow(count, chain, tool, prompt)
                 rows.append(row)
-                live.update(build_table(rows, "micromech demo"))
 
                 # Send on-chain request
                 try:
@@ -376,7 +378,6 @@ def main():
                     row.response = str(e)[:80]
                     row.elapsed = time.time() - row.t0
 
-                live.update(build_table(rows, "micromech demo"))
                 time.sleep(5)
 
     except KeyboardInterrupt:
