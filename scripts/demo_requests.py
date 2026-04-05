@@ -1,7 +1,8 @@
 """Demo: send random on-chain requests to micromech.
 
 Auto-discovers all deployed chains and mech addresses from config.
-Every 5 seconds, picks a random chain and tool, sends a marketplace request.
+Creates a temporary wallet, funds it via Anvil impersonation,
+and sends marketplace.request() every 5 seconds.
 
 Usage:
     uv run python scripts/demo_requests.py
@@ -11,6 +12,9 @@ import json
 import random
 import sys
 import time
+
+from eth_account import Account
+from web3 import Web3
 
 TOOL_PROMPTS: dict[str, list[str]] = {
     "echo": [
@@ -58,87 +62,84 @@ PAYMENT_TYPE_NATIVE = bytes.fromhex(
     "ba699a34be8fe0e7725e93dcbce1701b0211a8ca61330aaeb8a05bf2ec7abed1"
 )
 
+# Anvil ports per chain
+ANVIL_PORTS: dict[str, int] = {
+    "gnosis": 18545, "base": 18546, "ethereum": 18547,
+    "polygon": 18548, "optimism": 18549, "arbitrum": 18550, "celo": 18551,
+}
 
-def send_signed_request(bridge, w3, marketplace, mech_addr, delivery_rate,
-                        sender, key_storage, tool, prompt):
-    """Build, sign, and send a marketplace.request() transaction."""
-    request_data = json.dumps({"prompt": prompt, "tool": tool}).encode()
 
-    fee = bridge.with_retry(lambda: marketplace.functions.fee().call())
-    value = delivery_rate + fee
-
-    fn_call = marketplace.functions.request(
-        request_data,
-        delivery_rate,
-        PAYMENT_TYPE_NATIVE,
-        w3.to_checksum_address(mech_addr),
-        300,  # responseTimeout
-        b"",  # paymentData
-    )
-
-    nonce = bridge.with_retry(lambda: w3.eth.get_transaction_count(sender))
-    gas_price = bridge.with_retry(lambda: w3.eth.gas_price)
-    chain_id = bridge.with_retry(lambda: w3.eth.chain_id)
-
-    tx = fn_call.build_transaction({
-        "from": sender,
-        "value": value,
-        "gas": 500_000,
-        "gasPrice": gas_price,
-        "nonce": nonce,
-        "chainId": chain_id,
-    })
-
-    signed = key_storage.sign_transaction(tx, "master")
-    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
-    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
-
-    if receipt["status"] != 1:
+def get_anvil_w3(chain: str) -> Web3 | None:
+    """Connect to a running Anvil fork for this chain."""
+    port = ANVIL_PORTS.get(chain)
+    if not port:
         return None
-    return tx_hash.hex() if isinstance(tx_hash, bytes) else str(tx_hash)
+    url = f"http://localhost:{port}"
+    w3 = Web3(Web3.HTTPProvider(url))
+    try:
+        w3.eth.chain_id  # test connection
+        return w3
+    except Exception:
+        return None
+
+
+def fund_via_anvil(w3: Web3, address: str, amount_wei: int) -> bool:
+    """Fund an address on Anvil via anvil_setBalance."""
+    try:
+        w3.provider.make_request("anvil_setBalance", [address, hex(amount_wei)])
+        return True
+    except Exception:
+        return False
 
 
 def main():
-    from micromech.core.bridge import IwaBridge, get_wallet
     from micromech.core.config import MicromechConfig
     from micromech.runtime.contracts import load_marketplace_abi
 
     cfg = MicromechConfig.load()
 
-    # Discover deployed chains
-    chains = [
-        name for name, cc in cfg.enabled_chains.items()
-        if cc.mech_address and cc.marketplace_address
-    ]
+    # Discover deployed chains with running Anvil forks
+    chains = []
+    anvil_w3s: dict[str, Web3] = {}
+    for name, cc in cfg.enabled_chains.items():
+        if not cc.mech_address or not cc.marketplace_address:
+            continue
+        w3 = get_anvil_w3(name)
+        if w3:
+            chains.append(name)
+            anvil_w3s[name] = w3
+
     if not chains:
-        print(f"{RED}No deployed chains found in config.{RST}")
+        print(f"{RED}No deployed chains with running Anvil forks found.{RST}")
+        print(f"{DIM}Start Anvil with: just anvil-fork{RST}")
         sys.exit(1)
 
-    # Init bridges and marketplace contracts per chain
+    # Create temporary wallet
+    acct = Account.create()
+    sender = acct.address
+    private_key = acct.key
+
+    # Fund on all chains
     abi = load_marketplace_abi()
-    bridges: dict[str, tuple] = {}
-    for ch in chains:
-        br = IwaBridge(chain_name=ch)
-        w3 = br.web3
-        cc = cfg.chains[ch]
-        mp = w3.eth.contract(
-            address=w3.to_checksum_address(cc.marketplace_address), abi=abi,
-        )
-        bridges[ch] = (br, w3, mp)
+    marketplaces: dict[str, any] = {}
+    fund_amount = Web3.to_wei(1, "ether")
 
-    # Wallet and key_storage for signing
-    wallet = get_wallet()
-    sender = wallet.master_account.address
-    key_storage = wallet.key_storage
-    tools = list(TOOL_PROMPTS.keys())
-
-    # Header
     print(f"\n{B}micromech on-chain demo{RST}")
     print(f"{DIM}{'─' * 60}{RST}")
-    print(f"  Sender: {DIM}{sender}{RST}")
+    print(f"  Sender: {DIM}{sender} (temporary){RST}")
+
     for ch in chains:
+        w3 = anvil_w3s[ch]
         cc = cfg.chains[ch]
-        print(f"  {CYN}{ch}{RST}: mech {DIM}{cc.mech_address}{RST}")
+        ok = fund_via_anvil(w3, sender, fund_amount)
+        bal = w3.from_wei(w3.eth.get_balance(sender), "ether")
+        status = f"{GRN}funded {bal:.2f}{RST}" if ok else f"{RED}fund failed{RST}"
+        print(f"  {CYN}{ch}{RST}: mech {DIM}{cc.mech_address}{RST}  [{status}]")
+        marketplaces[ch] = w3.eth.contract(
+            address=w3.to_checksum_address(cc.marketplace_address), abi=abi,
+        )
+
+    tools = list(TOOL_PROMPTS.keys())
     print(f"  Tools:  {', '.join(f'{TOOL_CLR.get(t, CYN)}{B}{t}{RST}' for t in tools)}")
     print(f"{DIM}{'─' * 60}{RST}")
     print(f"{DIM}Sending requests every 5s. Ctrl+C to stop.{RST}\n")
@@ -151,7 +152,8 @@ def main():
             tool = random.choice(tools)
             prompt = random.choice(TOOL_PROMPTS[tool])
             cc = cfg.chains[chain]
-            br, w3, mp = bridges[chain]
+            w3 = anvil_w3s[chain]
+            mp = marketplaces[chain]
 
             ts = time.strftime("%H:%M:%S")
             tc = TOOL_CLR.get(tool, CYN)
@@ -160,15 +162,38 @@ def main():
 
             t0 = time.time()
             try:
-                tx_hash = send_signed_request(
-                    br, w3, mp, cc.mech_address, cc.delivery_rate,
-                    sender, key_storage, tool, prompt,
+                request_data = json.dumps({"prompt": prompt, "tool": tool}).encode()
+                fee = mp.functions.fee().call()
+                value = cc.delivery_rate + fee
+
+                fn_call = mp.functions.request(
+                    request_data,
+                    cc.delivery_rate,
+                    PAYMENT_TYPE_NATIVE,
+                    w3.to_checksum_address(cc.mech_address),
+                    300,
+                    b"",
                 )
+
+                tx = fn_call.build_transaction({
+                    "from": sender,
+                    "value": value,
+                    "gas": 500_000,
+                    "gasPrice": w3.eth.gas_price,
+                    "nonce": w3.eth.get_transaction_count(sender),
+                    "chainId": w3.eth.chain_id,
+                })
+
+                signed = w3.eth.account.sign_transaction(tx, private_key=private_key)
+                tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+                receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=30)
+
                 elapsed = time.time() - t0
-                if tx_hash:
-                    print(f"  {GRN}OK{RST}  {DIM}{tx_hash[:20]}...  ({elapsed:.1f}s){RST}")
+                if receipt["status"] == 1:
+                    h = tx_hash.hex()
+                    print(f"  {GRN}OK{RST}  {DIM}{h[:20]}...  ({elapsed:.1f}s){RST}")
                 else:
-                    print(f"  {RED}TX reverted{RST}")
+                    print(f"  {RED}TX reverted{RST}  {DIM}({elapsed:.1f}s){RST}")
             except Exception as e:
                 elapsed = time.time() - t0
                 print(f"  {RED}Error: {e}{RST}  {DIM}({elapsed:.1f}s){RST}")

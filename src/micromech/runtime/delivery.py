@@ -313,14 +313,25 @@ class DeliveryManager:
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
 
     def _get_signer_key(self) -> str:
-        """Get the private key for signing delivery transactions."""
-        account_tag = self.chain_config.account_tag
-        try:
-            account = self.bridge.wallet.account_service.resolve_account(account_tag)
-            return account.key.hex()
-        except Exception:
-            msg = f"Cannot resolve signer key for account tag '{account_tag}'"
-            raise ValueError(msg)
+        """Get the private key for signing delivery transactions.
+
+        Tries account_tag from config first, then falls back to
+        service_{id}_agent tag (created by iwa during deploy).
+        """
+        tags_to_try = [self.chain_config.account_tag]
+        if self.chain_config.service_id:
+            tags_to_try.append(f"service_{self.chain_config.service_id}_agent")
+        tags_to_try.append("master")
+
+        for tag in tags_to_try:
+            try:
+                account = self.bridge.wallet.account_service.resolve_account(tag)
+                return account.key.hex()
+            except Exception:
+                continue
+
+        msg = f"Cannot resolve signer key (tried: {tags_to_try})"
+        raise ValueError(msg)
 
     async def run(self) -> None:
         """Run the delivery loop."""

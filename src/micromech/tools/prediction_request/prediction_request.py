@@ -1,9 +1,9 @@
-"""Prediction market tool using local LLM.
+"""Prediction market tool using web search + local LLM.
 
 Valory-compatible: ALLOWED_TOOLS + run(**kwargs) -> MechResponse.
 Equivalent to Valory's prediction-offline: takes a binary prediction market
 question and returns p_yes/p_no/confidence/info_utility.
-Uses the same prompt template structure as Valory's mech-predict-markets.
+Searches the web for recent news and context before prompting the LLM.
 """
 
 import json
@@ -11,6 +11,10 @@ import re
 from typing import Any, Optional
 
 from loguru import logger
+
+# Max characters of search context to feed the LLM
+_MAX_CONTEXT_CHARS = 2000
+_MAX_RESULTS = 5
 
 ALLOWED_TOOLS = [
     "prediction-offline",
@@ -59,6 +63,53 @@ DEFAULT_PREDICTION = json.dumps(
 )
 
 
+def _search_context(query: str) -> str:
+    """Search the web for recent info relevant to the prediction question.
+
+    Combines news and text results from DuckDuckGo into a concise context string.
+    Returns empty string if search is unavailable or fails.
+    """
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        logger.debug("ddgs not installed, skipping web search")
+        return ""
+
+    snippets = []
+    try:
+        ddgs = DDGS()
+
+        # News first (most relevant for predictions)
+        for r in ddgs.news(query, max_results=_MAX_RESULTS):
+            title = r.get("title", "")
+            body = r.get("body", "")
+            date = r.get("date", "")
+            if title:
+                entry = f"[{date[:10]}] {title}"
+                if body:
+                    entry += f": {body[:150]}"
+                snippets.append(entry)
+
+        # Supplement with web results
+        for r in ddgs.text(query, max_results=_MAX_RESULTS):
+            body = r.get("body", "")
+            if body and body not in str(snippets):
+                snippets.append(body[:200])
+
+    except Exception as e:
+        logger.debug("Web search failed: {}", e)
+        return ""
+
+    if not snippets:
+        return ""
+
+    context = "\n".join(snippets)
+    if len(context) > _MAX_CONTEXT_CHARS:
+        context = context[:_MAX_CONTEXT_CHARS] + "..."
+    logger.info("Search context: {} chars from {} snippets", len(context), len(snippets))
+    return context
+
+
 def _extract_json(text: str) -> str:
     """Extract JSON object from LLM response, stripping markdown etc."""
     match = JSON_EXTRACT_RE.search(text)
@@ -97,6 +148,10 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
     prompt = kwargs.get("prompt", "")
     counter_callback = kwargs.get("counter_callback")
     additional_info = kwargs.get("additional_information", "")
+
+    # Search the web for recent context if none provided
+    if not additional_info:
+        additional_info = _search_context(prompt)
 
     prediction_prompt = PREDICTION_PROMPT.format(
         user_prompt=prompt,

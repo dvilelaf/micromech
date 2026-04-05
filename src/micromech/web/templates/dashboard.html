@@ -228,6 +228,7 @@
         .log-info { color: var(--accent-color); }
         .log-warn { color: var(--warning); }
         .log-error { color: var(--error); }
+        .log-warning { color: var(--warning); }
         .log-success { color: var(--success); }
         .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
         .log-header h3 { font-size: 0.95rem; color: var(--text-muted); margin: 0; }
@@ -528,10 +529,7 @@
             const data = JSON.parse(e.data);
             updateLiveMetrics(data);
             if (data.events) {
-                data.events.forEach(ev => {
-                    addEvent(ev);
-                    addLogLine(ev);
-                });
+                data.events.forEach(ev => addEvent(ev));
             }
             if (data.queue) {
                 updateQueueChart(data.queue);
@@ -1379,56 +1377,63 @@
         } catch (e) { /* silent */ }
     }
 
-    // --- Logs ---
-    function addLogLine(ev) {
+    // --- Logs (real service logs via /api/logs/stream) ---
+    let logES = null;
+
+    function connectLogStream() {
+        if (logES) return;
+        logES = new EventSource('/api/logs/stream?' + authQueryParam());
+        logES.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data);
+                addLogLine(data);
+            } catch (err) { /* skip */ }
+        };
+        logES.onerror = () => {
+            logES.close();
+            logES = null;
+            // Reconnect after 3s
+            setTimeout(connectLogStream, 3000);
+        };
+    }
+
+    function addLogLine(data) {
         const container = document.getElementById('log-container');
         if (!state.logInitialized) {
             container.innerHTML = '';
             state.logInitialized = true;
         }
 
-        const ts = new Date(ev.timestamp * 1000).toISOString().replace('T', ' ').substring(0, 19);
-        const eventName = ev.event || 'unknown';
-        let level = 'INFO';
+        const level = data.level || 'INFO';
         let cssClass = 'log-info';
-        if (eventName.includes('fail') || eventName === 'error') {
-            level = 'ERROR';
-            cssClass = 'log-error';
-        } else if (eventName === 'delivered' || eventName === 'execution_done') {
-            level = 'OK';
-            cssClass = 'log-success';
-        } else if (eventName === 'execution_started') {
-            level = 'INFO';
-            cssClass = 'log-info';
-        }
-
-        const parts = [`[${ts}]`, `[${level}]`, eventName.replace(/_/g, ' ')];
-        if (ev.request_id) parts.push('req=' + ev.request_id.substring(0, 12));
-        if (ev.tool) parts.push('tool=' + ev.tool);
-        if (ev.execution_time) parts.push('time=' + ev.execution_time.toFixed(2) + 's');
-        if (ev.error) parts.push('err=' + ev.error.substring(0, 80));
+        if (level === 'ERROR' || level === 'CRITICAL') cssClass = 'log-error';
+        else if (level === 'WARNING') cssClass = 'log-warning';
+        else if (level === 'SUCCESS') cssClass = 'log-success';
 
         const line = document.createElement('div');
         line.className = 'log-line ' + cssClass;
-        line.textContent = parts.join(' ');
+        line.textContent = data.msg || `[${data.ts}] [${level}] (empty)`;
         container.appendChild(line);
 
-        // Keep max 500 lines
-        while (container.children.length > 500) container.removeChild(container.firstChild);
+        while (container.children.length > 1000) container.removeChild(container.firstChild);
 
-        // Auto-scroll if user is near bottom
         const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
         if (isNearBottom) container.scrollTop = container.scrollHeight;
-
-        state.logLines.push(line);
     }
 
     function clearLogs() {
         const container = document.getElementById('log-container');
-        container.innerHTML = '<div class="log-line" style="color:var(--text-muted);">Log cleared. Waiting for events...</div>';
+        container.innerHTML = '<div class="log-line" style="color:var(--text-muted);">Waiting for logs...</div>';
         state.logLines = [];
         state.logInitialized = false;
     }
+
+    // Start log stream when Logs tab is first shown
+    const origSwitchTab = switchTab;
+    switchTab = function(tabName) {
+        origSwitchTab(tabName);
+        if (tabName === 'logs') connectLogStream();
+    };
 
     // --- Init ---
     loadChains();

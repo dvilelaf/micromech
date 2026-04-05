@@ -2,10 +2,8 @@ name: prediction_request
 author: micromech
 version: 0.1.0
 type: custom
-description: 'Prediction market tool using local LLM. Equivalent to Valory''s prediction-offline
-  but runs entirely offline on CPU using Qwen 0.5B.
-
-  '
+description: Prediction market tool with web search + local LLM. Searches for recent
+  news and context via DuckDuckGo before prompting the LLM.
 license: Apache-2.0
 aea_version: '>=1.0.0, <2.0.0'
 entry_point: prediction_request.py
@@ -17,6 +15,8 @@ dependencies:
     version: '>=0.2.0'
   huggingface-hub:
     version: '>=0.19.0'
+  ddgs:
+    version: '>=9.0.0'
 fingerprint:
   __init__.py: bafkreieark7qeq6htcoi77kjpieesdgfdurqyyzaolxbofkbl6z7choowu
-  prediction_request.py: bafkreigm3hcxqqbcuhyb6husbu7tympobsptonyysabdrx7lxcsk7kmema
+  prediction_request.py: bafkreievaq2bnxnddm5zr5zmezzl434mpvxjrp3lm3ukrmpjljb4p6ndhi

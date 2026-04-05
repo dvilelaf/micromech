@@ -887,6 +887,60 @@ def create_web_app(
             logger.exception("Management action '{}' failed", action)
             return {"success": False, "error": "Action failed. Check server logs."}
 
+    # --- Log streaming ---
+
+    _log_queues: list[stdlib_queue.Queue] = []
+
+    def _log_sink(message: Any) -> None:
+        """Loguru sink that pushes log lines to all connected SSE clients."""
+        record = message.record
+        line = {
+            "ts": record["time"].strftime("%H:%M:%S.%f")[:-3],
+            "level": record["level"].name,
+            "msg": str(message).rstrip(),
+        }
+        data = json.dumps(line)
+        for q in _log_queues[:]:
+            try:
+                q.put_nowait(data)
+            except Exception:
+                pass
+
+    # Register loguru sink (deduplication-safe)
+    logger.add(_log_sink, level="DEBUG", format="{message}")
+
+    @app.get("/api/logs/stream")
+    async def logs_stream(request: Request) -> StreamingResponse:
+        """SSE stream of real-time loguru output."""
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
+
+        log_q: stdlib_queue.Queue = stdlib_queue.Queue(maxsize=500)
+        _log_queues.append(log_q)
+
+        async def generate():
+            try:
+                while True:
+                    await asyncio.sleep(0.3)
+                    while not log_q.empty():
+                        try:
+                            data = log_q.get_nowait()
+                            yield f"data: {data}\n\n"
+                        except Exception:
+                            break
+            finally:
+                _log_queues.remove(log_q)
+
+        return StreamingResponse(
+            generate(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+            },
+        )
+
     return app
 
 
