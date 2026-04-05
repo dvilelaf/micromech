@@ -93,7 +93,7 @@ def _search_context(query: str) -> str:
         # Supplement with web results
         for r in ddgs.text(query, max_results=_MAX_RESULTS):
             body = r.get("body", "")
-            if body and body not in str(snippets):
+            if body and body[:200] not in {s[:200] for s in snippets}:
                 snippets.append(body[:200])
 
     except Exception as e:

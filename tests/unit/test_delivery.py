@@ -369,3 +369,105 @@ class TestDeliveryLifecycle:
 
         asyncio.create_task(stop_soon())
         await asyncio.wait_for(dm.run(), timeout=3.0)
+
+
+class TestTrySubmit:
+    """Tests for the _try_submit fallback chain."""
+
+    def test_safe_success_skips_others(self):
+        from micromech.runtime.delivery import _try_submit
+        result = _try_submit(
+            safe_fn=lambda: "safe_hash",
+            impersonated_fn=lambda: "imp_hash",
+            signed_fn=lambda: "signed_hash",
+        )
+        assert result == "safe_hash"
+
+    def test_safe_none_tries_impersonation(self):
+        from micromech.runtime.delivery import _try_submit
+        result = _try_submit(
+            safe_fn=None,
+            impersonated_fn=lambda: "imp_hash",
+            signed_fn=lambda: "signed_hash",
+        )
+        assert result == "imp_hash"
+
+    def test_safe_fails_tries_impersonation(self):
+        from micromech.runtime.delivery import _try_submit
+        result = _try_submit(
+            safe_fn=lambda: (_ for _ in ()).throw(RuntimeError("no safe")),
+            impersonated_fn=lambda: "imp_hash",
+            signed_fn=lambda: "signed_hash",
+        )
+        assert result == "imp_hash"
+
+    def test_safe_and_imp_fail_uses_signed(self):
+        from micromech.runtime.delivery import _try_submit
+        result = _try_submit(
+            safe_fn=lambda: (_ for _ in ()).throw(RuntimeError("a")),
+            impersonated_fn=lambda: (_ for _ in ()).throw(RuntimeError("b")),
+            signed_fn=lambda: "signed_hash",
+        )
+        assert result == "signed_hash"
+
+    def test_all_fail_raises(self):
+        from micromech.runtime.delivery import _try_submit
+        with pytest.raises(RuntimeError):
+            _try_submit(
+                safe_fn=lambda: (_ for _ in ()).throw(RuntimeError("a")),
+                impersonated_fn=lambda: (_ for _ in ()).throw(RuntimeError("b")),
+                signed_fn=lambda: (_ for _ in ()).throw(RuntimeError("c")),
+            )
+
+
+class TestNonHexRequestId:
+    """Test that non-hex request IDs (e.g. http-abc123) are hashed."""
+
+    def test_non_hex_request_id_gets_hashed(self, queue: PersistentQueue):
+        import hashlib
+        config = MicromechConfig()
+        bridge = MagicMock(spec=["web3"])
+        dm = DeliveryManager(
+            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+        )
+
+        mock_contract = MagicMock()
+        dm._mech_contract = mock_contract
+        dm._via_impersonation = MagicMock(return_value="0xtx")
+
+        dm._submit_delivery("http-abc123", b"data")
+
+        call_args = mock_contract.functions.deliverToMarketplace.call_args[0]
+        req_id_bytes = call_args[0][0]
+        expected = hashlib.sha256(b"http-abc123").digest()
+        assert req_id_bytes == expected
+
+
+class TestDeliveryBatchFailure:
+    """Test that delivery failures mark request as failed."""
+
+    @pytest.mark.asyncio
+    async def test_delivery_failure_marks_failed(self, queue: PersistentQueue):
+        from micromech.core.constants import STATUS_FAILED
+        config = MicromechConfig()
+        bridge = MagicMock()
+        dm = DeliveryManager(
+            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+        )
+
+        req = MechRequest(request_id="r1", prompt="test", tool="echo")
+        queue.add_request(req)
+        queue.mark_executing("r1")
+        queue.mark_executed("r1", ToolResult(output="ok"))
+
+        async def exploding_deliver(record):
+            raise RuntimeError("tx reverted")
+
+        dm._deliver_one = exploding_deliver
+
+        count = await dm.deliver_batch()
+        assert count == 0
+
+        record = queue.get_by_id("r1")
+        assert record.request.status == STATUS_FAILED
+        assert "delivery" in record.request.error

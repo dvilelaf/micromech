@@ -23,7 +23,8 @@ from micromech.core.constants import (
 ALLOWED_TOOLS = ["llm"]
 
 _llm_instances: dict[str, Any] = {}
-_llm_lock = threading.Lock()
+_init_lock = threading.Lock()   # For thread-safe model loading
+_llm_lock = threading.Lock()    # For serializing inference (llama-cpp not thread-safe)
 
 
 def _get_llm(
@@ -39,7 +40,7 @@ def _get_llm(
     if model_file in _llm_instances:
         return _llm_instances[model_file]
 
-    with _llm_lock:
+    with _init_lock:
         if model_file in _llm_instances:
             return _llm_instances[model_file]
 

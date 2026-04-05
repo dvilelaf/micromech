@@ -4,7 +4,9 @@ import asyncio
 import json
 import os
 import queue as stdlib_queue
+import re
 import secrets
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -47,7 +49,36 @@ _rate_counters: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultd
 
 # SSE connection limit
 _MAX_SSE_CONNECTIONS = 10
-_sse_connection_count = 0
+_sse_semaphore: asyncio.Semaphore | None = None
+
+
+def _get_sse_semaphore() -> asyncio.Semaphore:
+    """Lazy-init SSE semaphore (must be created within an event loop)."""
+    global _sse_semaphore  # noqa: PLW0603
+    if _sse_semaphore is None:
+        _sse_semaphore = asyncio.Semaphore(_MAX_SSE_CONNECTIONS)
+    return _sse_semaphore
+
+
+# --- Log streaming (module-level so dedup works across create_web_app calls) ---
+_log_queues: list[stdlib_queue.Queue] = []
+_log_sink_registered = False
+
+
+def _log_sink(message: Any) -> None:
+    """Loguru sink that pushes log lines to all connected SSE clients."""
+    record = message.record
+    line = {
+        "ts": record["time"].strftime("%H:%M:%S.%f")[:-3],
+        "level": record["level"].name,
+        "msg": str(message).rstrip(),
+    }
+    data = json.dumps(line)
+    for q in _log_queues[:]:
+        try:
+            q.put_nowait(data)
+        except Exception:
+            pass
 
 
 def _rate_limited(endpoint: str, client_ip: str) -> bool:
@@ -74,12 +105,15 @@ def _rate_limited(endpoint: str, client_ip: str) -> bool:
     return False
 
 
+_TRUST_PROXY: bool = os.environ.get("MICROMECH_TRUST_PROXY", "").lower() in ("1", "true", "yes")
+
+
 def _get_client_ip(request: Request) -> str:
-    """Extract client IP, respecting X-Forwarded-For behind proxies."""
-    forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        # First IP in the chain is the original client
-        return forwarded.split(",")[0].strip()
+    """Extract client IP. Only trusts X-Forwarded-For when MICROMECH_TRUST_PROXY is set."""
+    if _TRUST_PROXY:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     if request.client:
         return request.client.host
     return "unknown"
@@ -101,6 +135,9 @@ _setup_needed: Optional[bool] = None
 
 # Deploy concurrency guard — per-chain locks allow parallel multi-chain deploy
 _deploy_locks: dict[str, asyncio.Lock] = {}
+
+# Config file read/write lock (thread-safe, for parallel deploys)
+_config_lock = threading.Lock()
 
 
 def _get_deploy_lock(chain_name: str) -> asyncio.Lock:
@@ -197,6 +234,18 @@ def create_web_app(
     async def dashboard(request: Request):
         if _needs_setup():
             return RedirectResponse(url="/setup", status_code=302)
+        # Auth: token can be passed as ?token= for initial access
+        token = request.query_params.get("token")
+        if not (token and secrets.compare_digest(token, _AUTH_TOKEN)):
+            if _check_auth(request) is not None:
+                return HTMLResponse(
+                    "<html><body style='font-family:sans-serif;text-align:center;padding:4em'>"
+                    "<h2>micromech</h2>"
+                    "<p>Access this page with <code>?token=YOUR_AUTH_TOKEN</code></p>"
+                    "<p style='color:#666'>The auth token is printed in the server console at startup.</p>"
+                    "</body></html>",
+                    status_code=401,
+                )
         return templates.TemplateResponse(
             request=request, name="dashboard.html",
             context={"auth_token": _AUTH_TOKEN},
@@ -204,6 +253,21 @@ def create_web_app(
 
     @app.get("/setup", response_class=HTMLResponse)
     async def setup_page(request: Request) -> HTMLResponse:
+        # Auth check: token can be passed as ?token= query param for initial access
+        token = request.query_params.get("token")
+        if token and secrets.compare_digest(token, _AUTH_TOKEN):
+            # Valid token in URL — serve the page
+            pass
+        elif _check_auth(request) is not None:
+            # No valid auth — show a minimal login prompt instead of leaking the token
+            return HTMLResponse(
+                "<html><body style='font-family:sans-serif;text-align:center;padding:4em'>"
+                "<h2>micromech setup</h2>"
+                "<p>Access this page with <code>?token=YOUR_AUTH_TOKEN</code></p>"
+                "<p style='color:#666'>The auth token is printed in the server console at startup.</p>"
+                "</body></html>",
+                status_code=401,
+            )
         return templates.TemplateResponse(
             request=request, name="setup.html",
             context={"auth_token": _AUTH_TOKEN},
@@ -430,17 +494,13 @@ def create_web_app(
 
         def _run_deploy() -> dict:
             """Run full_deploy in a thread, pushing events to queue."""
-            import threading
             from micromech.core.config import ChainConfig
             from micromech.core.constants import CHAIN_DEFAULTS
             from micromech.management import MechLifecycle
 
             # Lock for config read/write to prevent parallel deploys
             # from overwriting each other's results
-            if not hasattr(_run_deploy, "_config_lock"):
-                _run_deploy._config_lock = threading.Lock()
-
-            with _run_deploy._config_lock:
+            with _config_lock:
                 if DEFAULT_CONFIG_PATH.exists():
                     cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
                 else:
@@ -465,7 +525,7 @@ def create_web_app(
             result = lc.full_deploy(on_progress=on_progress)
 
             # Save results with lock (re-read to merge with other deploys)
-            with _run_deploy._config_lock:
+            with _config_lock:
                 fresh_cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
                 fresh_cfg.chains[chain_name].apply_deploy_result(result)
                 fresh_cfg.save(DEFAULT_CONFIG_PATH)
@@ -541,9 +601,13 @@ def create_web_app(
     async def api_tools() -> list[dict]:
         return get_tools()
 
+    _REQUEST_ID_RE = re.compile(r"^(http-|0x)?[a-f0-9-]{1,66}$", re.IGNORECASE)
+
     @app.get("/result/{request_id}")
     async def get_result_by_id(request_id: str) -> dict:
         """Get result for a specific request (used by demo poller)."""
+        if not _REQUEST_ID_RE.match(request_id):
+            return JSONResponse({"error": "Invalid request ID format"}, 400)
         if not queue:
             return JSONResponse({"error": "Not configured"}, 501)
         record = queue.get_by_id(request_id)
@@ -552,8 +616,7 @@ def create_web_app(
         result = _record_to_dict(record)
         if record.result:
             try:
-                import json as _json
-                result["result"] = _json.loads(record.result.output)
+                result["result"] = json.loads(record.result.output)
             except (ValueError, TypeError):
                 result["result"] = {"raw": record.result.output}
         return result
@@ -622,16 +685,17 @@ def create_web_app(
         if auth_err:
             return auth_err
 
-        global _sse_connection_count  # noqa: PLW0603
-        if _sse_connection_count >= _MAX_SSE_CONNECTIONS:
+        sem = _get_sse_semaphore()
+        # Acquire eagerly (before returning StreamingResponse) to avoid TOCTOU
+        try:
+            await asyncio.wait_for(sem.acquire(), timeout=0)
+        except asyncio.TimeoutError:
             return JSONResponse(
                 {"error": "Too many SSE connections"},
                 status_code=429,
             )
 
         async def event_generator():
-            global _sse_connection_count  # noqa: PLW0603
-            _sse_connection_count += 1
             try:
                 last_event_ts = time.time()
                 tick = 0
@@ -671,7 +735,7 @@ def create_web_app(
 
                     yield f"data: {json.dumps(payload)}\n\n"
             finally:
-                _sse_connection_count -= 1
+                sem.release()
 
         return StreamingResponse(
             event_generator(),
@@ -756,8 +820,8 @@ def create_web_app(
                     )
                     mech_addr = cs(cfg.mech_address)
                     mech_karma = bridge.with_retry(
-                        lambda: karma_contract.functions.mapMechKarma(
-                            mech_addr
+                        lambda _ma=mech_addr: karma_contract.functions.mapMechKarma(
+                            _ma
                         ).call()
                     )
 
@@ -766,8 +830,8 @@ def create_web_app(
                     if cfg.multisig_address:
                         ms_addr = cs(cfg.multisig_address)
                         deliveries = bridge.with_retry(
-                            lambda: marketplace.functions.mapMechServiceDeliveryCounts(
-                                ms_addr
+                            lambda _ms=ms_addr: marketplace.functions.mapMechServiceDeliveryCounts(
+                                _ms
                             ).call()
                         )
 
@@ -781,7 +845,7 @@ def create_web_app(
                     }
                 except Exception as e:
                     logger.warning("Karma check failed for {}: {}", name, e)
-                    results[name] = {"karma": None, "error": str(e)}
+                    results[name] = {"karma": None, "error": "Karma check failed"}
             return results
 
         try:
@@ -910,25 +974,11 @@ def create_web_app(
 
     # --- Log streaming ---
 
-    _log_queues: list[stdlib_queue.Queue] = []
-
-    def _log_sink(message: Any) -> None:
-        """Loguru sink that pushes log lines to all connected SSE clients."""
-        record = message.record
-        line = {
-            "ts": record["time"].strftime("%H:%M:%S.%f")[:-3],
-            "level": record["level"].name,
-            "msg": str(message).rstrip(),
-        }
-        data = json.dumps(line)
-        for q in _log_queues[:]:
-            try:
-                q.put_nowait(data)
-            except Exception:
-                pass
-
-    # Register loguru sink (deduplication-safe)
-    logger.add(_log_sink, level="DEBUG", format="{message}")
+    # Register loguru sink (module-level, only once)
+    global _log_sink_registered  # noqa: PLW0603
+    if not _log_sink_registered:
+        logger.add(_log_sink, level="DEBUG", format="{message}")
+        _log_sink_registered = True
 
     @app.get("/api/logs/stream")
     async def logs_stream(request: Request) -> StreamingResponse:
@@ -936,6 +986,12 @@ def create_web_app(
         auth_err = _check_auth(request)
         if auth_err:
             return auth_err
+
+        if len(_log_queues) >= _MAX_SSE_CONNECTIONS:
+            return JSONResponse(
+                {"error": "Too many log connections"},
+                status_code=429,
+            )
 
         log_q: stdlib_queue.Queue = stdlib_queue.Queue(maxsize=500)
         _log_queues.append(log_q)

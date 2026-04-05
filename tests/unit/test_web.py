@@ -62,36 +62,38 @@ def web_client() -> TestClient:
 class TestDashboard:
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_renders_html(self, mock_setup, web_client: TestClient):
-        resp = web_client.get("/")
+        resp = web_client.get(f"/?token={AUTH_TOKEN}")
         assert resp.status_code == 200
         assert "micromech" in resp.text
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_has_tabs(self, mock_setup, web_client: TestClient):
-        resp = web_client.get("/")
+        resp = web_client.get(f"/?token={AUTH_TOKEN}")
         assert "Overview" in resp.text
         assert "Live Activity" in resp.text
         assert "Charts" in resp.text
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_has_chart_js(self, mock_setup, web_client: TestClient):
-        resp = web_client.get("/")
+        resp = web_client.get(f"/?token={AUTH_TOKEN}")
         assert "chart.js" in resp.text
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_has_sse_connection(self, mock_setup, web_client: TestClient):
-        resp = web_client.get("/")
+        resp = web_client.get(f"/?token={AUTH_TOKEN}")
         assert "EventSource" in resp.text
         assert "/api/metrics/stream" in resp.text
 
     def test_redirects_to_setup_when_not_configured(self, web_client: TestClient):
         with patch("micromech.web.app._needs_setup", return_value=True):
-            resp = web_client.get("/", follow_redirects=False)
+            resp = web_client.get(
+                f"/?token={AUTH_TOKEN}", follow_redirects=False,
+            )
             assert resp.status_code == 302
             assert "/setup" in resp.headers["location"]
 
     def test_setup_page_renders(self, web_client: TestClient):
-        resp = web_client.get("/setup")
+        resp = web_client.get(f"/setup?token={AUTH_TOKEN}")
         assert resp.status_code == 200
         assert "setup" in resp.text.lower()
         assert "micromech" in resp.text.lower()

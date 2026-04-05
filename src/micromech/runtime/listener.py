@@ -160,26 +160,31 @@ class EventListener:
             # Chunk requests to stay within RPC provider limits.
             # Start with 500-block chunks; if that fails (e.g. Alchemy Free
             # tier = 10 blocks), retry with 10-block mini-chunks.
+            # All get_logs calls go through with_retry for RPC rotation.
             MAX_CHUNK = 500
             MINI_CHUNK = 10
             logs = []
             for start in range(from_block, to_block + 1, MAX_CHUNK):
                 end = min(start + MAX_CHUNK - 1, to_block)
                 try:
-                    chunk_logs = contract.events.MarketplaceRequest.get_logs(
-                        from_block=start,
-                        to_block=end,
-                        argument_filters=filter_args,
+                    chunk_logs = self.bridge.with_retry(
+                        lambda _s=start, _e=end: contract.events.MarketplaceRequest.get_logs(
+                            from_block=_s,
+                            to_block=_e,
+                            argument_filters=filter_args,
+                        )
                     )
                     logs.extend(chunk_logs)
                 except Exception:
                     for s2 in range(start, end + 1, MINI_CHUNK):
                         e2 = min(s2 + MINI_CHUNK - 1, end)
                         try:
-                            mini = contract.events.MarketplaceRequest.get_logs(
-                                from_block=s2,
-                                to_block=e2,
-                                argument_filters=filter_args,
+                            mini = self.bridge.with_retry(
+                                lambda _s2=s2, _e2=e2: contract.events.MarketplaceRequest.get_logs(
+                                    from_block=_s2,
+                                    to_block=_e2,
+                                    argument_filters=filter_args,
+                                )
                             )
                             logs.extend(mini)
                         except Exception as inner_e:

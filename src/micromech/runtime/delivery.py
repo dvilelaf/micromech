@@ -74,6 +74,8 @@ class DeliveryManager:
         self._delivered_count = 0
         self._mech_contract: Optional[Any] = None
         self._metrics = metrics
+        self._wallet_warning_logged = False
+        self._ipfs_warning_logged = False
 
     @property
     def delivered_count(self) -> int:
@@ -120,7 +122,7 @@ class DeliveryManager:
         try:
             _ = self.bridge.wallet.key_storage
         except Exception:
-            if not getattr(self, "_wallet_warning_logged", False):
+            if not self._wallet_warning_logged:
                 logger.warning("Delivery skipped: no wallet available. "
                                "Set wallet_password in secrets.env or use the web wizard.")
                 self._wallet_warning_logged = True
@@ -201,7 +203,7 @@ class DeliveryManager:
                 _, cid_hex = await push_to_ipfs(response_payload, api_url=self.config.ipfs.api_url)
                 delivery_data = cid_hex_to_multihash_bytes(cid_hex)
             except Exception as e:
-                if not getattr(self, "_ipfs_warning_logged", False):
+                if not self._ipfs_warning_logged:
                     logger.warning("IPFS unavailable, delivering raw data: {}", e)
                     self._ipfs_warning_logged = True
                 delivery_data = response_payload
