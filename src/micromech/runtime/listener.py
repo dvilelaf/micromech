@@ -152,19 +152,49 @@ class EventListener:
 
         try:
             contract = self._get_marketplace_contract()
-            # Filter at RPC level — priorityMech is indexed
             filter_args: dict = {}
             if mech_addr:
                 filter_args["priorityMech"] = self.bridge.web3.to_checksum_address(
                     mech_addr,
                 )
-            logs = self.bridge.with_retry(
-                lambda: contract.events.MarketplaceRequest.get_logs(
-                    from_block=from_block,
-                    to_block=to_block,
-                    argument_filters=filter_args,
-                )
-            )
+            # Chunk requests to stay within RPC provider limits
+            # (e.g., Alchemy Free tier limits eth_getLogs to 10 blocks)
+            chunk_size = self.config.runtime.event_lookback_blocks
+            if to_block - from_block > 500:
+                chunk_size = 500  # reasonable default for most RPCs
+            logs = []
+            for start in range(from_block, to_block + 1, chunk_size):
+                end = min(start + chunk_size - 1, to_block)
+                _start, _end = start, end  # capture for lambda
+                try:
+                    chunk_logs = self.bridge.with_retry(
+                        lambda: contract.events.MarketplaceRequest.get_logs(
+                            from_block=_start,
+                            to_block=_end,
+                            argument_filters=filter_args,
+                        )
+                    )
+                    logs.extend(chunk_logs)
+                except Exception:
+                    # If chunk fails (e.g. Alchemy 10-block limit),
+                    # retry with smaller chunks
+                    for s2 in range(_start, _end + 1, 10):
+                        e2 = min(s2 + 9, _end)
+                        _s2, _e2 = s2, e2
+                        try:
+                            mini = self.bridge.with_retry(
+                                lambda: contract.events.MarketplaceRequest.get_logs(
+                                    from_block=_s2,
+                                    to_block=_e2,
+                                    argument_filters=filter_args,
+                                )
+                            )
+                            logs.extend(mini)
+                        except Exception as inner_e:
+                            logger.warning(
+                                "Skipping blocks {}-{}: {}",
+                                _s2, _e2, inner_e,
+                            )
         except Exception as e:
             logger.error("Failed to fetch events: {}", e)
             return []
