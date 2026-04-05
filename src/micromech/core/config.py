@@ -167,6 +167,51 @@ class ToolConfig(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class TelegramConfig(BaseModel):
+    """Telegram bot settings (non-secret — tokens go in secrets.env)."""
+
+    enabled: bool = False
+    rate_limit_seconds: int = Field(default=2, ge=1, le=30)
+
+
+class TasksConfig(BaseModel):
+    """Automated task settings."""
+
+    enabled: bool = True
+
+    # Checkpoint
+    checkpoint_interval_minutes: int = Field(default=10, ge=1, le=120)
+    checkpoint_grace_period_seconds: int = Field(default=120, ge=0, le=600)
+    checkpoint_alert_enabled: bool = True
+
+    # Rewards claiming
+    claim_interval_minutes: int = Field(default=240, ge=10, le=1440)
+    claim_threshold_olas: float = Field(default=1.0, ge=0)
+
+    # Auto-fund
+    fund_enabled: bool = True
+    fund_interval_minutes: int = Field(default=360, ge=10, le=1440)
+    fund_threshold_native: float = Field(default=0.05, ge=0)
+    fund_target_native: float = Field(default=0.5, ge=0)
+
+    # Auto-sell (OLAS -> native for gas)
+    auto_sell_enabled: bool = False
+    auto_sell_min_olas: float = Field(default=1.0, ge=0)
+    auto_sell_runway_days: int = Field(default=20, ge=1, le=365)
+
+    # Low balance alerts
+    low_balance_alert_enabled: bool = True
+    low_balance_alert_interval_hours: int = Field(default=6, ge=1, le=48)
+
+    # Update check
+    update_check_enabled: bool = True
+    auto_update_enabled: bool = False
+    update_channel: str = "release"
+
+    # Health heartbeat
+    health_interval_seconds: int = Field(default=55, ge=10, le=300)
+
+
 def _default_chains() -> dict[str, ChainConfig]:
     """Default: only gnosis enabled."""
     gnosis = CHAIN_DEFAULTS["gnosis"]
@@ -194,6 +239,8 @@ class MicromechConfig(BaseModel):
             ToolConfig(id="echo", enabled=True),
         ]
     )
+    telegram: TelegramConfig = Field(default_factory=TelegramConfig)
+    tasks: TasksConfig = Field(default_factory=TasksConfig)
 
     @model_validator(mode="before")
     @classmethod
