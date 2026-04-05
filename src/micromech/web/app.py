@@ -691,18 +691,8 @@ def create_web_app(
             from micromech.core.bridge import IwaBridge
             from micromech.runtime.contracts import (
                 KARMA_ABI,
-                MARKETPLACE_KARMA_ABI,
                 load_marketplace_abi,
             )
-
-            # Minimal ABI for delivery count query
-            delivery_count_abi = [{
-                "inputs": [{"name": "", "type": "address"}],
-                "name": "mapMechServiceDeliveryCounts",
-                "outputs": [{"name": "", "type": "uint256"}],
-                "stateMutability": "view",
-                "type": "function",
-            }]
 
             config = MicromechConfig.load()
             results = {}
@@ -719,14 +709,9 @@ def create_web_app(
                     bridge = IwaBridge(chain_name=name)
                     w3 = bridge.web3
 
-                    marketplace_abi = (
-                        load_marketplace_abi()
-                        + MARKETPLACE_KARMA_ABI
-                        + delivery_count_abi
-                    )
                     marketplace = w3.eth.contract(
                         address=cfg.marketplace_address,
-                        abi=marketplace_abi,
+                        abi=load_marketplace_abi(),
                     )
 
                     # Get karma contract address and query mech karma
