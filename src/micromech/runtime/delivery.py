@@ -317,7 +317,9 @@ class DeliveryManager:
 
         Tries account_tag from config first, then falls back to
         service_{id}_agent tag (created by iwa during deploy).
+        Uses key_storage._get_private_key for proper decryption.
         """
+        ks = self.bridge.wallet.key_storage
         tags_to_try = [self.chain_config.account_tag]
         if self.chain_config.service_id:
             tags_to_try.append(f"service_{self.chain_config.service_id}_agent")
@@ -325,8 +327,9 @@ class DeliveryManager:
 
         for tag in tags_to_try:
             try:
-                account = self.bridge.wallet.account_service.resolve_account(tag)
-                return account.key.hex()
+                addr = ks.get_address_by_tag(tag)
+                if addr:
+                    return ks._get_private_key(str(addr))
             except Exception:
                 continue
 

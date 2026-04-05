@@ -190,9 +190,8 @@ class TestGetSignerKey:
     def test_get_signer_key_success(self, queue: PersistentQueue):
         config = MicromechConfig()
         bridge = MagicMock()
-        mock_account = MagicMock()
-        mock_account.key.hex.return_value = "deadbeef" * 8
-        bridge.wallet.account_service.resolve_account.return_value = mock_account
+        bridge.wallet.key_storage.get_address_by_tag.return_value = "0x" + "ab" * 20
+        bridge.wallet.key_storage._get_private_key.return_value = "deadbeef" * 8
 
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
         key = dm._get_signer_key()
@@ -201,7 +200,7 @@ class TestGetSignerKey:
     def test_get_signer_key_failure(self, queue: PersistentQueue):
         config = MicromechConfig()
         bridge = MagicMock()
-        bridge.wallet.account_service.resolve_account.side_effect = RuntimeError("not found")
+        bridge.wallet.key_storage.get_address_by_tag.return_value = None
 
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
         with pytest.raises(ValueError, match="Cannot resolve signer key"):
