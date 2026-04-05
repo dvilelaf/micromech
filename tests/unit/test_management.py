@@ -116,7 +116,9 @@ class TestMechLifecycleWithMocks:
         mock_mgr.get_staking_status.return_value = mock_status
         mock_get_mgr.return_value = mock_mgr
 
-        lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
+        cfg = MicromechConfig()
+        cfg.chains[CHAIN_NAME].service_id = 42
+        lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
         status = lc.get_status("svc-1")
         assert status["service_id"] == 42
         assert status["is_staked"] is True

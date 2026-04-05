@@ -243,7 +243,7 @@ class MechLifecycle:
             if staking:
                 return {
                     "chain": self.chain_name,
-                    "service_id": staking.service_id,
+                    "service_id": self.chain_config.service_id,
                     "staking_state": staking.staking_state,
                     "is_staked": staking.is_staked,
                     "rewards": staking.accrued_reward_olas,
