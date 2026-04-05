@@ -25,38 +25,36 @@ generate_compose() {
     user_gid=${user_gid:-$(id -g)}
 
     # Preserve existing host volume paths before overwriting
-    declare -A volume_hosts
+    local _vol_preserve=""
     if [ -f docker-compose.yml ]; then
-        while IFS= read -r line; do
-            if [[ "$line" =~ ^[[:space:]]*-[[:space:]]+(.+):(/[^:]+) ]]; then
-                local host_path="${BASH_REMATCH[1]}"
-                local container_path="${BASH_REMATCH[2]}"
-                volume_hosts["$container_path"]="$host_path"
-            fi
-        done < docker-compose.yml
+        _vol_preserve=$(grep -E '^\s*-\s+.+:/' docker-compose.yml || true)
     fi
 
     docker run --rm --entrypoint cat "$MICROMECH_IMAGE" /app/docker-compose.yml > docker-compose.yml.tmp
 
+    # Portable sed -i (works on both GNU and BSD/macOS)
+    _sed_i() { if [ "$(uname)" = "Darwin" ]; then sed -i '' "$@"; else sed -i "$@"; fi; }
+
     # Transform for end-user deployment:
-    # 1. Replace 'build' block with 'image' (if present from dev compose)
-    sed -i "s|    build:|    image: $MICROMECH_IMAGE|" docker-compose.yml.tmp
-    # 2. Remove 'context' and 'dockerfile' lines
-    sed -i '/context: \./d' docker-compose.yml.tmp
-    sed -i '/dockerfile: Dockerfile/d' docker-compose.yml.tmp
-    # 3. Remove development volumes and comments (but keep data volume)
-    sed -i '/# Mount source/d' docker-compose.yml.tmp
-    sed -i '/# .*\.\/.*:\/app/d' docker-compose.yml.tmp
-    # 4. Set user ownership (so files created in data/ belong to the host user)
-    sed -i "s|    user: .*|    user: \"$user_uid:$user_gid\"|" docker-compose.yml.tmp
+    _sed_i "s|    build:|    image: $MICROMECH_IMAGE|" docker-compose.yml.tmp
+    _sed_i '/context: \./d' docker-compose.yml.tmp
+    _sed_i '/dockerfile: Dockerfile/d' docker-compose.yml.tmp
+    _sed_i '/# Mount source/d' docker-compose.yml.tmp
+    _sed_i '/# .*\.\/.*:\/app/d' docker-compose.yml.tmp
+    _sed_i "s|    user: .*|    user: \"$user_uid:$user_gid\"|" docker-compose.yml.tmp
 
-    # 5. Restore preserved host volume paths
-    for container_path in "${!volume_hosts[@]}"; do
-        local old_host="${volume_hosts[$container_path]}"
-        sed -i "s|^\([[:space:]]*-[[:space:]]\+\).*:${container_path}|\1${old_host}:${container_path}|" docker-compose.yml.tmp
-    done
+    # Restore preserved host volume paths (if any)
+    if [ -n "$_vol_preserve" ]; then
+        echo "$_vol_preserve" | while IFS= read -r line; do
+            host_path=$(echo "$line" | sed 's/.*- *//;s/:.*//')
+            container_path=$(echo "$line" | sed 's/.*://;s/ *$//')
+            if [ -n "$host_path" ] && [ -n "$container_path" ]; then
+                _sed_i "s|^\([[:space:]]*-[[:space:]]*\).*:${container_path}|\1${host_path}:${container_path}|" docker-compose.yml.tmp
+            fi
+        done
+    fi
 
-    # 6. Add updater sidecar service
+    # Add updater sidecar service
     cat >> docker-compose.yml.tmp << 'UPDATER_COMPOSE'
   updater:
     image: docker:cli
@@ -70,8 +68,9 @@ generate_compose() {
     command: ["sh", "-c", "while [ ! -f ./updater.sh ]; do sleep 5; done; exec sh ./updater.sh"]
 UPDATER_COMPOSE
 
-    # 7. Set fixed project name
-    sed -i '1s/^/name: micromech\n/' docker-compose.yml.tmp
+    # Set fixed project name (portable — no \n in sed replacement)
+    { printf 'name: micromech\n'; cat docker-compose.yml.tmp; } > docker-compose.yml.tmp2
+    mv docker-compose.yml.tmp2 docker-compose.yml.tmp
 
     mv docker-compose.yml.tmp docker-compose.yml
 }
@@ -319,11 +318,16 @@ if ! command -v docker &> /dev/null; then
 fi
 
 if ! docker compose version &> /dev/null; then
-    echo -e "${RED}❌ Docker Compose plugin is not installed.${NC}"
+    echo -e "${RED}Docker Compose plugin is not installed.${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}✅ Docker and Docker Compose found.${NC}"
+if ! docker info &> /dev/null; then
+    echo -e "${RED}Docker is installed but not running. Please start Docker Desktop.${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}Docker is ready.${NC}"
 echo
 
 # 2. Setup Directory
@@ -331,18 +335,13 @@ DIR_NAME="micromech"
 echo -e "${BLUE}📂 Setting up directory '$DIR_NAME'...${NC}"
 
 if [ -d "$DIR_NAME" ]; then
-    echo -e "${RED}⚠️  Directory '$DIR_NAME' already exists.${NC}"
-    read -p "Do you want to overwrite it? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        echo "Aborting."
-        exit 1
-    fi
-    rm -rf "$DIR_NAME"
+    echo -e "Directory '$DIR_NAME' already exists. Updating config files..."
+    echo -e "(Your data/ and secrets.env are preserved.)"
+    cd "$DIR_NAME"
+else
+    mkdir -p "$DIR_NAME/data"
+    cd "$DIR_NAME"
 fi
-
-mkdir -p "$DIR_NAME/data"
-cd "$DIR_NAME"
 
 # Extract artifacts from Docker image
 IMAGE="$MICROMECH_IMAGE"
@@ -350,11 +349,11 @@ echo -e "${BLUE}📦 Pulling latest image and extracting configuration...${NC}"
 docker pull "$IMAGE"
 
 # Create a temporary container
-CONTAINER_ID=$(docker create $IMAGE)
+CONTAINER_ID=$(docker create "$IMAGE")
 
 # Function to cleanup on exit
 cleanup() {
-    docker rm $CONTAINER_ID > /dev/null 2>&1
+    docker rm "$CONTAINER_ID" > /dev/null 2>&1
 }
 trap cleanup EXIT
 
@@ -386,8 +385,7 @@ echo
 echo -e "${GREEN}🎉 Setup Complete!${NC}"
 echo
 echo -e "Next steps:"
-echo -e "1. Enter the directory:  ${BLUE}cd $DIR_NAME${NC}"
-echo -e "2. Edit secrets:         ${BLUE}nano secrets.env${NC}"
-echo -e "3. Start Micromech:      ${BLUE}just up${NC} (or 'docker compose up -d')"
-echo -e "4. Open the dashboard:   ${BLUE}http://localhost:8000${NC}"
+echo -e "1. Edit secrets (optional):  ${BLUE}nano $DIR_NAME/secrets.env${NC}"
+echo -e "2. Start micromech:          ${BLUE}cd $DIR_NAME && docker compose up -d${NC}"
+echo -e "3. Open the dashboard:       ${BLUE}http://localhost:8000${NC}"
 echo
