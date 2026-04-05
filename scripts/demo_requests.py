@@ -213,9 +213,9 @@ def poll_results(
     cfg: Any,
     stop_event: threading.Event,
 ):
-    """Background thread: poll on-chain Deliver events for pending requests."""
-    # Track last scanned block per chain
-    last_block: dict[str, int] = {}
+    """Background thread: poll on-chain MarketplaceDelivery events."""
+    # Track the earliest pending block per chain (never advance past pending requests)
+    scan_from: dict[str, int] = {}
 
     while not stop_event.is_set():
         pending = {r.request_id: r for r in rows if r.status == "pending" and r.request_id}
@@ -229,7 +229,11 @@ def poll_results(
                 continue
             try:
                 current = w3.eth.block_number
-                from_blk = last_block.get(chain_name, current - 50)
+                # Always scan from a few blocks before the earliest pending request
+                # to never miss a delivery event
+                if chain_name not in scan_from:
+                    scan_from[chain_name] = max(0, current - 10)
+                from_blk = scan_from[chain_name]
 
                 # Scan MarketplaceDelivery to detect delivered requests,
                 # then fetch full response from mech's /result endpoint.
@@ -263,7 +267,13 @@ def poll_results(
                         row.status = "done"
                         row.elapsed = time.time() - row.t0
 
-                last_block[chain_name] = current
+                # Only advance scan_from if no pending requests remain
+                still_pending = any(
+                    r.status == "pending" for r in rows
+                    if hasattr(r, "chain") and r.chain == chain_name
+                )
+                if not still_pending:
+                    scan_from[chain_name] = current
             except Exception:
                 pass
 
