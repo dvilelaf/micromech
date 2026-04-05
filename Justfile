@@ -17,6 +17,13 @@ check: types
 types:
     uv run mypy src/
 
+# Security checks (gitleaks + bandit)
+security:
+    # Check for secrets in git history (requires gitleaks installed)
+    gitleaks detect --source . -v
+    # Check for common security issues in Python code
+    uv run bandit -c pyproject.toml -r src/
+
 # Run tests with coverage
 test:
     uv run pytest --cov=src/micromech --cov-report=term-missing tests/
@@ -339,6 +346,8 @@ release-check:
     #!/usr/bin/env bash
     set -e
 
+    echo "Running security checks..."
+    just security
     echo "Running quality checks..."
     just check
     echo "Running tests..."

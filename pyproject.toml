@@ -63,6 +63,7 @@ dev = [
     "pytest-forked>=1.6.0",
     "mypy>=1.0.0",
     "ruff>=0.1.0",
+    "bandit>=1.7.0",
 ]
 
 [project.scripts]
@@ -84,6 +85,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[tool.bandit]
+exclude_dirs = ["tests"]
+skips = ["B101"]  # assert in tests is fine
 
 [tool.mypy]
 python_version = "3.12"
