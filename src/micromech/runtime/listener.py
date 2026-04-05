@@ -149,14 +149,15 @@ class EventListener:
         get_logs() builds proper topic filters for indexed params.
         """
         mech_addr = self.chain_config.mech_address
+        if not mech_addr:
+            logger.warning("No mech_address configured — skipping event fetch")
+            return []
 
         try:
             contract = self._get_marketplace_contract()
-            filter_args: dict = {}
-            if mech_addr:
-                filter_args["priorityMech"] = self.bridge.web3.to_checksum_address(
-                    mech_addr,
-                )
+            filter_args = {
+                "priorityMech": self.bridge.web3.to_checksum_address(mech_addr),
+            }
             # Chunk requests to stay within RPC provider limits.
             # Start with 500-block chunks; if that fails (e.g. Alchemy Free
             # tier = 10 blocks), retry with 10-block mini-chunks.

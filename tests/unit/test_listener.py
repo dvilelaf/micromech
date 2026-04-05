@@ -193,12 +193,10 @@ class TestFetchEvents:
             argument_filters={"priorityMech": MECH_ADDR},
         )
 
-    def test_fetch_no_filter_when_no_mech_address(self):
-        """Without mech_address, get_logs is called with empty argument_filters."""
+    def test_fetch_skips_when_no_mech_address(self):
+        """Without mech_address, _fetch_events returns empty (no unfiltered queries)."""
         bridge = MagicMock()
-        bridge.with_retry.side_effect = lambda fn, **kw: fn()
 
-        # Use a chain config without mech_address
         chain_cfg = ChainConfig(
             chain="gnosis",
             marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
@@ -206,17 +204,9 @@ class TestFetchEvents:
             staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
         )
         listener = EventListener(MicromechConfig(), chain_cfg, bridge=bridge)
-        mock_contract = MagicMock()
-        mock_contract.events.MarketplaceRequest.get_logs.return_value = []
-        listener._marketplace_contract = mock_contract
 
-        listener._fetch_events(100, 200)
-
-        mock_contract.events.MarketplaceRequest.get_logs.assert_called_once_with(
-            from_block=100,
-            to_block=200,
-            argument_filters={},
-        )
+        result = listener._fetch_events(100, 200)
+        assert result == []
 
 
 class TestPollOnce:

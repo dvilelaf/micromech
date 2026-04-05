@@ -197,12 +197,15 @@ class MechServer:
         # Recover after processor is running
         await self._recover()
 
-        # Start per-chain listeners (only where bridge is available)
+        # Start per-chain listeners (only where bridge + mech_address are available)
         for chain_name, listener in self.listeners.items():
             bridge = self.bridges.get(chain_name)
-            if bridge:
+            cc = self.config.enabled_chains.get(chain_name)
+            if bridge and cc and cc.mech_address:
                 self._tasks.append(asyncio.create_task(listener.run(self._on_new_request)))
                 logger.info("Listener started for chain: {}", chain_name)
+            elif bridge and (not cc or not cc.mech_address):
+                logger.warning("Listener skipped for {} — no mech_address configured", chain_name)
 
         if with_http:
             self._tasks.append(asyncio.create_task(self._run_http()))
