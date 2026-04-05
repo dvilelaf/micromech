@@ -158,7 +158,7 @@ def format_response(result_data: dict | None) -> str:
 
 def build_table(rows: list[RequestRow], title: str) -> Table:
     """Build a rich Table from current rows."""
-    table = Table(title=title, expand=True, border_style="dim", title_style="bold")
+    table = Table(title=title, expand=True, border_style="dim", title_style="bold", show_lines=True)
     table.add_column("#", style="dim", width=4)
     table.add_column("Chain", width=8)
     table.add_column("Tool", width=20)

@@ -32,6 +32,13 @@ class RuntimeManager:
     def error(self) -> Optional[str]:
         return self._error
 
+    @property
+    def metrics(self) -> Optional[Any]:
+        """Expose the MetricsCollector from the running server."""
+        if self._server and self._state == "running":
+            return self._server.metrics
+        return None
+
     def _create_bridges(self) -> dict:
         """Create IwaBridge instances for all enabled chains."""
         from micromech.core.bridge import create_bridges

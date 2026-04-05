@@ -541,6 +541,23 @@ def create_web_app(
     async def api_tools() -> list[dict]:
         return get_tools()
 
+    @app.get("/result/{request_id}")
+    async def get_result_by_id(request_id: str) -> dict:
+        """Get result for a specific request (used by demo poller)."""
+        if not queue:
+            return JSONResponse({"error": "Not configured"}, 501)
+        record = queue.get_by_id(request_id)
+        if record is None:
+            return JSONResponse({"error": "Not found"}, 404)
+        result = _record_to_dict(record)
+        if record.result:
+            try:
+                import json as _json
+                result["result"] = _json.loads(record.result.output)
+            except (ValueError, TypeError):
+                result["result"] = {"raw": record.result.output}
+        return result
+
     # --- Metrics API ---
 
     @app.get("/api/metrics/live")
@@ -630,9 +647,13 @@ def create_web_app(
                     if runtime_manager:
                         payload["runtime_state"] = runtime_manager.state
 
-                    if metrics:
-                        payload["live"] = metrics.get_live_snapshot()
-                        new_events = metrics.get_events_since(last_event_ts)
+                    # Use passed metrics, or get from runtime manager
+                    _mc = metrics or (
+                        runtime_manager.metrics if runtime_manager else None
+                    )
+                    if _mc:
+                        payload["live"] = _mc.get_live_snapshot()
+                        new_events = _mc.get_events_since(last_event_ts)
                         if new_events:
                             payload["events"] = new_events
                             last_event_ts = time.time()
