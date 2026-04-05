@@ -1,26 +1,16 @@
-"""Demo script: sends random on-chain requests to micromech via MechMarketplace.
+"""Demo: send random on-chain requests to micromech.
+
+Auto-discovers all deployed chains and mech addresses from config.
+Every 5 seconds, picks a random chain and tool, sends a marketplace request.
 
 Usage:
-    python scripts/demo_requests.py [--chain CHAIN] [--interval SECS]
-
-Auto-discovers mech address, marketplace, and delivery rate from config.
-Sends marketplace.request() transactions on-chain every N seconds.
-The mech detects, executes, and delivers — visible in the dashboard.
-
-Requires:
-- iwa installed (for wallet + chain access)
-- Wallet unlocked (wallet_password in env or via web wizard)
-- Wallet funded with native token (for gas + delivery fees)
+    uv run python scripts/demo_requests.py
 """
 
-import argparse
 import json
-import os
 import random
 import sys
 import time
-
-# ── Prompt presets per tool ──────────────────────────────────────────
 
 TOOL_PROMPTS: dict[str, list[str]] = {
     "echo": [
@@ -51,235 +41,143 @@ TOOL_PROMPTS: dict[str, list[str]] = {
     ],
 }
 
-# ── ANSI colors ──────────────────────────────────────────────────────
-
-RESET = "\033[0m"
-BOLD = "\033[1m"
+# ANSI
+RST = "\033[0m"
+B = "\033[1m"
 DIM = "\033[2m"
-CYAN = "\033[36m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
+CYN = "\033[36m"
+GRN = "\033[32m"
+YEL = "\033[33m"
 RED = "\033[31m"
-MAGENTA = "\033[35m"
-BLUE = "\033[34m"
+MAG = "\033[35m"
+BLU = "\033[34m"
 
-TOOL_COLORS = {
-    "echo": BLUE,
-    "llm": CYAN,
-    "prediction-offline": MAGENTA,
-    "gemma4-api": GREEN,
-}
+TOOL_CLR = {"echo": BLU, "llm": CYN, "prediction-offline": MAG, "gemma4-api": GRN}
 
 PAYMENT_TYPE_NATIVE = bytes.fromhex(
     "ba699a34be8fe0e7725e93dcbce1701b0211a8ca61330aaeb8a05bf2ec7abed1"
 )
 
 
-def colored_tool(tool: str) -> str:
-    color = TOOL_COLORS.get(tool, CYAN)
-    return f"{color}{BOLD}{tool}{RESET}"
-
-
-def separator() -> str:
-    return f"{DIM}{'─' * 70}{RESET}"
-
-
-# ── Config discovery ─────────────────────────────────────────────────
-
-
-def load_chain_config(chain_name: str) -> dict:
-    """Load mech config for a chain from ~/.micromech/config.yaml.
-
-    Returns dict with: mech_address, marketplace_address, delivery_rate, chain.
-    """
-    from micromech.core.config import MicromechConfig
-
-    cfg = MicromechConfig.load()
-    chain_cfg = cfg.chains.get(chain_name)
-    if not chain_cfg:
-        print(f"{RED}Chain '{chain_name}' not found in config.{RESET}")
-        print(f"Available: {', '.join(cfg.chains.keys())}")
-        sys.exit(1)
-
-    if not chain_cfg.mech_address:
-        print(f"{RED}No mech_address configured for '{chain_name}'.{RESET}")
-        print("Run the setup wizard or deploy first.")
-        sys.exit(1)
-
-    return {
-        "chain": chain_name,
-        "mech_address": chain_cfg.mech_address,
-        "marketplace_address": chain_cfg.marketplace_address,
-        "delivery_rate": chain_cfg.delivery_rate,
-    }
-
-
-def get_available_tools(chain_cfg: dict) -> list[str]:
-    """Return tools that have prompts defined."""
-    return list(TOOL_PROMPTS.keys())
-
-
-# ── On-chain request ─────────────────────────────────────────────────
-
-
-def send_onchain_request(
-    bridge, w3, marketplace_contract, mech_address: str,
-    delivery_rate: int, tool: str, prompt: str,
-) -> str | None:
-    """Send a marketplace.request() transaction on-chain.
-
-    Returns the tx hash hex string, or None on failure.
-    """
-    from micromech.core.bridge import get_wallet
-
-    wallet = get_wallet()
-    sender = wallet.master_account.address
-
-    # Build request data (JSON-encoded prompt + tool)
+def send_signed_request(bridge, w3, marketplace, mech_addr, delivery_rate,
+                        sender, key_storage, tool, prompt):
+    """Build, sign, and send a marketplace.request() transaction."""
     request_data = json.dumps({"prompt": prompt, "tool": tool}).encode()
 
-    # Get marketplace fee
-    fee = bridge.with_retry(
-        lambda: marketplace_contract.functions.fee().call()
-    )
+    fee = bridge.with_retry(lambda: marketplace.functions.fee().call())
     value = delivery_rate + fee
 
-    # Build transaction
-    tx_fn = marketplace_contract.functions.request(
+    fn_call = marketplace.functions.request(
         request_data,
         delivery_rate,
         PAYMENT_TYPE_NATIVE,
-        w3.to_checksum_address(mech_address),
-        300,  # responseTimeout (5 min)
+        w3.to_checksum_address(mech_addr),
+        300,  # responseTimeout
         b"",  # paymentData
     )
 
-    try:
-        tx = bridge.with_retry(
-            lambda: tx_fn.transact({
-                "from": sender,
-                "value": value,
-                "gas": 500_000,
-            })
-        )
-        receipt = bridge.with_retry(
-            lambda: w3.eth.wait_for_transaction_receipt(tx, timeout=60)
-        )
-        if receipt["status"] != 1:
-            print(f"  {RED}TX reverted!{RESET}")
-            return None
-        return tx.hex() if isinstance(tx, bytes) else str(tx)
-    except Exception as e:
-        print(f"  {RED}TX failed: {e}{RESET}")
+    nonce = bridge.with_retry(lambda: w3.eth.get_transaction_count(sender))
+    gas_price = bridge.with_retry(lambda: w3.eth.gas_price)
+    chain_id = bridge.with_retry(lambda: w3.eth.chain_id)
+
+    tx = fn_call.build_transaction({
+        "from": sender,
+        "value": value,
+        "gas": 500_000,
+        "gasPrice": gas_price,
+        "nonce": nonce,
+        "chainId": chain_id,
+    })
+
+    signed = key_storage.sign_transaction(tx, "master")
+    tx_hash = w3.eth.send_raw_transaction(signed.raw_transaction)
+    receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
+
+    if receipt["status"] != 1:
         return None
-
-
-# ── Display ──────────────────────────────────────────────────────────
+    return tx_hash.hex() if isinstance(tx_hash, bytes) else str(tx_hash)
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="micromech demo — send random on-chain requests"
-    )
-    parser.add_argument(
-        "--chain", default="gnosis",
-        help="Chain to send requests on (default: gnosis)",
-    )
-    parser.add_argument(
-        "--interval", type=int, default=10,
-        help="Seconds between requests (default: 10)",
-    )
-    parser.add_argument(
-        "--tools", default=None,
-        help="Comma-separated list of tools to use (default: all)",
-    )
-    args = parser.parse_args()
-
-    # Load config
-    chain_info = load_chain_config(args.chain)
-
-    # Initialize bridge
-    from micromech.core.bridge import IwaBridge
+    from micromech.core.bridge import IwaBridge, get_wallet
+    from micromech.core.config import MicromechConfig
     from micromech.runtime.contracts import load_marketplace_abi
 
-    bridge = IwaBridge(chain_name=args.chain)
-    w3 = bridge.web3
+    cfg = MicromechConfig.load()
 
-    # Get sender address and balance
-    from micromech.core.bridge import get_wallet
+    # Discover deployed chains
+    chains = [
+        name for name, cc in cfg.enabled_chains.items()
+        if cc.mech_address and cc.marketplace_address
+    ]
+    if not chains:
+        print(f"{RED}No deployed chains found in config.{RST}")
+        sys.exit(1)
+
+    # Init bridges and marketplace contracts per chain
+    abi = load_marketplace_abi()
+    bridges: dict[str, tuple] = {}
+    for ch in chains:
+        br = IwaBridge(chain_name=ch)
+        w3 = br.web3
+        cc = cfg.chains[ch]
+        mp = w3.eth.contract(
+            address=w3.to_checksum_address(cc.marketplace_address), abi=abi,
+        )
+        bridges[ch] = (br, w3, mp)
+
+    # Wallet and key_storage for signing
     wallet = get_wallet()
     sender = wallet.master_account.address
-    balance_wei = bridge.with_retry(lambda: w3.eth.get_balance(sender))
-    balance = float(w3.from_wei(balance_wei, "ether"))
+    key_storage = wallet.key_storage
+    tools = list(TOOL_PROMPTS.keys())
 
-    # Load marketplace contract
-    marketplace_abi = load_marketplace_abi()
-    marketplace = w3.eth.contract(
-        address=w3.to_checksum_address(chain_info["marketplace_address"]),
-        abi=marketplace_abi,
-    )
+    # Header
+    print(f"\n{B}micromech on-chain demo{RST}")
+    print(f"{DIM}{'─' * 60}{RST}")
+    print(f"  Sender: {DIM}{sender}{RST}")
+    for ch in chains:
+        cc = cfg.chains[ch]
+        print(f"  {CYN}{ch}{RST}: mech {DIM}{cc.mech_address}{RST}")
+    print(f"  Tools:  {', '.join(f'{TOOL_CLR.get(t, CYN)}{B}{t}{RST}' for t in tools)}")
+    print(f"{DIM}{'─' * 60}{RST}")
+    print(f"{DIM}Sending requests every 5s. Ctrl+C to stop.{RST}\n")
 
-    # Select tools
-    if args.tools:
-        available = [t.strip() for t in args.tools.split(",") if t.strip() in TOOL_PROMPTS]
-    else:
-        available = list(TOOL_PROMPTS.keys())
-
-    if not available:
-        print(f"{RED}No valid tools selected.{RESET}")
-        sys.exit(1)
-
-    # Display config
-    delivery_cost = chain_info["delivery_rate"] / 1e18
-
-    print(f"\n{BOLD}micromech on-chain demo{RESET}")
-    print(separator())
-    print(f"  Chain:       {CYAN}{args.chain}{RESET}")
-    print(f"  Mech:        {DIM}{chain_info['mech_address']}{RESET}")
-    print(f"  Marketplace: {DIM}{chain_info['marketplace_address']}{RESET}")
-    print(f"  Sender:      {DIM}{sender}{RESET}")
-    print(f"  Balance:     {GREEN}{balance:.4f}{RESET} native")
-    print(f"  Cost/req:    ~{delivery_cost:.4f} + gas")
-    print(f"  Interval:    {args.interval}s")
-    print(f"  Tools:       {', '.join(colored_tool(t) for t in available)}")
-    print(separator())
-
-    if balance < delivery_cost * 3:
-        print(f"\n{RED}Low balance! Need at least {delivery_cost * 3:.4f} native.{RESET}")
-        sys.exit(1)
-
-    print(f"\n{DIM}Sending on-chain requests. Ctrl+C to stop.{RESET}\n")
-
-    # Main loop
     count = 0
     try:
         while True:
             count += 1
-            tool = random.choice(available)
+            chain = random.choice(chains)
+            tool = random.choice(tools)
             prompt = random.choice(TOOL_PROMPTS[tool])
+            cc = cfg.chains[chain]
+            br, w3, mp = bridges[chain]
 
             ts = time.strftime("%H:%M:%S")
-            print(f"{DIM}[{ts}]{RESET}  #{count}  {colored_tool(tool)}")
-            print(f"  {YELLOW}> {prompt}{RESET}")
+            tc = TOOL_CLR.get(tool, CYN)
+            print(f"{DIM}[{ts}]{RST}  #{count}  {CYN}{chain}{RST}  {tc}{B}{tool}{RST}")
+            print(f"  {YEL}> {prompt}{RST}")
 
             t0 = time.time()
-            tx_hash = send_onchain_request(
-                bridge, w3, marketplace, chain_info["mech_address"],
-                chain_info["delivery_rate"], tool, prompt,
-            )
-            elapsed = time.time() - t0
-
-            if tx_hash:
-                short_hash = tx_hash[:18] + "..."
-                print(f"  {GREEN}TX sent{RESET}  {DIM}{short_hash}  ({elapsed:.1f}s){RESET}")
-            else:
-                print(f"  {RED}Failed to send{RESET}")
+            try:
+                tx_hash = send_signed_request(
+                    br, w3, mp, cc.mech_address, cc.delivery_rate,
+                    sender, key_storage, tool, prompt,
+                )
+                elapsed = time.time() - t0
+                if tx_hash:
+                    print(f"  {GRN}OK{RST}  {DIM}{tx_hash[:20]}...  ({elapsed:.1f}s){RST}")
+                else:
+                    print(f"  {RED}TX reverted{RST}")
+            except Exception as e:
+                elapsed = time.time() - t0
+                print(f"  {RED}Error: {e}{RST}  {DIM}({elapsed:.1f}s){RST}")
 
             print()
-            time.sleep(args.interval)
+            time.sleep(5)
 
     except KeyboardInterrupt:
-        print(f"\n{DIM}Stopped after {count} request(s).{RESET}")
+        print(f"\n{DIM}Stopped after {count} request(s).{RST}")
 
 
 if __name__ == "__main__":

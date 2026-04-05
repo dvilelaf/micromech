@@ -253,20 +253,9 @@ run:
 web port="8000":
     uv run micromech web --port {{port}}
 
-# Send random on-chain requests to the mech (demo/testing)
-# Reads mech address from config. Wallet must be funded.
-# Examples:
-#   just demo                  # gnosis, every 10s
-#   just demo gnosis 5         # gnosis, every 5s
-#   just demo base 15 echo     # base, every 15s, echo tool only
-demo chain="gnosis" interval="10" tools="":
-    #!/usr/bin/env bash
-    set -e
-    EXTRA=""
-    if [ -n "{{tools}}" ]; then
-        EXTRA="--tools {{tools}}"
-    fi
-    uv run python scripts/demo_requests.py --chain "{{chain}}" --interval "{{interval}}" $EXTRA
+# Send random on-chain requests to all deployed chains (demo)
+demo:
+    uv run python scripts/demo_requests.py
 
 # --- Docker ---
 

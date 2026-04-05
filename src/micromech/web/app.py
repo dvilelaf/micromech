@@ -849,7 +849,10 @@ def create_web_app(
             config = MicromechConfig.load()
             chain = body.get("chain", "gnosis")
             lc = MechLifecycle(config, chain_name=chain)
-            service_key = body.get("service_key", "")
+            # Use service_key from request body, falling back to config
+            service_key = body.get("service_key", "") or ""
+            if not service_key and chain in config.chains:
+                service_key = config.chains[chain].service_key or ""
 
             if action == "stake":
                 ok = lc.stake(service_key, body.get("contract"))

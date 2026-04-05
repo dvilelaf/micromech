@@ -823,8 +823,8 @@
     function renderChainCards() {
         const container = document.getElementById('chain-cards');
 
-        // Show all deployed chains (management tab has its own per-card layout)
-        const deployed = Object.entries(mgmtChainData).filter(([_, v]) => v.complete);
+        // Show all chains from config (complete or in-progress)
+        const deployed = Object.entries(mgmtChainData);
 
         if (deployed.length === 0) {
             container.innerHTML = '<div class="glass" style="text-align:center;color:var(--text-muted);padding:2rem;">No deployed chains</div>';
@@ -834,10 +834,13 @@
         container.innerHTML = deployed.map(([chainName, chainInfo]) => {
             const staking = mgmtStakingData[chainName] || {};
             const karma = mgmtKarmaData[chainName] || {};
-            const serviceKey = chainInfo.service_key || (chainName + ':' + (chainInfo.service_id || ''));
+            const serviceKey = chainInfo.service_key || '';
+            const isComplete = chainInfo.complete === true;
             const isStaked = staking.is_staked === true;
-            const stakingState = staking.staking_state || staking.status || 'loading';
-            const badgeClass = stakingBadgeClass(stakingState);
+            const stakingState = isComplete
+                ? (staking.staking_state || staking.status || 'loading')
+                : chainInfo.state || 'incomplete';
+            const badgeClass = isComplete ? stakingBadgeClass(stakingState) : 'staking-not_staked';
 
             // Karma display
             let karmaHtml = '';
@@ -881,9 +884,29 @@
                     </div>`;
             }
 
-            // Contextual action buttons
+            // Setup state info for incomplete chains
+            let setupStateHtml = '';
+            if (!isComplete) {
+                const stateLabels = {
+                    needs_create: 'Service not created yet',
+                    needs_deploy: 'Service not deployed yet',
+                    needs_mech: 'Mech not created yet',
+                };
+                const label = stateLabels[chainInfo.state] || 'Setup incomplete';
+                setupStateHtml = `
+                    <div class="chain-card-row">
+                        <span class="label">Setup</span>
+                        <span class="value" style="color:var(--warning);">${label}</span>
+                    </div>`;
+            }
+
+            // Contextual action buttons — only show for complete chains with valid service_key
             let actionsHtml = '';
-            if (isStaked) {
+            if (!isComplete) {
+                actionsHtml = `<span style="font-size:0.8rem;color:var(--text-muted);">Complete deployment first (use Deploy section below)</span>`;
+            } else if (!serviceKey) {
+                actionsHtml = `<span style="font-size:0.8rem;color:var(--text-muted);">Missing service key in config</span>`;
+            } else if (isStaked) {
                 actionsHtml = `
                     <button class="btn btn-sm btn-secondary" onclick="mgmtAction('checkpoint','${chainName}','${serviceKey}')">Checkpoint</button>
                     <button class="btn btn-sm btn-success" onclick="mgmtAction('claim','${chainName}','${serviceKey}')">Claim Rewards</button>
@@ -891,6 +914,10 @@
                     <button class="btn btn-sm btn-secondary" onclick="mgmtAction('status','${chainName}','${serviceKey}')">Refresh Status</button>`;
             } else if (stakingState === 'loading') {
                 actionsHtml = `<span style="font-size:0.8rem;color:var(--text-muted);">Loading staking state...</span>`;
+            } else if (staking.status === 'error' || staking.status === 'not_configured') {
+                actionsHtml = `
+                    <span style="font-size:0.8rem;color:var(--warning);">Could not determine staking state</span>
+                    <button class="btn btn-sm btn-secondary" onclick="mgmtAction('status','${chainName}','${serviceKey}')">Retry</button>`;
             } else {
                 actionsHtml = `
                     <button class="btn btn-sm btn-primary" onclick="mgmtAction('stake','${chainName}','${serviceKey}')">Stake</button>
@@ -910,6 +937,7 @@
                     <span class="label">Mech address</span>
                     <span class="value addr-truncated" title="${chainInfo.mech_address || ''}">${truncateAddr(chainInfo.mech_address)}</span>
                 </div>
+                ${setupStateHtml}
                 ${stakingDetailHtml}
                 ${karmaHtml}
                 <div class="chain-card-actions">${actionsHtml}</div>
@@ -962,12 +990,8 @@
         const grid = document.getElementById('deploy-new-chains');
         try {
             const chainsRes = await fetch('/api/setup/chains').then(r => r.json());
-            // Use already-loaded mgmtChainData to determine deployed chains
-            const deployed = new Set(
-                Object.entries(mgmtChainData)
-                    .filter(([_, v]) => v.complete)
-                    .map(([k]) => k)
-            );
+            // Exclude ALL chains already in config (complete or in-progress)
+            const deployed = new Set(Object.keys(mgmtChainData));
             const available = chainsRes.filter(c => !deployed.has(c.name));
             if (available.length === 0) {
                 desc.textContent = 'Your mech is deployed on all available chains.';
