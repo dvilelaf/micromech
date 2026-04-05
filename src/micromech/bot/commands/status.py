@@ -10,7 +10,6 @@ from telegram.ext import ContextTypes
 from micromech.bot.formatting import bold, code, escape_html, format_balance
 from micromech.bot.security import authorized_only, rate_limited
 from micromech.core.config import MicromechConfig
-from micromech.management import MechLifecycle
 
 
 def _format_chain_status(chain_name: str, status: dict) -> str:
@@ -40,6 +39,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     config: MicromechConfig = context.bot_data["config"]
+    lifecycles = context.bot_data.get("lifecycles", {})
     enabled = config.enabled_chains
 
     if not enabled:
@@ -53,8 +53,11 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not chain_config.service_key:
             blocks.append(f"{bold(chain_name.upper())}\nNot deployed")
             continue
+        lifecycle = lifecycles.get(chain_name)
+        if not lifecycle:
+            blocks.append(f"{bold(chain_name.upper())}\nLifecycle not available")
+            continue
         try:
-            lifecycle = MechLifecycle(config, chain_name)
             status = await asyncio.to_thread(lifecycle.get_status, chain_config.service_key)
             if status:
                 blocks.append(_format_chain_status(chain_name, status))

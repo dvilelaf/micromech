@@ -131,6 +131,11 @@ async def update_check_task(
     """Check for new micromech version and handle notification/auto-update."""
     global _notified_version, _pending_version, _auto_update_started_at
 
+    if config is not None:
+        tasks_cfg = getattr(config, "tasks", None)
+        if tasks_cfg and not getattr(tasks_cfg, "update_check_enabled", True):
+            return
+
     logger.debug("Checking for micromech updates...")
 
     current = get_current_version()

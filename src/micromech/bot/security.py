@@ -10,8 +10,9 @@ from telegram.ext import ContextTypes
 
 from micromech.secrets import secrets
 
-# Rate limiting state
+# Rate limiting state (bounded to prevent memory growth)
 _rate_limit_cache: Dict[int, float] = {}
+_MAX_RATE_CACHE = 1000
 RATE_LIMIT_SECONDS = 2
 
 
@@ -47,8 +48,7 @@ def rate_limited(func: Callable) -> Callable:
         update: Update, context: ContextTypes.DEFAULT_TYPE, *args: object, **kwargs: object
     ) -> None:
         if not update.effective_user:
-            await func(update, context, *args, **kwargs)
-            return
+            return  # No user context — drop the request
 
         user_id = update.effective_user.id
         current_time = time.time()
@@ -58,6 +58,9 @@ def rate_limited(func: Callable) -> Callable:
             logger.debug(f"Rate limited user {user_id}")
             return
 
+        # Bound cache size to prevent memory growth
+        if len(_rate_limit_cache) >= _MAX_RATE_CACHE:
+            _rate_limit_cache.clear()
         _rate_limit_cache[user_id] = current_time
         await func(update, context, *args, **kwargs)
 

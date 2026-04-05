@@ -20,18 +20,23 @@ class NotificationService:
     def __init__(self, bot: Optional["Bot"] = None, chat_id: Optional[int] = None):
         self._bot = bot
         self._chat_id = chat_id
-        self._resolved = bot is not None
+        self._resolve_attempts = 0
+        self._max_resolve_attempts = 10
 
     def _resolve(self) -> None:
-        """Try to resolve bot from the running Application (if any)."""
-        if self._resolved:
+        """Try to resolve bot from the running Application (if any).
+
+        Retries up to _max_resolve_attempts to handle the case where
+        the scheduler fires before the Telegram bot has fully started.
+        """
+        if self._bot is not None or self._resolve_attempts >= self._max_resolve_attempts:
             return
-        self._resolved = True
+        self._resolve_attempts += 1
         try:
             from micromech.secrets import secrets
             if not secrets.telegram_enabled:
+                self._resolve_attempts = self._max_resolve_attempts
                 return
-            # Access the bot from the global application if it was started
             from micromech.bot import _application
             if _application is not None:
                 self._bot = _application.bot
@@ -64,10 +69,20 @@ class NotificationService:
         """Sync wrapper for use in threaded tasks."""
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self.send(title, message, level))
+            task = loop.create_task(self.send(title, message, level))
+            _pending_tasks.add(task)
+            task.add_done_callback(_pending_tasks.discard)
         except RuntimeError:
             # No event loop — just log
             getattr(logger, level.lower(), logger.info)(f"[{title}] {message}")
+
+    def _skip_resolve(self) -> None:
+        """Mark resolve as exhausted (for tests)."""
+        self._resolve_attempts = self._max_resolve_attempts
+
+
+# Prevent GC of fire-and-forget notification tasks
+_pending_tasks: set[asyncio.Task] = set()
 
 
 def _escape_html(text: str) -> str:

@@ -86,4 +86,6 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
     except Exception as e:
         logger.error(f"Error collecting logs: {e}", exc_info=True)
-        await update.message.reply_text(f"Error collecting logs: {e}")
+        await update.message.reply_text(
+            "Error collecting logs. Check server logs for details.",
+        )

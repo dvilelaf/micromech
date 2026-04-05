@@ -9,7 +9,6 @@ from telegram.ext import ContextTypes
 from micromech.bot.formatting import bold, code, escape_html
 from micromech.bot.security import authorized_only
 from micromech.core.config import MicromechConfig
-from micromech.management import MechLifecycle
 
 ACTION_MANAGE = "manage"
 ACTION_MANAGE_CONFIRM = "mgcfm"
@@ -135,7 +134,13 @@ async def handle_manage_callback(
                 return
 
             if action == "stake":
-                await _execute_action(query, config, chain_name, "stake")
+                lcs = context.bot_data.get(
+                    "lifecycles", {},
+                )
+                await _execute_action(
+                    query, config, chain_name,
+                    "stake", lcs,
+                )
                 return
 
     # Chain selection — show status + actions
@@ -154,8 +159,13 @@ async def handle_manage_callback(
 
     await query.answer("Fetching status...")
 
+    lifecycles = context.bot_data.get("lifecycles", {})
+    lifecycle = lifecycles.get(chain_name)
+    if not lifecycle:
+        await query.edit_message_text("Lifecycle not available for this chain.")
+        return
+
     try:
-        lifecycle = MechLifecycle(config, chain_name)
         status = await asyncio.to_thread(lifecycle.get_status, chain_config.service_key)
         if not status:
             await query.edit_message_text(
@@ -173,7 +183,8 @@ async def handle_manage_callback(
     except Exception as e:
         logger.error(f"Manage error for {chain_name}: {e}")
         await query.edit_message_text(
-            f"Error: {escape_html(str(e))}", parse_mode="HTML"
+            "Error fetching status. Check logs for details.",
+            parse_mode="HTML",
         )
 
 
@@ -207,10 +218,19 @@ async def handle_manage_confirm_callback(
         await query.answer("Session expired")
         return
 
-    await _execute_action(query, config, chain_name, action)
+    lifecycles = context.bot_data.get("lifecycles", {})
+    await _execute_action(
+        query, config, chain_name, action, lifecycles,
+    )
 
 
-async def _execute_action(query, config: MicromechConfig, chain_name: str, action: str) -> None:
+async def _execute_action(
+    query,
+    config: MicromechConfig,
+    chain_name: str,
+    action: str,
+    lifecycles: dict,
+) -> None:
     """Execute a manage action (stake/unstake/restake)."""
     enabled = config.enabled_chains
     chain_config = enabled.get(chain_name)
@@ -221,39 +241,63 @@ async def _execute_action(query, config: MicromechConfig, chain_name: str, actio
     label = action.capitalize()
     await query.answer(f"{label}...")
     await query.edit_message_text(
-        f"{label} {bold(chain_name.upper())}...", parse_mode="HTML"
+        f"{label} {bold(chain_name.upper())}...",
+        parse_mode="HTML",
     )
 
+    lifecycle = lifecycles.get(chain_name)
+    if not lifecycle:
+        await query.edit_message_text(
+            "Lifecycle not available for this chain.",
+        )
+        return
+
     try:
-        lifecycle = MechLifecycle(config, chain_name)
         service_key = chain_config.service_key
 
         if action == "stake":
-            success = await asyncio.to_thread(lifecycle.stake, service_key)
+            success = await asyncio.to_thread(
+                lifecycle.stake, service_key,
+            )
         elif action == "unstake":
-            success = await asyncio.to_thread(lifecycle.unstake, service_key)
+            success = await asyncio.to_thread(
+                lifecycle.unstake, service_key,
+            )
         elif action == "restake":
-            unstaked = await asyncio.to_thread(lifecycle.unstake, service_key)
+            unstaked = await asyncio.to_thread(
+                lifecycle.unstake, service_key,
+            )
             if not unstaked:
                 await query.edit_message_text(
-                    f"Unstake failed for {bold(chain_name.upper())}", parse_mode="HTML"
+                    f"Unstake failed for "
+                    f"{bold(chain_name.upper())}",
+                    parse_mode="HTML",
                 )
                 return
-            success = await asyncio.to_thread(lifecycle.stake, service_key)
+            success = await asyncio.to_thread(
+                lifecycle.stake, service_key,
+            )
         else:
             await query.edit_message_text("Unknown action")
             return
 
         if success:
             await query.edit_message_text(
-                f"{label} completed for {bold(chain_name.upper())}", parse_mode="HTML"
+                f"{label} completed for "
+                f"{bold(chain_name.upper())}",
+                parse_mode="HTML",
             )
         else:
             await query.edit_message_text(
-                f"{label} failed for {bold(chain_name.upper())}", parse_mode="HTML"
+                f"{label} failed for "
+                f"{bold(chain_name.upper())}",
+                parse_mode="HTML",
             )
     except Exception as e:
-        logger.error(f"Manage {action} error for {chain_name}: {e}")
+        logger.error(
+            f"Manage {action} error for {chain_name}: {e}",
+        )
         await query.edit_message_text(
-            f"{label} failed: {escape_html(str(e))}", parse_mode="HTML"
+            f"{label} failed. Check logs for details.",
+            parse_mode="HTML",
         )

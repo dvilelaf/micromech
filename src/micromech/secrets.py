@@ -2,7 +2,7 @@
 
 from typing import Optional
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +20,14 @@ class MicromechSecrets(BaseSettings):
 
     # Health monitor URL (e.g. Uptime Kuma, Healthchecks.io)
     health_url: Optional[str] = None
+
+    @field_validator("health_url")
+    @classmethod
+    def validate_health_url(cls, v: Optional[str]) -> Optional[str]:
+        if v and not v.startswith(("http://", "https://")):
+            msg = "health_url must start with http:// or https://"
+            raise ValueError(msg)
+        return v
 
     # Web dashboard auth (existing MICROMECH_AUTH_TOKEN)
     micromech_auth_token: Optional[str] = None

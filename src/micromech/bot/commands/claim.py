@@ -9,7 +9,6 @@ from telegram.ext import ContextTypes
 from micromech.bot.formatting import bold, code, escape_html
 from micromech.bot.security import authorized_only
 from micromech.core.config import MicromechConfig
-from micromech.management import MechLifecycle
 
 ACTION_CLAIM = "claim"
 
@@ -69,6 +68,8 @@ async def handle_claim_callback(
     config: MicromechConfig = context.bot_data["config"]
     enabled = config.enabled_chains
 
+    lifecycles = context.bot_data.get("lifecycles", {})
+
     if payload == "all":
         await query.answer("Claiming all chains...")
         await query.edit_message_text("Claiming rewards for all chains...")
@@ -76,8 +77,11 @@ async def handle_claim_callback(
         for chain_name, chain_config in enabled.items():
             if not chain_config.service_key:
                 continue
+            lifecycle = lifecycles.get(chain_name)
+            if not lifecycle:
+                results.append(f"{bold(chain_name.upper())}: Lifecycle not available")
+                continue
             try:
-                lifecycle = MechLifecycle(config, chain_name)
                 success = await asyncio.to_thread(
                     lifecycle.claim_rewards, chain_config.service_key
                 )
@@ -98,8 +102,11 @@ async def handle_claim_callback(
     await query.answer("Claiming...")
     await query.edit_message_text(f"Claiming rewards for {bold(chain_name.upper())}...",
                                   parse_mode="HTML")
+    lifecycle = lifecycles.get(chain_name)
+    if not lifecycle:
+        await query.edit_message_text("Lifecycle not available for this chain.")
+        return
     try:
-        lifecycle = MechLifecycle(config, chain_name)
         success = await asyncio.to_thread(
             lifecycle.claim_rewards, enabled[chain_name].service_key
         )
@@ -119,13 +126,17 @@ async def _claim_chain(
     if not update.message:
         return
     config: MicromechConfig = context.bot_data["config"]
+    lifecycles = context.bot_data.get("lifecycles", {})
     chain_config = config.enabled_chains[chain_name]
 
     status_msg = await update.message.reply_text(
         f"Claiming rewards for {bold(chain_name.upper())}...", parse_mode="HTML"
     )
+    lifecycle = lifecycles.get(chain_name)
+    if not lifecycle:
+        await status_msg.edit_text("Lifecycle not available for this chain.")
+        return
     try:
-        lifecycle = MechLifecycle(config, chain_name)
         success = await asyncio.to_thread(lifecycle.claim_rewards, chain_config.service_key)
         msg = "Rewards claimed" if success else "Nothing to claim"
         await status_msg.edit_text(f"{bold(chain_name.upper())}: {msg}", parse_mode="HTML")

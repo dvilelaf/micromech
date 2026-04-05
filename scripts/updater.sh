@@ -46,6 +46,12 @@ while true; do
         rm -f data/.update-request
         log "Received request: $ACTION"
 
+        # Validate action — only allow exact known values
+        if [ "$ACTION" != "restart" ] && [ "$ACTION" != "update" ]; then
+            log "WARNING: Ignoring unknown action: $ACTION"
+            continue
+        fi
+
         if [ "$ACTION" = "restart" ]; then
             log "Restarting micromech..."
             docker compose restart micromech

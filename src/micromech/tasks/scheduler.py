@@ -1,5 +1,6 @@
 """Task scheduler module."""
 
+import os
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -132,7 +133,7 @@ class TaskScheduler:
             startup_delay += 20
 
         # Update Check Task (daily at 8 AM local time)
-        local_tz = ZoneInfo("Europe/Madrid")
+        local_tz = ZoneInfo(os.environ.get("TZ", "Europe/Madrid"))
         if tasks_config.update_check_enabled:
             self.scheduler.add_job(
                 update_check_task,

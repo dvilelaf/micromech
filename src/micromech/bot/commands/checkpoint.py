@@ -9,7 +9,6 @@ from telegram.ext import ContextTypes
 from micromech.bot.formatting import bold, escape_html
 from micromech.bot.security import authorized_only
 from micromech.core.config import MicromechConfig
-from micromech.management import MechLifecycle
 
 ACTION_CHECKPOINT = "checkpoint"
 
@@ -75,6 +74,7 @@ async def handle_checkpoint_callback(
 
     config: MicromechConfig = context.bot_data["config"]
     enabled = config.enabled_chains
+    lifecycles = context.bot_data.get("lifecycles", {})
 
     if payload == "all":
         await query.answer("Checkpointing all chains...")
@@ -84,8 +84,11 @@ async def handle_checkpoint_callback(
         for chain_name, chain_config in enabled.items():
             if not chain_config.service_key:
                 continue
+            lifecycle = lifecycles.get(chain_name)
+            if not lifecycle:
+                skipped.append(chain_name.upper())
+                continue
             try:
-                lifecycle = MechLifecycle(config, chain_name)
                 success = await asyncio.to_thread(
                     lifecycle.checkpoint, chain_config.service_key
                 )
@@ -116,8 +119,11 @@ async def handle_checkpoint_callback(
     await query.edit_message_text(
         f"Calling checkpoint for {bold(chain_name.upper())}...", parse_mode="HTML"
     )
+    lifecycle = lifecycles.get(chain_name)
+    if not lifecycle:
+        await query.edit_message_text("Lifecycle not available for this chain.")
+        return
     try:
-        lifecycle = MechLifecycle(config, chain_name)
         success = await asyncio.to_thread(
             lifecycle.checkpoint, enabled[chain_name].service_key
         )
@@ -143,13 +149,17 @@ async def _checkpoint_chain(
     if not update.message:
         return
     config: MicromechConfig = context.bot_data["config"]
+    lifecycles = context.bot_data.get("lifecycles", {})
     chain_config = config.enabled_chains[chain_name]
 
     status_msg = await update.message.reply_text(
         f"Calling checkpoint for {bold(chain_name.upper())}...", parse_mode="HTML"
     )
+    lifecycle = lifecycles.get(chain_name)
+    if not lifecycle:
+        await status_msg.edit_text("Lifecycle not available for this chain.")
+        return
     try:
-        lifecycle = MechLifecycle(config, chain_name)
         success = await asyncio.to_thread(lifecycle.checkpoint, chain_config.service_key)
         if success:
             await status_msg.edit_text(

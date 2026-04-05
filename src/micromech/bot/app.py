@@ -34,6 +34,7 @@ from micromech.bot.formatting import bold, escape_html
 from micromech.bot.security import authorized_only, rate_limited
 from micromech.core.config import MicromechConfig
 from micromech.core.persistence import PersistentQueue
+from micromech.management import MechLifecycle
 from micromech.runtime.manager import RuntimeManager
 from micromech.runtime.metrics import MetricsCollector
 from micromech.secrets import secrets
@@ -88,7 +89,7 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     """Dispatch callbacks to appropriate handlers."""
     if not update.effective_chat:
         return
-    if update.effective_chat.id != secrets.telegram_chat_id:
+    if not secrets.telegram_chat_id or update.effective_chat.id != secrets.telegram_chat_id:
         logger.warning(
             f"Unauthorized callback attempt from chat_id={update.effective_chat.id} "
             f"user={update.effective_user.username if update.effective_user else 'unknown'}"
@@ -153,6 +154,15 @@ def create_application(
     app.bot_data["runtime_manager"] = runtime_manager
     app.bot_data["queue"] = queue
     app.bot_data["metrics"] = metrics
+
+    # Pre-create MechLifecycle instances for all enabled chains
+    lifecycles: dict[str, MechLifecycle] = {}
+    for chain_name in config.enabled_chains:
+        try:
+            lifecycles[chain_name] = MechLifecycle(config, chain_name)
+        except Exception as e:
+            logger.warning(f"Failed to create MechLifecycle for {chain_name}: {e}")
+    app.bot_data["lifecycles"] = lifecycles
 
     # Commands
     app.add_handler(CommandHandler("start", start_command))

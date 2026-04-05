@@ -25,6 +25,8 @@ async def checkpoint_task(
 
     tasks_config = config.tasks
 
+    from iwa.plugins.olas.contracts.staking import StakingContract
+
     for chain_name, lifecycle in lifecycles.items():
         chain_config = lifecycle.chain_config
         if not chain_config.service_key:
@@ -42,8 +44,6 @@ async def checkpoint_task(
 
             # Check if epoch has ended by looking at the staking contract
             # get_status returns staking info; we need to check the contract directly
-            from iwa.plugins.olas.contracts.staking import StakingContract
-
             contract = await asyncio.to_thread(
                 StakingContract,
                 chain_config.staking_address,

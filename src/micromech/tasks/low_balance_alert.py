@@ -19,6 +19,8 @@ async def low_balance_alert_task(
     config: "MicromechConfig",
 ) -> None:
     """Check and alert on low balances and eviction status."""
+    if not config.tasks.low_balance_alert_enabled:
+        return
     logger.debug("Running low balance alert check...")
 
     tasks_config = config.tasks
