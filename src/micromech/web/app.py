@@ -258,7 +258,9 @@ def create_web_app(
                         "state": chain_cfg.detect_setup_state(),
                         "complete": chain_cfg.setup_complete,
                         "service_id": chain_cfg.service_id,
+                        "service_key": chain_cfg.service_key,
                         "mech_address": chain_cfg.mech_address,
+                        "multisig_address": chain_cfg.multisig_address,
                     }
             except Exception:
                 pass

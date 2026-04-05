@@ -148,18 +148,89 @@
         .btn-primary:hover { background: var(--primary-hover); }
         .btn-secondary { background: transparent; color: var(--text-muted); }
         .btn-secondary:hover { background: rgba(255,255,255,0.05); color: var(--text-color); }
+        .btn-danger { background: transparent; color: var(--error); border-color: var(--error); }
+        .btn-danger:hover { background: rgba(231,76,60,0.1); }
+        .btn-success { background: transparent; color: var(--success); border-color: var(--success); }
+        .btn-success:hover { background: rgba(46,204,113,0.1); }
         .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .btn-sm { padding: 5px 14px; font-size: 0.78rem; }
         .mgmt-result {
             background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); border-radius: 8px;
             padding: 1rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);
             white-space: pre-wrap; display: none;
         }
+        .chain-cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; }
+        .chain-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
+        .chain-card-header h4 { font-size: 1rem; font-weight: 600; text-transform: capitalize; margin: 0; }
+        .chain-card-row { display: flex; justify-content: space-between; align-items: center; padding: 0.3rem 0; font-size: 0.8rem; }
+        .chain-card-row .label { color: var(--text-muted); }
+        .chain-card-row .value { font-family: var(--font-mono); font-size: 0.78rem; }
+        .chain-card-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid rgba(255,255,255,0.05); }
+        .staking-badge {
+            display: inline-block; padding: 3px 10px; border-radius: 12px;
+            font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+        }
+        .staking-staked { background: rgba(46,204,113,0.15); color: var(--success); }
+        .staking-not_staked { background: rgba(241,196,15,0.15); color: var(--warning); }
+        .staking-evicted { background: rgba(231,76,60,0.15); color: var(--error); }
+        .staking-unknown { background: rgba(255,255,255,0.05); color: var(--text-muted); }
+        .staking-loading { background: rgba(255,255,255,0.05); color: var(--text-muted); }
+        .addr-truncated { cursor: help; }
 
         /* Responsive */
         @media (max-width: 600px) {
             .charts-grid { grid-template-columns: 1fr; }
             .metrics-grid { grid-template-columns: repeat(2, 1fr); }
         }
+
+        /* Inline chain filter */
+        .inline-chain-filter {
+            background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); color: var(--text-muted);
+            padding: 2px 6px; border-radius: 4px; font-family: var(--font-main); font-size: 0.75rem;
+            margin-left: 0.5rem; vertical-align: middle; cursor: pointer;
+        }
+        .inline-chain-filter:focus { outline: none; border-color: var(--accent-color); color: var(--text-color); }
+        .section-header { display: flex; align-items: center; margin-bottom: 1rem; }
+        .section-header h3 { font-size: 0.95rem; color: var(--text-muted); margin: 0; }
+
+        /* Runtime controls in header */
+        .runtime-controls { display: flex; align-items: center; gap: 0.5rem; }
+        .runtime-badge {
+            display: inline-block; padding: 3px 10px; border-radius: 10px;
+            font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;
+        }
+        .runtime-badge-running { background: rgba(46,204,113,0.15); color: var(--success); }
+        .runtime-badge-stopped { background: rgba(231,76,60,0.15); color: var(--error); }
+        .runtime-badge-starting { background: rgba(241,196,15,0.15); color: var(--warning); }
+        .runtime-badge-error { background: rgba(231,76,60,0.15); color: var(--error); }
+        .runtime-badge-disconnected { background: rgba(241,196,15,0.15); color: var(--warning); }
+        .runtime-badge-unknown { background: rgba(255,255,255,0.05); color: var(--text-muted); }
+        .rt-btn {
+            background: transparent; border: 1px solid var(--glass-border); border-radius: 6px;
+            padding: 4px 10px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s;
+        }
+        .rt-btn:hover { background: rgba(255,255,255,0.05); }
+        .rt-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+        .rt-btn-start { color: var(--success); border-color: var(--success); }
+        .rt-btn-start:hover { background: rgba(46,204,113,0.1); }
+        .rt-btn-stop { color: var(--error); border-color: var(--error); }
+        .rt-btn-stop:hover { background: rgba(231,76,60,0.1); }
+        .rt-btn-restart { color: var(--warning); border-color: var(--warning); }
+        .rt-btn-restart:hover { background: rgba(241,196,15,0.1); }
+
+        /* Logs tab */
+        .log-container {
+            background: rgba(0, 0, 0, 0.6); border: 1px solid var(--glass-border); border-radius: 12px;
+            padding: 1rem; font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-muted);
+            max-height: 600px; overflow-y: auto; white-space: pre-wrap; line-height: 1.6;
+        }
+        .log-line { padding: 1px 0; }
+        .log-info { color: var(--accent-color); }
+        .log-warn { color: var(--warning); }
+        .log-error { color: var(--error); }
+        .log-success { color: var(--success); }
+        .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
+        .log-header h3 { font-size: 0.95rem; color: var(--text-muted); margin: 0; }
 
         /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; }
@@ -183,24 +254,11 @@
                 </svg>
                 <h1>micromech <span>dashboard</span></h1>
             </div>
-            <div style="display:flex;align-items:center;gap:1rem;">
-                <div>
-                    <label for="chain-select" style="font-size:0.75rem;color:var(--text-muted);">Chain</label>
-                    <select id="chain-select" style="background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);color:var(--text-color);padding:4px 8px;border-radius:6px;font-family:var(--font-main);font-size:0.85rem;">
-                        <option value="">All chains</option>
-                    </select>
-                </div>
-                <div class="status-indicator" id="runtime-indicator" style="cursor: pointer; position: relative;" onclick="toggleRuntimePopover()">
-                    <span class="pulse" id="pulse"></span>
-                    <span id="status-text">Connecting...</span>
-                    <!-- Runtime control popover -->
-                    <div id="runtime-popover" style="display: none; position: absolute; top: 100%; right: 0; margin-top: 0.5rem;
-                        background: var(--card-bg); backdrop-filter: blur(12px); border: 1px solid var(--glass-border);
-                        border-radius: 12px; padding: 1rem; min-width: 220px; z-index: 100;">
-                        <p id="popover-status" style="font-size: 0.85rem; margin-bottom: 0.75rem;"></p>
-                        <div style="display: flex; gap: 0.5rem;" id="popover-buttons"></div>
-                    </div>
-                </div>
+            <div class="runtime-controls">
+                <span class="runtime-badge runtime-badge-unknown" id="runtime-badge">Connecting...</span>
+                <button class="rt-btn rt-btn-start" id="rt-btn-start" onclick="runtimeAction('start')" style="display:none;" title="Start">&#9654;</button>
+                <button class="rt-btn rt-btn-stop" id="rt-btn-stop" onclick="runtimeAction('stop')" style="display:none;" title="Stop">&#9632;</button>
+                <button class="rt-btn rt-btn-restart" id="rt-btn-restart" onclick="runtimeAction('restart')" style="display:none;" title="Restart">&#8635;</button>
             </div>
         </header>
 
@@ -210,6 +268,7 @@
             <button class="tab-btn" data-tab="tools">Tools</button>
             <button class="tab-btn" data-tab="charts">Charts</button>
             <button class="tab-btn" data-tab="management">Management</button>
+            <button class="tab-btn" data-tab="logs">Logs</button>
         </nav>
 
         <main>
@@ -267,7 +326,12 @@
                 </div>
 
                 <div class="glass">
-                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">Recent Requests</h3>
+                    <div class="section-header">
+                        <h3>Recent Requests</h3>
+                        <select class="inline-chain-filter" id="filter-requests" onchange="onSectionChainChange('requests')">
+                            <option value="">All chains</option>
+                        </select>
+                    </div>
                     <div style="overflow-x:auto;">
                         <table>
                             <thead>
@@ -299,7 +363,12 @@
             <!-- Tools Tab -->
             <section id="tab-tools" class="tab-pane">
                 <div class="glass">
-                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">Tool Performance</h3>
+                    <div class="section-header">
+                        <h3>Tool Performance</h3>
+                        <select class="inline-chain-filter" id="filter-tools" onchange="onSectionChainChange('tools')">
+                            <option value="">All chains</option>
+                        </select>
+                    </div>
                     <table>
                         <thead>
                             <tr>
@@ -318,6 +387,12 @@
 
             <!-- Charts Tab -->
             <section id="tab-charts" class="tab-pane">
+                <div class="section-header" style="margin-bottom:1rem;">
+                    <h3>Charts</h3>
+                    <select class="inline-chain-filter" id="filter-charts" onchange="onSectionChainChange('charts')">
+                        <option value="">All chains</option>
+                    </select>
+                </div>
                 <div class="charts-grid">
                     <div class="glass chart-card">
                         <h3>Daily Requests (30 days)</h3>
@@ -338,21 +413,16 @@
 
             <!-- Management Tab -->
             <section id="tab-management" class="tab-pane">
-                <div class="glass mgmt-section">
-                    <h3 style="font-size:0.95rem; color:var(--text-muted);">Service Management</h3>
-                    <div class="mgmt-row">
-                        <input type="text" id="service-key" placeholder="Service key (e.g. mech_gnosis)" style="width:280px;">
-                        <select id="mgmt-chain" style="background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);color:var(--text-color);padding:8px 12px;border-radius:8px;font-family:var(--font-main);font-size:0.85rem;"></select>
+                <!-- Deployed Chains -->
+                <div id="mgmt-deployed">
+                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">Deployed Chains</h3>
+                    <div class="chain-cards-grid" id="chain-cards">
+                        <div class="glass" style="text-align:center;color:var(--text-muted);padding:2rem;">Loading chain data...</div>
                     </div>
-                    <div class="mgmt-row">
-                        <button class="btn btn-primary" onclick="mgmtAction('stake')">Stake</button>
-                        <button class="btn btn-secondary" onclick="mgmtAction('unstake')">Unstake</button>
-                        <button class="btn btn-secondary" onclick="mgmtAction('claim')">Claim Rewards</button>
-                        <button class="btn btn-secondary" onclick="mgmtAction('checkpoint')">Checkpoint</button>
-                        <button class="btn btn-secondary" onclick="mgmtAction('status')">Status</button>
-                    </div>
-                    <pre class="mgmt-result" id="mgmt-result"></pre>
                 </div>
+
+                <!-- Action result (shared) -->
+                <pre class="mgmt-result" id="mgmt-result" style="margin-top:1rem;"></pre>
 
                 <!-- Reputation -->
                 <div class="glass mgmt-section" id="karma-section" style="margin-top:1.5rem;">
@@ -364,7 +434,7 @@
 
                 <!-- Deploy on new chains -->
                 <div class="glass mgmt-section" id="deploy-new-section" style="margin-top:1.5rem;">
-                    <h3 style="font-size:0.95rem; color:var(--text-muted);">Deploy on new chains</h3>
+                    <h3 style="font-size:0.95rem; color:var(--text-muted);">Deploy on New Chains</h3>
                     <p id="deploy-new-desc" style="font-size:0.8rem; color:var(--text-muted); margin-bottom:0.5rem;">Loading...</p>
                     <div id="deploy-new-chains" style="display:flex; flex-wrap:wrap; gap:0.5rem;"></div>
                     <div id="deploy-new-fund" style="display:none; margin-top:1rem;">
@@ -372,12 +442,23 @@
                             Fund your wallet on the selected chains before deploying.
                         </p>
                         <div id="deploy-new-balances" style="font-size:0.8rem; font-family:var(--font-mono); margin-bottom:0.75rem;"></div>
-                        <button class="btn btn-primary" id="btn-deploy-new" onclick="startNewDeploy()">Deploy</button>
+                        <button class="btn btn-primary" id="btn-deploy-new" onclick="startNewDeploy()">Deploy Selected Chains</button>
                     </div>
                     <div id="deploy-new-progress" style="display:none; margin-top:1rem;">
                         <div id="deploy-new-log" style="font-size:0.8rem; font-family:var(--font-mono); max-height:300px; overflow-y:auto;"></div>
                     </div>
                     <pre class="mgmt-result" id="deploy-new-result" style="display:none;"></pre>
+                </div>
+            </section>
+
+            <!-- Logs Tab -->
+            <section id="tab-logs" class="tab-pane">
+                <div class="log-header">
+                    <h3>Event Log</h3>
+                    <button class="btn btn-sm btn-secondary" onclick="clearLogs()">Clear</button>
+                </div>
+                <div class="log-container" id="log-container">
+                    <div class="log-line" style="color:var(--text-muted);">Waiting for events...</div>
                 </div>
             </section>
         </main>
@@ -404,7 +485,10 @@
         toolChart: null,
         sseConnected: false,
         chains: [],
-        selectedChain: '',  // '' = all chains
+        selectedChain: '',  // '' = all chains (kept for API helpers)
+        sectionChains: { requests: '', tools: '', charts: '' },
+        logLines: [],
+        logInitialized: false,
     };
 
     // --- Chart.js defaults ---
@@ -422,6 +506,7 @@
             // Load data when switching tabs
             if (btn.dataset.tab === 'tools') loadToolStats();
             if (btn.dataset.tab === 'charts') loadCharts();
+            if (btn.dataset.tab === 'management') loadManagementTab();
         });
     });
 
@@ -435,7 +520,10 @@
             const data = JSON.parse(e.data);
             updateLiveMetrics(data);
             if (data.events) {
-                data.events.forEach(ev => addEvent(ev));
+                data.events.forEach(ev => {
+                    addEvent(ev);
+                    addLogLine(ev);
+                });
             }
             if (data.queue) {
                 updateQueueChart(data.queue);
@@ -550,7 +638,7 @@
             },
         });
         // Load data
-        fetch('/api/metrics/channels' + chainQueryPrefix()).then(r => r.json()).then(d => {
+        fetch('/api/metrics/channels' + chainQueryPrefix('requests')).then(r => r.json()).then(d => {
             state.channelChart.data.datasets[0].data = [d.onchain || 0, d.offchain || 0];
             state.channelChart.update('none');
         });
@@ -558,7 +646,7 @@
 
     // --- Recent Requests ---
     function loadRecentRequests() {
-        fetch('/api/requests?limit=20' + chainQueryAmp()).then(r => r.json()).then(rows => {
+        fetch('/api/requests?limit=20' + chainQueryAmp('requests')).then(r => r.json()).then(rows => {
             const tbody = document.getElementById('recent-requests');
             if (!rows.length) {
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No requests yet</td></tr>';
@@ -579,7 +667,7 @@
 
     // --- Tool Stats ---
     function loadToolStats() {
-        fetch('/api/metrics/tools' + chainQueryPrefix()).then(r => r.json()).then(tools => {
+        fetch('/api/metrics/tools' + chainQueryPrefix('tools')).then(r => r.json()).then(tools => {
             const tbody = document.getElementById('tool-stats');
             if (!tools.length) {
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No data yet</td></tr>';
@@ -605,7 +693,7 @@
     // --- Historical Charts ---
     function loadCharts() {
         // Daily
-        fetch('/api/metrics/daily?days=30' + chainQueryAmp()).then(r => r.json()).then(data => {
+        fetch('/api/metrics/daily?days=30' + chainQueryAmp('charts')).then(r => r.json()).then(data => {
             if (state.dailyChart) state.dailyChart.destroy();
             const ctx = document.getElementById('dailyChart').getContext('2d');
             state.dailyChart = new Chart(ctx, {
@@ -640,7 +728,7 @@
         });
 
         // Monthly
-        fetch('/api/metrics/monthly?months=12' + chainQueryAmp()).then(r => r.json()).then(data => {
+        fetch('/api/metrics/monthly?months=12' + chainQueryAmp('charts')).then(r => r.json()).then(data => {
             if (state.monthlyChart) state.monthlyChart.destroy();
             const ctx = document.getElementById('monthlyChart').getContext('2d');
             state.monthlyChart = new Chart(ctx, {
@@ -667,7 +755,7 @@
         });
 
         // Tool breakdown
-        fetch('/api/metrics/tools' + chainQueryPrefix()).then(r => r.json()).then(tools => {
+        fetch('/api/metrics/tools' + chainQueryPrefix('charts')).then(r => r.json()).then(tools => {
             if (state.toolChart) state.toolChart.destroy();
             const ctx = document.getElementById('toolChart').getContext('2d');
             state.toolChart = new Chart(ctx, {
@@ -692,34 +780,174 @@
     }
 
     // --- Management ---
-    async function mgmtAction(action) {
-        const serviceKey = document.getElementById('service-key').value.trim();
-        if (!serviceKey) { alert('Enter a service key'); return; }
+    // Cached management data to avoid redundant fetches
+    let mgmtChainData = {};   // {chain: {service_key, service_id, mech_address, ...}}
+    let mgmtStakingData = {}; // {chain: {staking_state, is_staked, rewards, ...}}
+    let mgmtKarmaData = {};   // {chain: {karma, deliveries, timeouts}}
+
+    function truncateAddr(addr) {
+        if (!addr || addr.length < 12) return addr || '-';
+        return addr.slice(0, 6) + '...' + addr.slice(-4);
+    }
+
+    function stakingBadgeClass(stakingState) {
+        if (!stakingState) return 'staking-unknown';
+        const s = stakingState.toLowerCase();
+        if (s === 'staked' || s.includes('staked')) return 'staking-staked';
+        if (s === 'evicted') return 'staking-evicted';
+        if (s === 'not_staked' || s === 'unstaked') return 'staking-not_staked';
+        return 'staking-unknown';
+    }
+
+    function stakingLabel(stakingState) {
+        if (!stakingState) return 'Unknown';
+        return stakingState.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    }
+
+    async function loadManagementTab() {
+        // Load all data in parallel
+        const [stateRes, stakingRes, karmaRes] = await Promise.all([
+            fetch('/api/setup/state').then(r => r.json()).catch(() => ({})),
+            fetch('/api/staking/status').then(r => r.json()).catch(() => ({})),
+            fetch('/api/karma').then(r => r.json()).catch(() => ({})),
+        ]);
+
+        mgmtChainData = stateRes.chains || {};
+        mgmtStakingData = stakingRes.error ? {} : stakingRes;
+        mgmtKarmaData = karmaRes.error ? {} : karmaRes;
+
+        renderChainCards();
+        loadNewChainOptions();
+    }
+
+    function renderChainCards() {
+        const container = document.getElementById('chain-cards');
+
+        // Show all deployed chains (management tab has its own per-card layout)
+        const deployed = Object.entries(mgmtChainData).filter(([_, v]) => v.complete);
+
+        if (deployed.length === 0) {
+            container.innerHTML = '<div class="glass" style="text-align:center;color:var(--text-muted);padding:2rem;">No deployed chains</div>';
+            return;
+        }
+
+        container.innerHTML = deployed.map(([chainName, chainInfo]) => {
+            const staking = mgmtStakingData[chainName] || {};
+            const karma = mgmtKarmaData[chainName] || {};
+            const serviceKey = chainInfo.service_key || (chainName + ':' + (chainInfo.service_id || ''));
+            const isStaked = staking.is_staked === true;
+            const stakingState = staking.staking_state || staking.status || 'loading';
+            const badgeClass = stakingBadgeClass(stakingState);
+
+            // Karma display
+            let karmaHtml = '';
+            if (karma.karma !== null && karma.karma !== undefined) {
+                const rep = reputationLabel(karma.deliveries || 0, karma.timeouts || 0);
+                const pct = (karma.deliveries || 0) > 0
+                    ? (((karma.deliveries - karma.timeouts) / karma.deliveries) * 100).toFixed(1) + '%'
+                    : '-';
+                karmaHtml = `
+                    <div class="chain-card-row">
+                        <span class="label">Reputation</span>
+                        <span style="color:${rep.color};font-weight:500;">${rep.icon} ${rep.text} (${pct})</span>
+                    </div>
+                    <div class="chain-card-row">
+                        <span class="label">Deliveries</span>
+                        <span class="value">${(karma.deliveries || 0).toLocaleString()}</span>
+                    </div>`;
+                if (karma.timeouts > 0) {
+                    karmaHtml += `
+                    <div class="chain-card-row">
+                        <span class="label">Missed</span>
+                        <span class="value" style="color:var(--error);">${karma.timeouts}</span>
+                    </div>`;
+                }
+            }
+
+            // Staking details
+            let stakingDetailHtml = '';
+            if (isStaked && staking.rewards !== undefined) {
+                stakingDetailHtml += `
+                    <div class="chain-card-row">
+                        <span class="label">Rewards</span>
+                        <span class="value">${staking.rewards} OLAS</span>
+                    </div>`;
+            }
+            if (isStaked && staking.requests_this_epoch !== undefined) {
+                stakingDetailHtml += `
+                    <div class="chain-card-row">
+                        <span class="label">Epoch requests</span>
+                        <span class="value">${staking.requests_this_epoch} / ${staking.required_requests || '?'}</span>
+                    </div>`;
+            }
+
+            // Contextual action buttons
+            let actionsHtml = '';
+            if (isStaked) {
+                actionsHtml = `
+                    <button class="btn btn-sm btn-secondary" onclick="mgmtAction('checkpoint','${chainName}','${serviceKey}')">Checkpoint</button>
+                    <button class="btn btn-sm btn-success" onclick="mgmtAction('claim','${chainName}','${serviceKey}')">Claim Rewards</button>
+                    <button class="btn btn-sm btn-danger" onclick="mgmtAction('unstake','${chainName}','${serviceKey}')">Unstake</button>
+                    <button class="btn btn-sm btn-secondary" onclick="mgmtAction('status','${chainName}','${serviceKey}')">Refresh Status</button>`;
+            } else if (stakingState === 'loading') {
+                actionsHtml = `<span style="font-size:0.8rem;color:var(--text-muted);">Loading staking state...</span>`;
+            } else {
+                actionsHtml = `
+                    <button class="btn btn-sm btn-primary" onclick="mgmtAction('stake','${chainName}','${serviceKey}')">Stake</button>
+                    <button class="btn btn-sm btn-secondary" onclick="mgmtAction('status','${chainName}','${serviceKey}')">Refresh Status</button>`;
+            }
+
+            return `<div class="glass" data-chain-card="${chainName}">
+                <div class="chain-card-header">
+                    <h4>${escapeHtml(chainName)}</h4>
+                    <span class="staking-badge ${badgeClass}">${stakingLabel(stakingState)}</span>
+                </div>
+                <div class="chain-card-row">
+                    <span class="label">Service ID</span>
+                    <span class="value">${chainInfo.service_id || '-'}</span>
+                </div>
+                <div class="chain-card-row">
+                    <span class="label">Mech address</span>
+                    <span class="value addr-truncated" title="${chainInfo.mech_address || ''}">${truncateAddr(chainInfo.mech_address)}</span>
+                </div>
+                ${stakingDetailHtml}
+                ${karmaHtml}
+                <div class="chain-card-actions">${actionsHtml}</div>
+            </div>`;
+        }).join('');
+    }
+
+    async function mgmtAction(action, chain, serviceKey) {
         const el = document.getElementById('mgmt-result');
         el.style.display = 'block';
         el.style.color = 'var(--text-muted)';
-        el.textContent = 'Running ' + action + '...';
-        document.querySelectorAll('.btn').forEach(b => b.disabled = true);
+        el.textContent = 'Running ' + action + ' on ' + chain + '...';
+
+        // Disable buttons on the specific chain card
+        const card = document.querySelector(`[data-chain-card="${chain}"]`);
+        if (card) card.querySelectorAll('.btn').forEach(b => b.disabled = true);
 
         try {
             const resp = await fetch('/api/management/' + action, {
                 method: 'POST',
                 headers: authHeaders({'Content-Type': 'application/json', 'X-Micromech-Action': action}),
-                body: JSON.stringify({service_key: serviceKey, chain: document.getElementById('mgmt-chain').value || 'gnosis'}),
+                body: JSON.stringify({service_key: serviceKey, chain: chain}),
             });
             const data = await resp.json();
             if (data.success) {
                 el.style.color = 'var(--success)';
-                el.textContent = action + ' succeeded' + (data.data ? ':\n' + JSON.stringify(data.data, null, 2) : '');
+                el.textContent = action + ' on ' + chain + ' succeeded' + (data.data ? ':\n' + JSON.stringify(data.data, null, 2) : '');
+                // Refresh management data after successful action
+                setTimeout(loadManagementTab, 1500);
             } else {
                 el.style.color = 'var(--error)';
-                el.textContent = action + ' failed: ' + (data.error || 'unknown');
+                el.textContent = action + ' on ' + chain + ' failed: ' + (data.error || 'unknown');
             }
         } catch (err) {
             el.style.color = 'var(--error)';
             el.textContent = action + ' error: ' + err.message;
         } finally {
-            document.querySelectorAll('.btn').forEach(b => b.disabled = false);
+            if (card) card.querySelectorAll('.btn').forEach(b => b.disabled = false);
         }
     }
 
@@ -733,12 +961,10 @@
         const desc = document.getElementById('deploy-new-desc');
         const grid = document.getElementById('deploy-new-chains');
         try {
-            const [chainsRes, stateRes] = await Promise.all([
-                fetch('/api/setup/chains').then(r => r.json()),
-                fetch('/api/setup/state').then(r => r.json()),
-            ]);
+            const chainsRes = await fetch('/api/setup/chains').then(r => r.json());
+            // Use already-loaded mgmtChainData to determine deployed chains
             const deployed = new Set(
-                Object.entries(stateRes.chains || {})
+                Object.entries(mgmtChainData)
                     .filter(([_, v]) => v.complete)
                     .map(([k]) => k)
             );
@@ -746,10 +972,12 @@
             if (available.length === 0) {
                 desc.textContent = 'Your mech is deployed on all available chains.';
                 grid.style.display = 'none';
+                document.getElementById('deploy-new-fund').style.display = 'none';
                 return;
             }
             desc.textContent = 'Select chains to deploy on:';
             grid.innerHTML = '';
+            newDeploySelected.clear();
             available.forEach(c => {
                 const btn = document.createElement('button');
                 btn.className = 'btn btn-secondary';
@@ -916,101 +1144,86 @@
         return h + 'h ' + m + 'm';
     }
 
-    // --- Chain Selector ---
-    function chainParam() {
-        return state.selectedChain ? `chain=${state.selectedChain}` : '';
+    // --- Chain filter helpers ---
+    function chainForSection(section) {
+        return (state.sectionChains && state.sectionChains[section]) || '';
     }
-    function chainQueryPrefix() {
-        return state.selectedChain ? `?chain=${state.selectedChain}` : '';
+    function chainParam(section) {
+        const c = section ? chainForSection(section) : state.selectedChain;
+        return c ? `chain=${c}` : '';
     }
-    function chainQueryAmp() {
-        return state.selectedChain ? `&chain=${state.selectedChain}` : '';
+    function chainQueryPrefix(section) {
+        const c = section ? chainForSection(section) : state.selectedChain;
+        return c ? `?chain=${c}` : '';
+    }
+    function chainQueryAmp(section) {
+        const c = section ? chainForSection(section) : state.selectedChain;
+        return c ? `&chain=${c}` : '';
     }
 
     async function loadChains() {
         const chains = await fetch('/api/chains').then(r => r.json());
         state.chains = chains;
-        const sel = document.getElementById('chain-select');
-        const mgmtSel = document.getElementById('mgmt-chain');
-        chains.forEach(c => {
-            sel.add(new Option(c, c));
-            mgmtSel.add(new Option(c, c));
+        // Populate all inline chain filter dropdowns
+        ['filter-requests', 'filter-tools', 'filter-charts'].forEach(id => {
+            const sel = document.getElementById(id);
+            if (!sel) return;
+            chains.forEach(c => sel.add(new Option(c, c)));
         });
-        sel.addEventListener('change', () => {
-            state.selectedChain = sel.value;
+    }
+
+    function onSectionChainChange(section) {
+        const sel = document.getElementById('filter-' + section);
+        state.sectionChains[section] = sel ? sel.value : '';
+        if (section === 'requests') {
             loadRecentRequests();
             initChannelChart();
+        } else if (section === 'tools') {
             loadToolStats();
+        } else if (section === 'charts') {
             loadCharts();
-        });
-    }
-
-    // --- Runtime indicator + popover ---
-    let currentRuntimeState = 'unknown';
-
-    function updateRuntimeIndicator(state) {
-        currentRuntimeState = state;
-        const pulse = document.getElementById('pulse');
-        const text = document.getElementById('status-text');
-        const colors = {
-            running: 'var(--success)', starting: 'var(--warning)',
-            stopped: 'var(--error)', error: 'var(--error)',
-            disconnected: 'var(--warning)', unknown: 'var(--text-muted)',
-        };
-        const labels = {
-            running: 'Mech running', starting: 'Starting...',
-            stopped: 'Mech stopped', error: 'Mech error',
-            disconnected: 'Reconnecting...', unknown: 'Connecting...',
-        };
-        pulse.style.backgroundColor = colors[state] || colors.unknown;
-        pulse.style.animation = state === 'starting' ? 'pulse 0.8s infinite' : (state === 'running' ? 'pulse 2s infinite' : 'none');
-        text.textContent = labels[state] || state;
-        updatePopoverContent(state);
-    }
-
-    function toggleRuntimePopover() {
-        const pop = document.getElementById('runtime-popover');
-        pop.style.display = pop.style.display === 'none' ? 'block' : 'none';
-    }
-
-    // Close popover on click outside
-    document.addEventListener('click', (e) => {
-        const ind = document.getElementById('runtime-indicator');
-        const pop = document.getElementById('runtime-popover');
-        if (pop && !ind.contains(e.target)) pop.style.display = 'none';
-    });
-
-    function updatePopoverContent(state) {
-        const status = document.getElementById('popover-status');
-        const btns = document.getElementById('popover-buttons');
-        if (!status || !btns) return;
-
-        status.textContent = state === 'running' ? 'Mech is running and processing requests.'
-            : state === 'stopped' ? 'Mech is stopped. No requests will be processed.'
-            : state === 'error' ? 'Mech encountered an error.'
-            : state === 'starting' ? 'Mech is starting up...'
-            : '';
-
-        btns.innerHTML = '';
-        if (state === 'running') {
-            btns.appendChild(makeBtn('Stop', 'stop', 'var(--error)'));
-            btns.appendChild(makeBtn('Restart', 'restart', 'var(--warning)'));
-        } else if (state === 'stopped' || state === 'error') {
-            btns.appendChild(makeBtn('Start', 'start', 'var(--success)'));
         }
     }
 
-    function makeBtn(label, action, color) {
-        const b = document.createElement('button');
-        b.textContent = label;
-        b.style.cssText = 'padding: 0.4rem 1rem; border-radius: 6px; border: none; cursor: pointer; font-family: var(--font-main); font-size: 0.85rem; color: white; background: ' + color + ';';
-        b.onclick = (e) => { e.stopPropagation(); runtimeAction(action); };
-        return b;
+    // --- Runtime indicator + controls ---
+    let currentRuntimeState = 'unknown';
+
+    function updateRuntimeIndicator(rtState) {
+        currentRuntimeState = rtState;
+        const badge = document.getElementById('runtime-badge');
+        const btnStart = document.getElementById('rt-btn-start');
+        const btnStop = document.getElementById('rt-btn-stop');
+        const btnRestart = document.getElementById('rt-btn-restart');
+        const labels = {
+            running: 'Running', starting: 'Starting...',
+            stopped: 'Stopped', error: 'Error',
+            disconnected: 'Reconnecting...', unknown: 'Connecting...',
+        };
+
+        // Update badge
+        badge.className = 'runtime-badge runtime-badge-' + (rtState || 'unknown');
+        badge.textContent = labels[rtState] || rtState;
+
+        // Show/hide buttons based on state
+        if (rtState === 'running') {
+            btnStart.style.display = 'none';
+            btnStop.style.display = '';
+            btnRestart.style.display = '';
+        } else if (rtState === 'stopped' || rtState === 'error') {
+            btnStart.style.display = '';
+            btnStop.style.display = 'none';
+            btnRestart.style.display = 'none';
+        } else {
+            // starting, disconnected, unknown — hide all action buttons
+            btnStart.style.display = 'none';
+            btnStop.style.display = 'none';
+            btnRestart.style.display = 'none';
+        }
     }
 
     async function runtimeAction(action) {
-        // Disable all popover buttons during action
-        document.querySelectorAll('#popover-buttons button').forEach(b => b.disabled = true);
+        // Disable all runtime buttons during action
+        document.querySelectorAll('.rt-btn').forEach(b => b.disabled = true);
         try {
             const resp = await fetch('/api/runtime/' + action, {
                 method: 'POST',
@@ -1022,12 +1235,11 @@
             }
             if (data.state) {
                 updateRuntimeIndicator(data.state);
-                updatePopoverContent(data.state);
             }
         } catch (e) {
             console.error('Runtime action failed:', e);
         }
-        document.querySelectorAll('#popover-buttons button').forEach(b => b.disabled = false);
+        document.querySelectorAll('.rt-btn').forEach(b => b.disabled = false);
     }
 
     // --- Reputation ---
@@ -1044,7 +1256,7 @@
 
     async function loadKarma() {
         try {
-            const r = await fetch('/api/karma' + chainQueryPrefix());
+            const r = await fetch('/api/karma');
             const data = await r.json();
             if (data.error) {
                 setText('m-karma', '-');
@@ -1135,6 +1347,57 @@
         } catch (e) { /* silent */ }
     }
 
+    // --- Logs ---
+    function addLogLine(ev) {
+        const container = document.getElementById('log-container');
+        if (!state.logInitialized) {
+            container.innerHTML = '';
+            state.logInitialized = true;
+        }
+
+        const ts = new Date(ev.timestamp * 1000).toISOString().replace('T', ' ').substring(0, 19);
+        const eventName = ev.event || 'unknown';
+        let level = 'INFO';
+        let cssClass = 'log-info';
+        if (eventName.includes('fail') || eventName === 'error') {
+            level = 'ERROR';
+            cssClass = 'log-error';
+        } else if (eventName === 'delivered' || eventName === 'execution_done') {
+            level = 'OK';
+            cssClass = 'log-success';
+        } else if (eventName === 'execution_started') {
+            level = 'INFO';
+            cssClass = 'log-info';
+        }
+
+        const parts = [`[${ts}]`, `[${level}]`, eventName.replace(/_/g, ' ')];
+        if (ev.request_id) parts.push('req=' + ev.request_id.substring(0, 12));
+        if (ev.tool) parts.push('tool=' + ev.tool);
+        if (ev.execution_time) parts.push('time=' + ev.execution_time.toFixed(2) + 's');
+        if (ev.error) parts.push('err=' + ev.error.substring(0, 80));
+
+        const line = document.createElement('div');
+        line.className = 'log-line ' + cssClass;
+        line.textContent = parts.join(' ');
+        container.appendChild(line);
+
+        // Keep max 500 lines
+        while (container.children.length > 500) container.removeChild(container.firstChild);
+
+        // Auto-scroll if user is near bottom
+        const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+        if (isNearBottom) container.scrollTop = container.scrollHeight;
+
+        state.logLines.push(line);
+    }
+
+    function clearLogs() {
+        const container = document.getElementById('log-container');
+        container.innerHTML = '<div class="log-line" style="color:var(--text-muted);">Log cleared. Waiting for events...</div>';
+        state.logLines = [];
+        state.logInitialized = false;
+    }
+
     // --- Init ---
     loadChains();
     initQueueChart();
@@ -1142,7 +1405,6 @@
     loadRecentRequests();
     loadKarma();
     connectSSE();
-    loadNewChainOptions();
 
     // Refresh recent requests every 30s, karma every 60s
     setInterval(loadRecentRequests, 30000);
