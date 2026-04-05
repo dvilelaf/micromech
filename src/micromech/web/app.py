@@ -430,23 +430,30 @@ def create_web_app(
 
         def _run_deploy() -> dict:
             """Run full_deploy in a thread, pushing events to queue."""
+            import threading
             from micromech.core.config import ChainConfig
             from micromech.core.constants import CHAIN_DEFAULTS
             from micromech.management import MechLifecycle
 
-            if DEFAULT_CONFIG_PATH.exists():
-                cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
-            else:
-                cfg = MicromechConfig()
-            defaults = CHAIN_DEFAULTS.get(chain_name, {})
+            # Lock for config read/write to prevent parallel deploys
+            # from overwriting each other's results
+            if not hasattr(_run_deploy, "_config_lock"):
+                _run_deploy._config_lock = threading.Lock()
 
-            if chain_name not in cfg.chains:
-                cfg.chains[chain_name] = ChainConfig(
-                    chain=chain_name,
-                    marketplace_address=defaults.get("marketplace", ""),
-                    factory_address=defaults.get("factory", ""),
-                    staking_address=defaults.get("staking", ""),
-                )
+            with _run_deploy._config_lock:
+                if DEFAULT_CONFIG_PATH.exists():
+                    cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
+                else:
+                    cfg = MicromechConfig()
+                defaults = CHAIN_DEFAULTS.get(chain_name, {})
+                if chain_name not in cfg.chains:
+                    cfg.chains[chain_name] = ChainConfig(
+                        chain=chain_name,
+                        marketplace_address=defaults.get("marketplace", ""),
+                        factory_address=defaults.get("factory", ""),
+                        staking_address=defaults.get("staking", ""),
+                    )
+                cfg.save(DEFAULT_CONFIG_PATH)
 
             def on_progress(step, total, msg, success=True):
                 progress_q.put({
@@ -457,9 +464,11 @@ def create_web_app(
             lc = MechLifecycle(cfg, chain_name=chain_name)
             result = lc.full_deploy(on_progress=on_progress)
 
-            # Update config with results
-            cfg.chains[chain_name].apply_deploy_result(result)
-            cfg.save(DEFAULT_CONFIG_PATH)
+            # Save results with lock (re-read to merge with other deploys)
+            with _run_deploy._config_lock:
+                fresh_cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
+                fresh_cfg.chains[chain_name].apply_deploy_result(result)
+                fresh_cfg.save(DEFAULT_CONFIG_PATH)
 
             return result
 
