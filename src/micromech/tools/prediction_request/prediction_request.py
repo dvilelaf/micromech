@@ -160,18 +160,19 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
 
     # Use local LLM for inference
     try:
-        from micromech.tools.llm_tool.llm_tool import _get_llm, _resolve_model
+        from micromech.tools.llm_tool.llm_tool import _get_llm, _llm_lock, _resolve_model
 
         model_repo, model_file = _resolve_model(kwargs)
         llm = _get_llm(model_repo=model_repo, model_file=model_file)
-        response = llm.create_chat_completion(
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prediction_prompt},
-            ],
-            max_tokens=256,
-            temperature=0.3,
-        )
+        with _llm_lock:
+            response = llm.create_chat_completion(
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": prediction_prompt},
+                ],
+                max_tokens=256,
+                temperature=0.3,
+            )
         raw_text = response["choices"][0]["message"]["content"]
     except Exception as e:
         logger.error("LLM inference failed: {}", e)

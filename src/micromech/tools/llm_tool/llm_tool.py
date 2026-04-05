@@ -99,14 +99,16 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
     model_repo, model_file = _resolve_model(kwargs)
     llm = _get_llm(model_repo=model_repo, model_file=model_file)
 
-    response = llm.create_chat_completion(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
+    # llama-cpp-python is NOT thread-safe — serialize all inference
+    with _llm_lock:
+        response = llm.create_chat_completion(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
 
     content = response["choices"][0]["message"]["content"]
     usage = response.get("usage", {})
