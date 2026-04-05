@@ -96,6 +96,23 @@ Run these from inside the `micromech/` folder:
 
 micromech restarts automatically if your computer reboots.
 
+## Your Files
+
+After the quickstart, your `micromech/` folder contains:
+
+| File | What it is | Notes |
+|---|---|---|
+| `secrets.env` | Passwords, API keys, Telegram token, custom RPC endpoints | **Never share.** This is the main file you'll edit. |
+| `docker-compose.yml` | Docker configuration | Leave it alone unless you need to change ports. |
+| `data/` | All persistent data (wallet, database, config, AI models) | **Back this up regularly.** |
+| `data/config.yaml` | Mech settings (created after first setup) | You can edit it, but the web dashboard is easier. |
+| `data/wallet.json` | Your encrypted wallet | **Never share. Back this up.** |
+| `data/mech.db` | Request history database | Grows over time. No need to touch it. |
+| `updater.sh` | Auto-update script | Don't touch. |
+| `Justfile` | Command shortcuts (requires `just`) | Optional convenience, safe to ignore. |
+
+> **Backup reminder:** Copy the entire `data/` folder somewhere safe. If you lose `data/wallet.json`, you lose access to your wallet.
+
 ## FAQ
 
 **"Docker is not running"**
