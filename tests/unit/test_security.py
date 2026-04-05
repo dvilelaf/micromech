@@ -488,7 +488,7 @@ class TestCreateMechEventMatching:
         lc = MechLifecycle(MicromechConfig(), chain_name="gnosis")
         result = lc.create_mech("svc-1")
         assert result is not None
-        assert mech_hex in result
+        assert mech_hex in result.lower()
 
 
 # ============================================================

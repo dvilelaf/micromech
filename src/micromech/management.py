@@ -180,7 +180,8 @@ class MechLifecycle:
                 log_addr = (log_entry.get("address") or "").lower()
                 if log_addr == mkt and len(topics) >= 2:
                     raw = topics[1].hex() if isinstance(topics[1], bytes) else str(topics[1])
-                    mech_addr = "0x" + raw[-40:]
+                    from web3 import Web3
+                    mech_addr = Web3.to_checksum_address("0x" + raw[-40:])
                     logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
                     return mech_addr
 

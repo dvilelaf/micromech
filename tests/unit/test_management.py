@@ -162,7 +162,7 @@ class TestCreateMech:
         lc = MechLifecycle(MicromechConfig(), chain_name=CHAIN_NAME)
         result = lc.create_mech("svc-1")
         assert result is not None
-        assert mech_addr_hex in result
+        assert mech_addr_hex in result.lower()
 
     @patch("micromech.core.bridge.get_wallet")
     @patch("micromech.management._get_service_manager")

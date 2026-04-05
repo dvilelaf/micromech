@@ -709,8 +709,9 @@ def create_web_app(
                     bridge = IwaBridge(chain_name=name)
                     w3 = bridge.web3
 
+                    cs = w3.to_checksum_address
                     marketplace = w3.eth.contract(
-                        address=cfg.marketplace_address,
+                        address=cs(cfg.marketplace_address),
                         abi=load_marketplace_abi(),
                     )
 
@@ -721,18 +722,20 @@ def create_web_app(
                     karma_contract = w3.eth.contract(
                         address=karma_addr, abi=KARMA_ABI,
                     )
+                    mech_addr = cs(cfg.mech_address)
                     mech_karma = bridge.with_retry(
                         lambda: karma_contract.functions.mapMechKarma(
-                            cfg.mech_address
+                            mech_addr
                         ).call()
                     )
 
                     # Get delivery count (uses multisig address)
                     deliveries = 0
                     if cfg.multisig_address:
+                        ms_addr = cs(cfg.multisig_address)
                         deliveries = bridge.with_retry(
                             lambda: marketplace.functions.mapMechServiceDeliveryCounts(
-                                cfg.multisig_address
+                                ms_addr
                             ).call()
                         )
 
