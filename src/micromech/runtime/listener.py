@@ -157,43 +157,35 @@ class EventListener:
                 filter_args["priorityMech"] = self.bridge.web3.to_checksum_address(
                     mech_addr,
                 )
-            # Chunk requests to stay within RPC provider limits
-            # (e.g., Alchemy Free tier limits eth_getLogs to 10 blocks)
-            chunk_size = self.config.runtime.event_lookback_blocks
-            if to_block - from_block > 500:
-                chunk_size = 500  # reasonable default for most RPCs
+            # Chunk requests to stay within RPC provider limits.
+            # Start with 500-block chunks; if that fails (e.g. Alchemy Free
+            # tier = 10 blocks), retry with 10-block mini-chunks.
+            MAX_CHUNK = 500
+            MINI_CHUNK = 10
             logs = []
-            for start in range(from_block, to_block + 1, chunk_size):
-                end = min(start + chunk_size - 1, to_block)
-                _start, _end = start, end  # capture for lambda
+            for start in range(from_block, to_block + 1, MAX_CHUNK):
+                end = min(start + MAX_CHUNK - 1, to_block)
                 try:
-                    chunk_logs = self.bridge.with_retry(
-                        lambda: contract.events.MarketplaceRequest.get_logs(
-                            from_block=_start,
-                            to_block=_end,
-                            argument_filters=filter_args,
-                        )
+                    chunk_logs = contract.events.MarketplaceRequest.get_logs(
+                        from_block=start,
+                        to_block=end,
+                        argument_filters=filter_args,
                     )
                     logs.extend(chunk_logs)
                 except Exception:
-                    # If chunk fails (e.g. Alchemy 10-block limit),
-                    # retry with smaller chunks
-                    for s2 in range(_start, _end + 1, 10):
-                        e2 = min(s2 + 9, _end)
-                        _s2, _e2 = s2, e2
+                    for s2 in range(start, end + 1, MINI_CHUNK):
+                        e2 = min(s2 + MINI_CHUNK - 1, end)
                         try:
-                            mini = self.bridge.with_retry(
-                                lambda: contract.events.MarketplaceRequest.get_logs(
-                                    from_block=_s2,
-                                    to_block=_e2,
-                                    argument_filters=filter_args,
-                                )
+                            mini = contract.events.MarketplaceRequest.get_logs(
+                                from_block=s2,
+                                to_block=e2,
+                                argument_filters=filter_args,
                             )
                             logs.extend(mini)
                         except Exception as inner_e:
                             logger.warning(
                                 "Skipping blocks {}-{}: {}",
-                                _s2, _e2, inner_e,
+                                s2, e2, inner_e,
                             )
         except Exception as e:
             logger.error("Failed to fetch events: {}", e)
