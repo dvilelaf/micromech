@@ -1,19 +1,21 @@
-name: micromech
-
 services:
   micromech:
-    image: dvilela/micromech:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     user: "1000:1000"
     volumes:
       - ./data:/app/data
     environment:
-      - TZ=${TZ:-Europe/Madrid}
+      - TZ=Europe/Madrid
+      - MICROMECH_DATA_DIR=/app/data
     env_file:
       - path: ./secrets.env
         required: false
     ports:
       - "127.0.0.1:8000:8000"
     restart: unless-stopped
+    command: ["python", "-m", "micromech", "run"]
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 60s
@@ -24,15 +26,3 @@ services:
       resources:
         limits:
           memory: 4G
-    command: ["python", "-m", "micromech", "run"]
-
-  updater:
-    image: docker:cli
-    environment:
-      - TZ=${TZ:-Europe/Madrid}
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./:/host
-    working_dir: /host
-    restart: unless-stopped
-    command: ["sh", "-c", "while [ ! -f ./updater.sh ]; do sleep 5; done; exec sh ./updater.sh"]

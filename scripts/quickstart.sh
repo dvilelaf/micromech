@@ -54,7 +54,8 @@ generate_compose() {
         done
     fi
 
-    # Add updater sidecar service
+    # Add updater sidecar service (if not already present)
+    if ! grep -q 'updater:' docker-compose.yml.tmp; then
     cat >> docker-compose.yml.tmp << 'UPDATER_COMPOSE'
   updater:
     image: docker:cli
@@ -67,10 +68,13 @@ generate_compose() {
     restart: unless-stopped
     command: ["sh", "-c", "while [ ! -f ./updater.sh ]; do sleep 5; done; exec sh ./updater.sh"]
 UPDATER_COMPOSE
+    fi
 
-    # Set fixed project name (portable — no \n in sed replacement)
-    { printf 'name: micromech\n'; cat docker-compose.yml.tmp; } > docker-compose.yml.tmp2
-    mv docker-compose.yml.tmp2 docker-compose.yml.tmp
+    # Set fixed project name if not already present
+    if ! grep -q '^name:' docker-compose.yml.tmp; then
+        { printf 'name: micromech\n'; cat docker-compose.yml.tmp; } > docker-compose.yml.tmp2
+        mv docker-compose.yml.tmp2 docker-compose.yml.tmp
+    fi
 
     mv docker-compose.yml.tmp docker-compose.yml
 }

@@ -29,7 +29,9 @@ from micromech.core.constants import (
     validate_eth_address,
 )
 
-DEFAULT_CONFIG_DIR = Path.home() / ".micromech"
+import os as _os
+
+DEFAULT_CONFIG_DIR = Path(_os.environ.get("MICROMECH_DATA_DIR", Path.home() / ".micromech"))
 DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.yaml"
 
 
