@@ -243,7 +243,7 @@ def init(
         typer.echo(f"\n  Config saved to {path}")
         typer.echo("\n  Your mech is ready! Start with:\n")
         typer.echo("    micromech run")
-        typer.echo("\n  Dashboard: http://localhost:8000")
+        typer.echo("\n  Dashboard: http://localhost:8090")
 
     except RuntimeError as e:
         typer.echo(f"\n  Deployment failed: {e}")
@@ -409,7 +409,7 @@ def cleanup(
 
 @app.command()
 def web(
-    port: int = typer.Option(8000, "--port", "-p"),
+    port: int = typer.Option(8090, "--port", "-p"),
     host: str = typer.Option("127.0.0.1", "--host"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
     no_runtime: bool = typer.Option(False, "--no-runtime", help="Dashboard only, no mech runtime"),

@@ -101,7 +101,7 @@ set shell := ["bash", "-uc"]
 up:
     docker compose up -d --remove-orphans
     @echo "🚀 Micromech is running!"
-    @echo "🌐 Dashboard: http://localhost:8000"
+    @echo "🌐 Dashboard: http://localhost:8090"
     @echo "📜 View logs with: just logs"
 
 down:
@@ -391,5 +391,5 @@ echo
 echo -e "Next steps:"
 echo -e "1. Edit secrets (optional):  ${BLUE}nano $DIR_NAME/secrets.env${NC}"
 echo -e "2. Start micromech:          ${BLUE}cd $DIR_NAME && docker compose up -d${NC}"
-echo -e "3. Open the dashboard:       ${BLUE}http://localhost:8000${NC}"
+echo -e "3. Open the dashboard:       ${BLUE}http://localhost:8090${NC}"
 echo

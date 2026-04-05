@@ -19,7 +19,7 @@ class TestRuntimeConfig:
     def test_defaults(self):
         cfg = RuntimeConfig()
         assert cfg.host == "127.0.0.1"
-        assert cfg.port == 8000
+        assert cfg.port == 8090
         assert cfg.log_level == "INFO"
         assert cfg.max_concurrent == 10
         assert cfg.request_timeout == 300
@@ -185,7 +185,7 @@ class TestMicromechConfig:
 
     def test_load_nonexistent_returns_defaults(self, tmp_path: Path):
         cfg = MicromechConfig.load(tmp_path / "nonexistent.yaml")
-        assert cfg.runtime.port == 8000
+        assert cfg.runtime.port == 8090
 
     def test_from_dict(self):
         data = {

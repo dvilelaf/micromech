@@ -42,11 +42,11 @@ cd micromech
 docker compose up -d
 ```
 
-Open **http://localhost:8000** in your browser. You should see the micromech dashboard.
+Open **http://localhost:8090** in your browser. You should see the micromech dashboard.
 
 ## First-Time Setup
 
-The dashboard at **http://localhost:8000** walks you through a setup wizard:
+The dashboard at **http://localhost:8090** walks you through a setup wizard:
 
 **Step 1 — Create your wallet.** This is your on-chain identity. Pick a strong password. micromech stores your wallet locally — nobody else has access to it.
 
@@ -60,7 +60,7 @@ The dashboard at **http://localhost:8000** walks you through a setup wizard:
 
 ## Is It Working?
 
-Visit **http://localhost:8000** at any time. You're in good shape if you see:
+Visit **http://localhost:8090** at any time. You're in good shape if you see:
 
 - **Status: Running** — your mech is online and listening for requests
 - **Deliveries** increasing over time — your mech is solving tasks
@@ -101,8 +101,8 @@ micromech restarts automatically if your computer reboots.
 **"Docker is not running"**
 Open the Docker Desktop app. Wait until the whale icon stops animating.
 
-**"Port 8000 already in use"**
-Edit `docker-compose.yml` and change `127.0.0.1:8000:8000` to `127.0.0.1:8001:8000`, then open `http://localhost:8001`.
+**"Port 8090 already in use"**
+Edit `docker-compose.yml` and change `127.0.0.1:8090:8090` to `127.0.0.1:8001:8090`, then open `http://localhost:8001`.
 
 **"I closed the terminal and it stopped"**
 Make sure you started with `docker compose up -d` (the `-d` flag makes it run in the background).

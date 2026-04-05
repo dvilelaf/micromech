@@ -211,7 +211,7 @@ run-anvil:
     env $ENV_VARS testing=true CHAINLIST_ENRICHMENT=false uv run micromech run
 
 # Run web dashboard against Anvil forks (auto-detects running forks)
-web-anvil port="8000":
+web-anvil port="8090":
     #!/usr/bin/env bash
     set -e
     ENV_VARS=""
@@ -257,7 +257,7 @@ run:
     uv run micromech run
 
 # Run the web dashboard
-web port="8000":
+web port="8090":
     uv run micromech web --port {{port}}
 
 # Send random on-chain requests to all deployed chains (demo)
@@ -279,7 +279,7 @@ docker-run:
     docker run --rm -it \
         -v $(pwd)/data:/app/data \
         --env-file secrets.env \
-        -p 8000:8000 \
+        -p 8090:8090 \
         micromech:latest
 
 # Start with docker compose

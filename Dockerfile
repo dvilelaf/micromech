@@ -42,6 +42,6 @@ COPY --chown=app:app scripts/updater.sh /app/scripts/updater.sh
 COPY --chown=app:app docker-compose.yml /app/docker-compose.yml
 COPY --chown=app:app secrets.env.example /app/secrets.env.example
 
-EXPOSE 8000
+EXPOSE 8090
 
 CMD ["python", "-m", "micromech", "run"]
