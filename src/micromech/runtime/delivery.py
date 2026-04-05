@@ -201,7 +201,9 @@ class DeliveryManager:
                 _, cid_hex = await push_to_ipfs(response_payload, api_url=self.config.ipfs.api_url)
                 delivery_data = cid_hex_to_multihash_bytes(cid_hex)
             except Exception as e:
-                logger.warning("IPFS push failed, delivering raw data: {}", e)
+                if not getattr(self, "_ipfs_warning_logged", False):
+                    logger.warning("IPFS unavailable, delivering raw data: {}", e)
+                    self._ipfs_warning_logged = True
                 delivery_data = response_payload
         else:
             delivery_data = response_payload
