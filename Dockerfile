@@ -37,6 +37,11 @@ RUN useradd -r -u 1000 -s /sbin/nologin app \
     && chown -R app:app /app
 USER app
 
+COPY --chown=app:app scripts/quickstart.sh /app/scripts/quickstart.sh
+COPY --chown=app:app scripts/updater.sh /app/scripts/updater.sh
+COPY --chown=app:app docker-compose.yml /app/docker-compose.yml
+COPY --chown=app:app secrets.env.example /app/secrets.env.example
+
 EXPOSE 8000
 
 CMD ["python", "-m", "micromech", "run"]
