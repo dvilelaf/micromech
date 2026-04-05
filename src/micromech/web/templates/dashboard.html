@@ -496,19 +496,27 @@
     Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
     Chart.defaults.font.family = '"Outfit", sans-serif';
 
-    // --- Tabs ---
+    // --- Tabs (persisted via URL hash) ---
+    function switchTab(tabName) {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+        const btn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
+        if (btn) btn.classList.add('active');
+        const pane = document.getElementById('tab-' + tabName);
+        if (pane) pane.classList.add('active');
+        location.hash = tabName;
+        if (tabName === 'tools') loadToolStats();
+        if (tabName === 'charts') loadCharts();
+        if (tabName === 'management') loadManagementTab();
+    }
     document.querySelectorAll('.tab-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-            document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-            btn.classList.add('active');
-            document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
-            // Load data when switching tabs
-            if (btn.dataset.tab === 'tools') loadToolStats();
-            if (btn.dataset.tab === 'charts') loadCharts();
-            if (btn.dataset.tab === 'management') loadManagementTab();
-        });
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
     });
+    // Restore tab from URL hash on load
+    const savedTab = location.hash.replace('#', '');
+    if (savedTab && document.querySelector(`.tab-btn[data-tab="${savedTab}"]`)) {
+        switchTab(savedTab);
+    }
 
     // --- SSE Stream ---
     function connectSSE() {
