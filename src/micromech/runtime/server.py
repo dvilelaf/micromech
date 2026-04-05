@@ -207,6 +207,27 @@ class MechServer:
         if with_http:
             self._tasks.append(asyncio.create_task(self._run_http()))
 
+        # Start task scheduler (checkpoint, rewards, fund, alerts, etc.)
+        if self.config.tasks.enabled:
+            try:
+                from micromech.tasks.scheduler import TaskScheduler
+                from micromech.tasks.notifications import NotificationService
+
+                notification = NotificationService()
+                self._task_scheduler = TaskScheduler(
+                    self.config, self.bridges, notification,
+                )
+                self._task_scheduler.start()
+                logger.info("TaskScheduler started")
+
+                # Start watchdog loop
+                from micromech.tasks.watchdog import watchdog_loop
+                self._tasks.append(asyncio.create_task(
+                    watchdog_loop(notification)
+                ))
+            except Exception as e:
+                logger.warning("TaskScheduler failed to start: {}", e)
+
         logger.info(
             "MechServer running (chains={}, tools={}, max_concurrent={})",
             len(chains),
@@ -271,6 +292,8 @@ class MechServer:
     def stop(self) -> None:
         """Gracefully stop the server."""
         self._running = False
+        if hasattr(self, "_task_scheduler"):
+            self._task_scheduler.shutdown()
         for listener in self.listeners.values():
             listener.stop()
         for delivery in self.deliveries.values():

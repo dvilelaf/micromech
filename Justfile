@@ -267,6 +267,14 @@ docker-build:
 docker-build-multi:
     docker buildx build --platform linux/amd64,linux/arm64 -t micromech:latest .
 
+# Docker run for local testing
+docker-run:
+    docker run --rm -it \
+        -v $(pwd)/data:/app/data \
+        --env-file secrets.env \
+        -p 8000:8000 \
+        micromech:latest
+
 # Start with docker compose
 up:
     docker compose up -d

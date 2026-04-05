@@ -283,8 +283,41 @@ def run(
     bridges = create_bridges(cfg)
 
     server = MechServer(cfg, bridges=bridges)
+
+    async def _run_all():
+        """Run server + optionally Telegram bot."""
+        bot_app = None
+
+        # Start Telegram bot if configured
+        try:
+            from micromech.secrets import secrets
+            if secrets.telegram_enabled and cfg.telegram.enabled:
+                from micromech.bot.app import create_application
+                bot_app = create_application(
+                    config=cfg,
+                    runtime_manager=None,  # Direct server mode, no RuntimeManager
+                    queue=server.queue,
+                    metrics=server.metrics,
+                )
+                await bot_app.initialize()
+                await bot_app.start()
+                await bot_app.updater.start_polling(drop_pending_updates=True)
+                logger.info("Telegram bot started")
+        except ImportError:
+            logger.debug("Telegram bot not available (python-telegram-bot not installed)")
+        except Exception as e:
+            logger.warning("Telegram bot failed to start: {}", e)
+
+        try:
+            await server.run(with_http=not no_http)
+        finally:
+            if bot_app:
+                await bot_app.updater.stop()
+                await bot_app.stop()
+                await bot_app.shutdown()
+
     try:
-        asyncio.run(server.run(with_http=not no_http))
+        asyncio.run(_run_all())
     except KeyboardInterrupt:
         pass
     finally:
