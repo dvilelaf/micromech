@@ -381,7 +381,7 @@
                     <h2 id="success-title">Your mech is ready!</h2>
                     <p id="success-desc">Starting runtime...</p>
                     <p style="margin-top: 1.5rem;">
-                        <a href="/" class="btn btn-accent" id="btn-go-dashboard" style="display: none;">Go to Dashboard</a>
+                        <a id="btn-go-dashboard" class="btn btn-accent" style="display: none;">Go to Dashboard</a>
                     </p>
                 </div>
             </div>
@@ -395,6 +395,9 @@
             return Object.assign({'X-Auth-Token': _t}, extra || {});
         };
     })();
+
+    // Set dashboard link with token
+    document.getElementById('btn-go-dashboard').href = '/?token=' + '{{ auth_token }}';
 
     // State
     let currentStep = 1;
