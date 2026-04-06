@@ -358,6 +358,11 @@ def main():
     for name, cc in cfg.enabled_chains.items():
         if not cc.mech_address or not cc.marketplace_address:
             continue
+        # Skip placeholder addresses (e.g. 0x3333...3333 from test data)
+        addr_body = cc.mech_address[2:]  # strip 0x
+        if len(set(addr_body.lower())) <= 1:
+            console.print(f"  [yellow]Skipping {name}: mech_address looks like a placeholder ({cc.mech_address[:10]}...)[/yellow]")
+            continue
         w3 = get_anvil_w3(name)
         if w3:
             chains.append(name)

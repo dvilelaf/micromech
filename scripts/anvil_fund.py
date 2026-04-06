@@ -127,12 +127,27 @@ def fund_chain(address: str, chain_name: str, chain_cfg: dict) -> bool:
     return True
 
 
+def _validate_address(address: str) -> str:
+    """Validate and normalise an Ethereum address for hex operations.
+
+    Ensures the address is a valid 0x-prefixed, 42-character hex string.
+    Returns the checksummed address so downstream code gets clean hex.
+    """
+    import re
+
+    if not re.match(r"^0x[0-9a-fA-F]{40}$", address):
+        print(f"Error: Invalid Ethereum address: {address}")
+        print("Address must be 0x-prefixed, 42-character hex string (e.g. 0xAbC...123)")
+        sys.exit(1)
+    return Web3.to_checksum_address(address)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python scripts/anvil_fund.py 0xADDRESS [chain1,chain2,...]")
         sys.exit(1)
 
-    address = sys.argv[1]
+    address = _validate_address(sys.argv[1])
     chain_filter = sys.argv[2].split(",") if len(sys.argv) > 2 else None
 
     chains_to_fund = (
