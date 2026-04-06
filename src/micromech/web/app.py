@@ -1,6 +1,7 @@
 """Web UI application — dashboard, metrics API, and SSE stream."""
 
 import asyncio
+import logging
 import json
 import os
 import queue as stdlib_queue
@@ -65,18 +66,34 @@ _log_queues: list[stdlib_queue.Queue] = []
 _log_sink_registered = False
 
 
-def _log_sink(message: Any) -> None:
-    """Loguru sink that pushes log lines to all connected SSE clients."""
-    record = message.record
-    line = {
-        "ts": record["time"].strftime("%H:%M:%S.%f")[:-3],
-        "level": record["level"].name,
-        "msg": str(message).rstrip(),
-    }
-    data = json.dumps(line)
+def _push_log_line(ts: str, level: str, msg: str) -> None:
+    """Push a log line to all connected SSE clients."""
+    data = json.dumps({"ts": ts, "level": level, "msg": msg})
     for q in _log_queues[:]:
         try:
             q.put_nowait(data)
+        except Exception:
+            pass
+
+
+def _log_sink(message: Any) -> None:
+    """Loguru sink that pushes log lines to all connected SSE clients."""
+    record = message.record
+    _push_log_line(
+        ts=record["time"].strftime("%H:%M:%S.%f")[:-3],
+        level=record["level"].name,
+        msg=str(message).rstrip(),
+    )
+
+
+class _StdlibLogHandler(logging.Handler):
+    """Capture stdlib logging (uvicorn, iwa) into the SSE log stream."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            import datetime
+            ts = datetime.datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[:-3]
+            _push_log_line(ts=ts, level=record.levelname, msg=self.format(record))
         except Exception:
             pass
 
@@ -973,6 +990,10 @@ def create_web_app(
     global _log_sink_registered  # noqa: PLW0603
     if not _log_sink_registered:
         logger.add(_log_sink, level="DEBUG", format="{message}")
+        # Also capture stdlib logging (uvicorn, iwa, etc.)
+        stdlib_handler = _StdlibLogHandler()
+        stdlib_handler.setFormatter(logging.Formatter("%(message)s"))
+        logging.root.addHandler(stdlib_handler)
         _log_sink_registered = True
 
     @app.get("/api/logs/stream")
