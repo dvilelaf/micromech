@@ -1,6 +1,7 @@
 """Tests for the delivery manager."""
 
-from unittest.mock import MagicMock
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -471,3 +472,117 @@ class TestDeliveryBatchFailure:
         record = queue.get_by_id("r1")
         assert record.request.status == STATUS_FAILED
         assert "delivery" in record.request.error
+
+
+class TestDeliverOneIpfs:
+    """Tests for _deliver_one IPFS integration."""
+
+    @pytest.mark.asyncio
+    async def test_deliver_one_returns_ipfs_cid_hex(self, queue: PersistentQueue):
+        """_deliver_one returns (tx_hash, ipfs_cid_hex) when IPFS succeeds."""
+        from micromech.core.config import IpfsConfig
+
+        config = MicromechConfig(ipfs=IpfsConfig(enabled=True))
+        bridge = MagicMock(spec=["web3"])
+        dm = DeliveryManager(
+            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+        )
+
+        req = MechRequest(request_id="r1", prompt="test prompt", tool="echo")
+        queue.add_request(req)
+        queue.mark_executing("r1")
+        queue.mark_executed("r1", ToolResult(output="result"))
+        record = queue.get_by_id("r1")
+
+        mock_push = AsyncMock(return_value=("bafkrei_test", "f01551220aabb"))
+        dm._submit_delivery = MagicMock(return_value="0xdeadbeef")
+
+        with patch("micromech.ipfs.client.push_to_ipfs", mock_push):
+            tx_hash, ipfs_cid_hex = await dm._deliver_one(record)
+
+        assert tx_hash == "0xdeadbeef"
+        assert ipfs_cid_hex == "f01551220aabb"
+
+    @pytest.mark.asyncio
+    async def test_deliver_one_ipfs_failure_fallback_raw(self, queue: PersistentQueue):
+        """_deliver_one returns (tx_hash, None) when IPFS fails."""
+        from micromech.core.config import IpfsConfig
+
+        config = MicromechConfig(ipfs=IpfsConfig(enabled=True))
+        bridge = MagicMock(spec=["web3"])
+        dm = DeliveryManager(
+            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+        )
+
+        req = MechRequest(request_id="r2", prompt="test", tool="echo")
+        queue.add_request(req)
+        queue.mark_executing("r2")
+        queue.mark_executed("r2", ToolResult(output="ok"))
+        record = queue.get_by_id("r2")
+
+        mock_push = AsyncMock(side_effect=Exception("IPFS down"))
+        dm._submit_delivery = MagicMock(return_value="0xcafe")
+
+        with patch("micromech.ipfs.client.push_to_ipfs", mock_push):
+            tx_hash, ipfs_cid_hex = await dm._deliver_one(record)
+
+        assert tx_hash == "0xcafe"
+        assert ipfs_cid_hex is None
+        # Verify raw JSON was passed to _submit_delivery
+        call_data = dm._submit_delivery.call_args[0][1]
+        parsed = json.loads(call_data)
+        assert "requestId" in parsed
+        assert "result" in parsed
+
+    @pytest.mark.asyncio
+    async def test_deliver_one_ipfs_disabled_sends_raw(self, queue: PersistentQueue):
+        """When IPFS is disabled, delivers raw JSON payload."""
+        from micromech.core.config import IpfsConfig
+
+        config = MicromechConfig(ipfs=IpfsConfig(enabled=False))
+        bridge = MagicMock(spec=["web3"])
+        dm = DeliveryManager(
+            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+        )
+
+        req = MechRequest(request_id="r3", prompt="p", tool="echo")
+        queue.add_request(req)
+        queue.mark_executing("r3")
+        queue.mark_executed("r3", ToolResult(output="out"))
+        record = queue.get_by_id("r3")
+
+        dm._submit_delivery = MagicMock(return_value="0xbeef")
+
+        tx_hash, ipfs_cid_hex = await dm._deliver_one(record)
+        assert tx_hash == "0xbeef"
+        assert ipfs_cid_hex is None
+
+    @pytest.mark.asyncio
+    async def test_response_payload_format_valory(self, queue: PersistentQueue):
+        """Response payload matches Valory format: requestId, result, prompt, tool."""
+        from micromech.core.config import IpfsConfig
+
+        config = MicromechConfig(ipfs=IpfsConfig(enabled=False))
+        bridge = MagicMock(spec=["web3"])
+        dm = DeliveryManager(
+            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+        )
+
+        req = MechRequest(request_id="r4", prompt="my prompt", tool="llm")
+        queue.add_request(req)
+        queue.mark_executing("r4")
+        queue.mark_executed("r4", ToolResult(output="my result"))
+        record = queue.get_by_id("r4")
+
+        dm._submit_delivery = MagicMock(return_value="0xaa")
+
+        await dm._deliver_one(record)
+
+        call_data = dm._submit_delivery.call_args[0][1]
+        payload = json.loads(call_data)
+        assert payload == {
+            "requestId": "r4",
+            "result": "my result",
+            "prompt": "my prompt",
+            "tool": "llm",
+        }

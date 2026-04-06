@@ -181,3 +181,111 @@ class TestPrepareRequestData:
         mh2 = cid_hex_to_multihash_bytes(compute_cid_hex(data))
         assert mh1 == mh2
 
+
+class TestComputeCidHexFormat:
+    """Verify CID hex produces correct f01551220... format."""
+
+    def test_exact_prefix(self):
+        cid_hex = compute_cid_hex(b"hello")
+        assert cid_hex[:9] == "f01551220"
+
+    def test_total_length(self):
+        """f(1) + version(2) + codec(2) + hash_fn(2) + hash_len(2) + digest(64) = 73."""
+        cid_hex = compute_cid_hex(b"some data")
+        assert len(cid_hex) == 73
+
+    def test_digest_matches_sha256(self):
+        data = b"verify digest"
+        digest_hex = hashlib.sha256(data).hexdigest()
+        cid_hex = compute_cid_hex(data)
+        assert cid_hex.endswith(digest_hex)
+
+
+class TestCidHexToMultihashBytesExtraction:
+    """Verify extraction of 34-byte multihash from CID hex."""
+
+    def test_prefix_bytes(self):
+        mh = cid_hex_to_multihash_bytes(compute_cid_hex(b"data"))
+        assert mh[0] == 0x12
+        assert mh[1] == 0x20
+
+    def test_digest_content(self):
+        data = b"check digest"
+        mh = cid_hex_to_multihash_bytes(compute_cid_hex(data))
+        assert mh[2:] == hashlib.sha256(data).digest()
+
+    def test_length_is_34(self):
+        mh = cid_hex_to_multihash_bytes(compute_cid_hex(b"x"))
+        assert len(mh) == 34
+
+
+class TestMultihashToCidRoundtrip:
+    """Verify data -> compute_cid_hex -> cid_hex_to_multihash_bytes -> multihash_to_cid produces valid bafkrei CID."""
+
+    def test_roundtrip_matches_compute_cid(self):
+        data = b"roundtrip test"
+        cid_direct = compute_cid(data)
+        cid_hex = compute_cid_hex(data)
+        mh = cid_hex_to_multihash_bytes(cid_hex)
+        cid_roundtrip = multihash_to_cid(mh)
+        assert cid_roundtrip == cid_direct
+
+    def test_roundtrip_starts_with_bafkrei(self):
+        data = b"another roundtrip"
+        cid_hex = compute_cid_hex(data)
+        mh = cid_hex_to_multihash_bytes(cid_hex)
+        cid = multihash_to_cid(mh)
+        assert cid.startswith("bafkrei")
+
+    def test_roundtrip_empty_data(self):
+        data = b""
+        cid_direct = compute_cid(data)
+        mh = cid_hex_to_multihash_bytes(compute_cid_hex(data))
+        assert multihash_to_cid(mh) == cid_direct
+
+
+class TestIsIpfsMultihashEdgeCases:
+    """Additional edge cases for is_ipfs_multihash."""
+
+    def test_exactly_34_bytes_wrong_function_code(self):
+        data = bytes([0x11, 0x20]) + b"\x00" * 32
+        assert is_ipfs_multihash(data) is False
+
+    def test_exactly_34_bytes_wrong_length_byte(self):
+        data = bytes([0x12, 0x21]) + b"\x00" * 32
+        assert is_ipfs_multihash(data) is False
+
+    def test_35_bytes_not_multihash(self):
+        data = bytes([0x12, 0x20]) + b"\x00" * 33
+        assert is_ipfs_multihash(data) is False
+
+    def test_33_bytes_not_multihash(self):
+        data = bytes([0x12, 0x20]) + b"\x00" * 31
+        assert is_ipfs_multihash(data) is False
+
+
+class TestCidCompatibilityWithIwa:
+    """Verify micromech CID computation matches iwa's format exactly."""
+
+    def test_manual_computation_matches(self):
+        data = b"test data"
+        digest = hashlib.sha256(data).digest()
+        expected = "f" + bytes([0x01, 0x55, 0x12, 0x20]).hex() + digest.hex()
+        assert compute_cid_hex(data) == expected
+
+    def test_various_payloads(self):
+        for payload in [b"", b"x", b"\x00" * 100, b'{"key":"value"}']:
+            digest = hashlib.sha256(payload).digest()
+            expected = "f" + bytes([0x01, 0x55, 0x12, 0x20]).hex() + digest.hex()
+            assert compute_cid_hex(payload) == expected, f"Failed for payload {payload!r}"
+
+    def test_json_payload_like_valory(self):
+        """JSON response payload produces same CID as manual SHA-256."""
+        payload = json.dumps(
+            {"requestId": "0xabc", "result": "yes", "prompt": "test", "tool": "echo"},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hashlib.sha256(payload).digest()
+        expected = "f" + bytes([0x01, 0x55, 0x12, 0x20]).hex() + digest.hex()
+        assert compute_cid_hex(payload) == expected
+
