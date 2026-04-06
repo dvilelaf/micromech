@@ -221,6 +221,12 @@ def _parse_delivery_data(delivery_data: bytes) -> str:
             resp = req_lib.get(f"{gw}{cid}", timeout=10)
             resp.raise_for_status()
             result_data = resp.json()
+            # The response wraps tool output as a JSON string in "result"
+            if isinstance(result_data.get("result"), str):
+                try:
+                    result_data = json.loads(result_data["result"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
             formatted = format_response(result_data)
             if formatted:
                 return formatted
