@@ -233,7 +233,10 @@ def create_web_app(
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):
         if _needs_setup():
-            return RedirectResponse(url="/setup", status_code=302)
+            # Preserve auth token in redirect
+            token = request.query_params.get("token", "")
+            url = f"/setup?token={token}" if token else "/setup"
+            return RedirectResponse(url=url, status_code=302)
         # Auth: token can be passed as ?token= for initial access
         token = request.query_params.get("token")
         if not (token and secrets.compare_digest(token, _AUTH_TOKEN)):
