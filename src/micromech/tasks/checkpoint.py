@@ -29,14 +29,16 @@ async def checkpoint_task(
 
     for chain_name, lifecycle in lifecycles.items():
         chain_config = lifecycle.chain_config
-        if not chain_config.service_key:
+        from micromech.core.bridge import get_service_info
+        svc_key = get_service_info(chain_name).get("service_key")
+        if not svc_key:
             logger.debug(f"No service_key for {chain_name}, skipping checkpoint")
             continue
 
         try:
             # Get staking status
             status = await asyncio.to_thread(
-                lifecycle.get_status, chain_config.service_key
+                lifecycle.get_status, svc_key
             )
             if not status or not status.get("is_staked"):
                 logger.debug(f"Service not staked on {chain_name}, skipping checkpoint")
@@ -64,7 +66,7 @@ async def checkpoint_task(
             logger.info(f"Checkpoint needed for {chain_name}")
 
             success = await asyncio.to_thread(
-                lifecycle.checkpoint, chain_config.service_key
+                lifecycle.checkpoint, svc_key
             )
 
             if success:

@@ -106,8 +106,8 @@ class TestMechLifecycleWithMocks:
     @patch("micromech.management._get_service_manager")
     def test_get_status(self, mock_get_mgr):
         mock_mgr = MagicMock()
+        mock_mgr.service.service_id = 42
         mock_status = MagicMock()
-        mock_status.service_id = 42
         mock_status.staking_state = "STAKED"
         mock_status.is_staked = True
         mock_status.accrued_reward_olas = 1.5
@@ -117,7 +117,6 @@ class TestMechLifecycleWithMocks:
         mock_get_mgr.return_value = mock_mgr
 
         cfg = MicromechConfig()
-        cfg.chains[CHAIN_NAME].service_id = 42
         lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
         status = lc.get_status("svc-1")
         assert status["service_id"] == 42
@@ -368,8 +367,9 @@ class TestMechLifecycleErrorHandling:
 class TestFullDeploy:
     """Tests for full_deploy with resume support."""
 
+    @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
-    def test_full_deploy_from_scratch(self, mock_get_mgr):
+    def test_full_deploy_from_scratch(self, mock_get_mgr, mock_svc_info):
         mock_mgr = MagicMock()
         mock_mgr.create.return_value = 99
         mock_mgr.activate_registration.return_value = True
@@ -391,34 +391,30 @@ class TestFullDeploy:
         assert result["staked"] is True
         assert len(progress) >= 6
 
+    @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
-    def test_full_deploy_resumes_from_needs_mech(self, mock_get_mgr):
+    def test_full_deploy_no_mech_runs_full_flow(self, mock_get_mgr, mock_svc_info):
         mock_mgr = MagicMock()
+        mock_mgr.create.return_value = 42
+        mock_mgr.activate_registration.return_value = True
+        mock_mgr.register_agent.return_value = True
+        mock_mgr.deploy.return_value = "0x" + "cc" * 20
         mock_mgr.stake.return_value = True
         mock_get_mgr.return_value = mock_mgr
 
-        from micromech.core.config import ChainConfig
-        cfg = MicromechConfig(chains={"gnosis": ChainConfig(
-            chain="gnosis",
-            service_id=42,
-            service_key="gnosis_42",
-            multisig_address="0x" + "cc" * 20,
-            marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
-            factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
-            staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
-        )})
+        cfg = MicromechConfig()
         lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
 
         with patch.object(lc, "create_mech", return_value="0x" + "dd" * 20):
             result = lc.full_deploy()
 
         assert result["mech_address"] == "0x" + "dd" * 20
-        # Should NOT have called create_service (skipped)
-        mock_mgr.create.assert_not_called()
-        mock_mgr.deploy.assert_not_called()
+        assert result["service_id"] == 42
+        mock_mgr.create.assert_called_once()
 
+    @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
-    def test_full_deploy_already_complete(self, mock_get_mgr):
+    def test_full_deploy_already_complete(self, mock_get_mgr, mock_svc_info):
         mock_mgr = MagicMock()
         mock_mgr.stake.return_value = True
         mock_get_mgr.return_value = mock_mgr
@@ -426,9 +422,6 @@ class TestFullDeploy:
         from micromech.core.config import ChainConfig
         cfg = MicromechConfig(chains={"gnosis": ChainConfig(
             chain="gnosis",
-            service_id=42,
-            service_key="gnosis_42",
-            multisig_address="0x" + "cc" * 20,
             mech_address="0x" + "dd" * 20,
             marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
             factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
@@ -440,8 +433,9 @@ class TestFullDeploy:
         assert result["staked"] is True
         mock_mgr.create.assert_not_called()
 
+    @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
-    def test_full_deploy_create_failure_raises(self, mock_get_mgr):
+    def test_full_deploy_create_failure_raises(self, mock_get_mgr, mock_svc_info):
         mock_mgr = MagicMock()
         mock_mgr.create.return_value = None
         mock_get_mgr.return_value = mock_mgr

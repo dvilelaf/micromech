@@ -61,17 +61,14 @@ class ChainConfig(BaseModel):
 
     chain: str = DEFAULT_CHAIN
     enabled: bool = True
-    service_id: Optional[int] = None
-    service_key: Optional[str] = None
     mech_address: Optional[str] = None
-    multisig_address: Optional[str] = None
     marketplace_address: str
     factory_address: str
     staking_address: str
     delivery_rate: int = Field(default=DEFAULT_DELIVERY_RATE, ge=0)
     account_tag: str = "mech"
 
-    @field_validator("mech_address", "multisig_address", "marketplace_address",
+    @field_validator("mech_address", "marketplace_address",
                      "factory_address", "staking_address")
     @classmethod
     def check_eth_address(cls, v: Optional[str]) -> Optional[str]:
@@ -80,30 +77,20 @@ class ChainConfig(BaseModel):
     def detect_setup_state(self) -> str:
         """Detect how far along the setup process this chain config is.
 
-        Returns one of: needs_create, needs_deploy, needs_mech, complete.
+        Returns one of: needs_create, complete.
         """
-        if not self.service_id:
-            return "needs_create"
-        if not self.multisig_address:
-            return "needs_deploy"
-        if not self.mech_address:
-            return "needs_mech"
-        return "complete"
+        if self.mech_address:
+            return "complete"
+        return "needs_create"
 
     @property
     def setup_complete(self) -> bool:
-        """Check if all required addresses are populated."""
-        return self.detect_setup_state() == "complete"
+        """Check if mech_address is populated."""
+        return bool(self.mech_address)
 
     def apply_deploy_result(self, result: dict) -> None:
         """Update config fields from a full_deploy result dict."""
-        if "service_id" in result:
-            self.service_id = result["service_id"]
-        if "service_key" in result:
-            self.service_key = result["service_key"]
-        if "multisig_address" in result:
-            self.multisig_address = result["multisig_address"]
-        if "mech_address" in result:
+        if result.get("mech_address"):
             self.mech_address = result["mech_address"]
 
 

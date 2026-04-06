@@ -252,10 +252,12 @@ class DeliveryManager:
         """
         mech_contract = self._get_mech_contract()
         # deliverToMarketplace must be called from the service multisig
-        if not self.chain_config.multisig_address:
+        from micromech.core.bridge import get_service_info
+        svc_info = get_service_info(self.chain_config.chain)
+        multisig = svc_info.get("multisig_address")
+        if not multisig:
             raise ValueError("multisig_address not configured — cannot deliver")
-        sender = self.chain_config.multisig_address
-        from_addr = self.bridge.web3.to_checksum_address(sender)
+        from_addr = self.bridge.web3.to_checksum_address(multisig)
 
         # Convert request_id to bytes32
         try:
@@ -279,12 +281,14 @@ class DeliveryManager:
         deliveryRates[], paymentData).
         """
         mech_contract = self._get_mech_contract()
-        if not self.chain_config.multisig_address:
+        from micromech.core.bridge import get_service_info
+        svc_info = get_service_info(self.chain_config.chain)
+        multisig = svc_info.get("multisig_address")
+        if not multisig:
             raise ValueError(
                 "multisig_address not configured — cannot deliver"
             )
-        sender = self.chain_config.multisig_address
-        from_addr = self.bridge.web3.to_checksum_address(sender)
+        from_addr = self.bridge.web3.to_checksum_address(multisig)
 
         # requester: the sender from the HTTP request, or our own address
         requester_addr = record.request.sender or from_addr
@@ -368,8 +372,12 @@ class DeliveryManager:
         """
         ks = self.bridge.wallet.key_storage
         tags_to_try = [self.chain_config.account_tag]
-        if self.chain_config.service_id:
-            tags_to_try.append(f"service_{self.chain_config.service_id}_agent")
+        from micromech.core.bridge import get_service_info
+        svc_info = get_service_info(self.chain_config.chain)
+        if svc_info.get("service_id"):
+            tags_to_try.append(
+                f"service_{svc_info['service_id']}_agent"
+            )
         tags_to_try.append("master")
 
         for tag in tags_to_try:

@@ -47,9 +47,6 @@ class TestInitCommand:
         from micromech.core.config import ChainConfig
         cfg = MicromechConfig(chains={"gnosis": ChainConfig(
             chain="gnosis",
-            service_id=42,
-            service_key="gnosis_42",
-            multisig_address="0x" + "22" * 20,
             mech_address="0x" + "33" * 20,
             marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
             factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",

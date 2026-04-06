@@ -17,17 +17,32 @@ def _make_config(**task_overrides) -> MicromechConfig:
 
 
 def _make_lifecycle(service_key="0xkey", is_staked=True, rewards=0.0):
-    """Create a mock MechLifecycle."""
+    """Create a mock MechLifecycle.
+
+    service_key controls what get_service_info will return (mock it
+    with _svc_info_patch).
+    """
     lc = MagicMock()
-    lc.chain_config = MagicMock()
-    lc.chain_config.service_key = service_key
+    lc.chain_config = MagicMock(spec=[
+        "chain", "staking_address", "mech_address", "account_tag",
+    ])
+    lc.chain_config.chain = "gnosis"
     lc.chain_config.staking_address = "0x" + "a" * 40
+    # Stash for callers that need to build get_service_info mock
+    lc._test_service_key = service_key
 
     status = {"is_staked": is_staked, "rewards": rewards, "staking_state": "STAKED"}
     lc.get_status.return_value = status
     lc.claim_rewards.return_value = True
     lc.checkpoint.return_value = True
     return lc
+
+
+def _svc_info_for(service_key):
+    """Build a get_service_info return value."""
+    if service_key:
+        return {"service_key": service_key, "service_id": 1}
+    return {}
 
 
 # ── Rewards Task ──────────────────────────────────────────────────────────
@@ -44,7 +59,11 @@ class TestRewardsTask:
         notification.send = AsyncMock()
 
         config = _make_config(claim_threshold_olas=1.0)
-        await rewards_task({"gnosis": lifecycle}, notification, config)
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value=_svc_info_for("0xkey"),
+        ):
+            await rewards_task({"gnosis": lifecycle}, notification, config)
 
         lifecycle.claim_rewards.assert_called_once()
         notification.send.assert_called_once()
@@ -60,7 +79,11 @@ class TestRewardsTask:
         notification.send = AsyncMock()
 
         config = _make_config(claim_threshold_olas=1.0)
-        await rewards_task({"gnosis": lifecycle}, notification, config)
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value=_svc_info_for("0xkey"),
+        ):
+            await rewards_task({"gnosis": lifecycle}, notification, config)
 
         lifecycle.claim_rewards.assert_not_called()
         notification.send.assert_not_called()
@@ -75,7 +98,11 @@ class TestRewardsTask:
         notification.send = AsyncMock()
 
         config = _make_config()
-        await rewards_task({"gnosis": lifecycle}, notification, config)
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value=_svc_info_for(None),
+        ):
+            await rewards_task({"gnosis": lifecycle}, notification, config)
 
         lifecycle.get_status.assert_not_called()
 
@@ -89,7 +116,11 @@ class TestRewardsTask:
         notification.send = AsyncMock()
 
         config = _make_config()
-        await rewards_task({"gnosis": lifecycle}, notification, config)
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value=_svc_info_for("0xkey"),
+        ):
+            await rewards_task({"gnosis": lifecycle}, notification, config)
 
         lifecycle.claim_rewards.assert_not_called()
 
@@ -104,8 +135,12 @@ class TestRewardsTask:
         notification.send = AsyncMock()
 
         config = _make_config()
-        # Should not raise
-        await rewards_task({"gnosis": lifecycle}, notification, config)
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value=_svc_info_for("0xkey"),
+        ):
+            # Should not raise
+            await rewards_task({"gnosis": lifecycle}, notification, config)
 
 
 # ── Fund Task ─────────────────────────────────────────────────────────────
@@ -192,7 +227,11 @@ class TestCheckpointTask:
         notification.send = AsyncMock()
 
         config = _make_config()
-        await checkpoint_task({"gnosis": lifecycle}, notification, config)
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value=_svc_info_for(None),
+        ):
+            await checkpoint_task({"gnosis": lifecycle}, notification, config)
 
         lifecycle.get_status.assert_not_called()
 
@@ -206,7 +245,11 @@ class TestCheckpointTask:
         notification.send = AsyncMock()
 
         config = _make_config()
-        await checkpoint_task({"gnosis": lifecycle}, notification, config)
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value=_svc_info_for("0xkey"),
+        ):
+            await checkpoint_task({"gnosis": lifecycle}, notification, config)
 
     @pytest.mark.asyncio
     async def test_handles_exception(self):
@@ -220,4 +263,8 @@ class TestCheckpointTask:
 
         config = _make_config()
         # Should not raise
-        await checkpoint_task({"gnosis": lifecycle}, notification, config)
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value=_svc_info_for("0xkey"),
+        ):
+            await checkpoint_task({"gnosis": lifecycle}, notification, config)

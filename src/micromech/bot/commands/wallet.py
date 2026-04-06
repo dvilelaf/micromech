@@ -26,11 +26,13 @@ def _explorer_link(chain: str, address: str, label: str) -> str:
 
 def _format_chain_wallet(chain_name: str, chain_config: "ChainConfig") -> str:
     """Format wallet info for a single chain."""
+    from micromech.core.bridge import get_service_info
+    svc_info = get_service_info(chain_name)
+    multisig = svc_info.get("multisig_address")
     lines = [bold(chain_name.upper())]
 
-    if chain_config.multisig_address:
-        addr = chain_config.multisig_address
-        link = _explorer_link(chain_name, addr, format_address(addr))
+    if multisig:
+        link = _explorer_link(chain_name, multisig, format_address(multisig))
         lines.append(f"Multisig: {link}")
 
     if chain_config.mech_address:
@@ -38,7 +40,7 @@ def _format_chain_wallet(chain_name: str, chain_config: "ChainConfig") -> str:
         link = _explorer_link(chain_name, addr, format_address(addr))
         lines.append(f"Mech: {link}")
 
-    if not chain_config.multisig_address and not chain_config.mech_address:
+    if not multisig and not chain_config.mech_address:
         lines.append("Not deployed")
 
     return "\n".join(lines)
@@ -80,12 +82,14 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         blocks.append(f"{bold('Master')}\nUnavailable")
 
     # Per-chain addresses
+    from micromech.core.bridge import get_service_info
     for chain_name, chain_config in enabled.items():
+        svc_info = get_service_info(chain_name)
+        multisig = svc_info.get("multisig_address")
         lines = [bold(chain_name.upper())]
 
-        if chain_config.multisig_address:
-            addr = chain_config.multisig_address
-            link = _explorer_link(chain_name, addr, format_address(addr))
+        if multisig:
+            link = _explorer_link(chain_name, multisig, format_address(multisig))
             lines.append(f"Multisig: {link}")
 
         if chain_config.mech_address:
@@ -93,10 +97,10 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             link = _explorer_link(chain_name, addr, format_address(addr))
             lines.append(f"Mech: {link}")
 
-        if chain_config.service_id:
-            lines.append(f"Service ID: {code(str(chain_config.service_id))}")
+        if svc_info.get("service_id"):
+            lines.append(f"Service ID: {code(str(svc_info['service_id']))}")
 
-        if not chain_config.multisig_address and not chain_config.mech_address:
+        if not multisig and not chain_config.mech_address:
             lines.append("Not deployed")
 
         blocks.append("\n".join(lines))

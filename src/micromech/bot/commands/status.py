@@ -50,7 +50,9 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     blocks = []
     for chain_name, chain_config in enabled.items():
-        if not chain_config.service_key:
+        from micromech.core.bridge import get_service_info
+        svc_key = get_service_info(chain_name).get("service_key")
+        if not svc_key:
             blocks.append(f"{bold(chain_name.upper())}\nNot deployed")
             continue
         lifecycle = lifecycles.get(chain_name)
@@ -58,7 +60,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             blocks.append(f"{bold(chain_name.upper())}\nLifecycle not available")
             continue
         try:
-            status = await asyncio.to_thread(lifecycle.get_status, chain_config.service_key)
+            status = await asyncio.to_thread(lifecycle.get_status, svc_key)
             if status:
                 blocks.append(_format_chain_status(chain_name, status))
             else:

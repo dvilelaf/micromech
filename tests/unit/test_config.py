@@ -73,7 +73,6 @@ class TestChainConfig:
         cfg = _chain_cfg()
         assert cfg.chain == "gnosis"
         assert cfg.enabled is True
-        assert cfg.service_id is None
         assert cfg.mech_address is None
         assert cfg.marketplace_address.startswith("0x")
         assert cfg.account_tag == "mech"
@@ -232,13 +231,11 @@ class TestMicromechConfig:
         data = {
             "mech": {
                 "chain": "gnosis",
-                "service_id": 42,
                 "mech_address": "0x" + "d" * 40,
             }
         }
         cfg = MicromechConfig.model_validate(data)
         assert "gnosis" in cfg.chains
-        assert cfg.chains["gnosis"].service_id == 42
         assert cfg.chains["gnosis"].mech_address == "0x" + "d" * 40
         # marketplace etc. filled from CHAIN_DEFAULTS
         assert cfg.chains["gnosis"].marketplace_address.startswith("0x")
@@ -265,24 +262,7 @@ class TestDetectSetupState:
         assert cfg.detect_setup_state() == "needs_create"
         assert cfg.setup_complete is False
 
-    def test_needs_deploy_when_only_service_id(self):
-        cfg = self._make(service_id=42, service_key="gnosis_42")
-        assert cfg.detect_setup_state() == "needs_deploy"
-        assert cfg.setup_complete is False
-
-    def test_needs_mech_when_multisig_but_no_mech(self):
-        cfg = self._make(
-            service_id=42, service_key="gnosis_42",
-            multisig_address=VALID_ADDR,
-        )
-        assert cfg.detect_setup_state() == "needs_mech"
-        assert cfg.setup_complete is False
-
-    def test_complete_when_all_set(self):
-        cfg = self._make(
-            service_id=42, service_key="gnosis_42",
-            multisig_address=VALID_ADDR,
-            mech_address=VALID_ADDR,
-        )
+    def test_complete_when_mech_address_set(self):
+        cfg = self._make(mech_address=VALID_ADDR)
         assert cfg.detect_setup_state() == "complete"
         assert cfg.setup_complete is True

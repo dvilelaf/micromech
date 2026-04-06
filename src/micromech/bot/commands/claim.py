@@ -34,7 +34,11 @@ async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     config: MicromechConfig = context.bot_data["config"]
     enabled = config.enabled_chains
-    staked = {k: v for k, v in enabled.items() if v.service_key}
+    from micromech.core.bridge import get_service_info
+    staked = {
+        k: v for k, v in enabled.items()
+        if get_service_info(k).get("service_key")
+    }
 
     if not staked:
         await update.message.reply_text("No staked services to claim from.")
@@ -74,8 +78,10 @@ async def handle_claim_callback(
         await query.answer("Claiming all chains...")
         await query.edit_message_text("Claiming rewards for all chains...")
         results = []
+        from micromech.core.bridge import get_service_info
         for chain_name, chain_config in enabled.items():
-            if not chain_config.service_key:
+            svc_key = get_service_info(chain_name).get("service_key")
+            if not svc_key:
                 continue
             lifecycle = lifecycles.get(chain_name)
             if not lifecycle:
@@ -83,7 +89,7 @@ async def handle_claim_callback(
                 continue
             try:
                 success = await asyncio.to_thread(
-                    lifecycle.claim_rewards, chain_config.service_key
+                    lifecycle.claim_rewards, svc_key
                 )
                 status = "Claimed" if success else "Nothing to claim"
                 results.append(f"{bold(chain_name.upper())}: {status}")
@@ -95,7 +101,9 @@ async def handle_claim_callback(
 
     # Single chain
     chain_name = payload
-    if chain_name not in enabled or not enabled[chain_name].service_key:
+    from micromech.core.bridge import get_service_info
+    svc_key = get_service_info(chain_name).get("service_key")
+    if chain_name not in enabled or not svc_key:
         await query.answer("Chain not found or not staked")
         return
 
@@ -108,7 +116,7 @@ async def handle_claim_callback(
         return
     try:
         success = await asyncio.to_thread(
-            lifecycle.claim_rewards, enabled[chain_name].service_key
+            lifecycle.claim_rewards, svc_key
         )
         msg = "Rewards claimed" if success else "Nothing to claim"
         await query.edit_message_text(f"{bold(chain_name.upper())}: {msg}", parse_mode="HTML")
@@ -137,7 +145,9 @@ async def _claim_chain(
         await status_msg.edit_text("Lifecycle not available for this chain.")
         return
     try:
-        success = await asyncio.to_thread(lifecycle.claim_rewards, chain_config.service_key)
+        from micromech.core.bridge import get_service_info
+        svc_key = get_service_info(chain_name).get("service_key", "")
+        success = await asyncio.to_thread(lifecycle.claim_rewards, svc_key)
         msg = "Rewards claimed" if success else "Nothing to claim"
         await status_msg.edit_text(f"{bold(chain_name.upper())}: {msg}", parse_mode="HTML")
     except Exception as e:

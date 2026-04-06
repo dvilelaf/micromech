@@ -8,6 +8,23 @@ import pytest
 # lxml (from ddgs) and llama_cpp C extensions segfault in the same process
 pytestmark = pytest.mark.forked
 
+MULTISIG_ADDR = "0xccA28b516a8c596742Bf23D06324c638230705aE"
+
+
+@pytest.fixture(autouse=True)
+def _mock_service_info():
+    """Provide service info (multisig etc.) from iwa mock."""
+    info = {
+        "service_id": 1,
+        "service_key": "gnosis:1",
+        "multisig_address": MULTISIG_ADDR,
+    }
+    with patch(
+        "micromech.core.bridge.get_service_info",
+        return_value=info,
+    ):
+        yield
+
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import STATUS_EXECUTED
 from micromech.core.models import MechRequest, ToolResult
@@ -17,7 +34,6 @@ from micromech.runtime.delivery import DeliveryManager
 CHAIN_CFG = ChainConfig(
     chain="gnosis",
     mech_address="0x77af31De935740567Cf4fF1986D04B2c964A786a",
-    multisig_address="0xccA28b516a8c596742Bf23D06324c638230705aE",
     marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
     factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
     staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",

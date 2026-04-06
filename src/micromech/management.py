@@ -289,7 +289,7 @@ class MechLifecycle:
             if staking:
                 return {
                     "chain": self.chain_name,
-                    "service_id": self.chain_config.service_id,
+                    "service_id": getattr(mgr.service, "service_id", None),
                     "staking_state": staking.staking_state,
                     "is_staked": staking.is_staked,
                     "rewards": staking.accrued_reward_olas,
@@ -335,96 +335,75 @@ class MechLifecycle:
             if on_progress:
                 on_progress(step, total, msg, success)
 
-        # Determine starting point from existing chain config state.
-        # States: needs_create → needs_deploy → needs_mech → complete.
-        # Steps 2-4 (activate, register, deploy Safe) are an atomic unit:
-        # activate/register are idempotent, so re-running them is safe if
-        # deploy failed on a previous attempt.
-        state = self.chain_config.detect_setup_state()
-        needs_service = state == "needs_create"
-        needs_deploy = state in ("needs_create", "needs_deploy")
-        needs_mech = state in ("needs_create", "needs_deploy", "needs_mech")
+        # Check if already complete (mech_address set)
+        from micromech.core.bridge import get_service_info
+        svc_info = get_service_info(self.chain_name)
 
-        # Populate result with already-known values
-        if self.chain_config.service_id:
-            result["service_id"] = self.chain_config.service_id
-        if self.chain_config.service_key:
-            result["service_key"] = self.chain_config.service_key
-        if self.chain_config.multisig_address:
-            result["multisig_address"] = self.chain_config.multisig_address
         if self.chain_config.mech_address:
             result["mech_address"] = self.chain_config.mech_address
+        if svc_info.get("service_id"):
+            result["service_id"] = svc_info["service_id"]
+        if svc_info.get("service_key"):
+            result["service_key"] = svc_info["service_key"]
+        if svc_info.get("multisig_address"):
+            result["multisig_address"] = svc_info["multisig_address"]
 
+        state = self.chain_config.detect_setup_state()
         if state == "complete":
             _progress(6, "Already fully deployed", True)
             result["staked"] = True
             return result
 
-        # Step 1: Create service (skip if already done)
-        if needs_service:
-            _progress(1, "Creating service...")
-            service_id = self.create_service(
-                agent_id=agent_id, bond_olas=bond_olas,
-            )
-            if not service_id:
-                _progress(1, "Failed to create service", False)
-                msg = "Service creation failed"
-                raise RuntimeError(msg)
-            result["service_id"] = service_id
-            self.chain_config.service_id = service_id
-            _progress(1, f"Service created: #{service_id}")
+        # Full deploy: create → activate → register → deploy → mech → stake
+        # Step 1: Create service
+        _progress(1, "Creating service...")
+        service_id = self.create_service(
+            agent_id=agent_id, bond_olas=bond_olas,
+        )
+        if not service_id:
+            _progress(1, "Failed to create service", False)
+            msg = "Service creation failed"
+            raise RuntimeError(msg)
+        result["service_id"] = service_id
+        _progress(1, f"Service created: #{service_id}")
 
-            service_key = f"{self.chain_name}:{service_id}"
-            result["service_key"] = service_key
-            self.chain_config.service_key = service_key
-        else:
-            _progress(1, f"Service exists: #{result.get('service_id')}")
+        service_key = f"{self.chain_name}:{service_id}"
+        result["service_key"] = service_key
 
-        service_key = result.get("service_key", "")
+        # Steps 2-4: activate → register → deploy Safe
+        _progress(2, "Activating registration...")
+        if not self.activate(service_key):
+            _progress(2, "Failed to activate registration", False)
+            msg = "Activation failed"
+            raise RuntimeError(msg)
+        _progress(2, "Registration activated")
 
-        # Steps 2-4: activate → register → deploy Safe (atomic unit, idempotent)
-        if needs_deploy:
-            _progress(2, "Activating registration...")
-            if not self.activate(service_key):
-                _progress(2, "Failed to activate registration", False)
-                msg = "Activation failed"
-                raise RuntimeError(msg)
-            _progress(2, "Registration activated")
+        _progress(3, "Registering agent...")
+        if not self.register_agent(service_key):
+            _progress(3, "Failed to register agent", False)
+            msg = "Agent registration failed"
+            raise RuntimeError(msg)
+        _progress(3, "Agent registered")
 
-            _progress(3, "Registering agent...")
-            if not self.register_agent(service_key):
-                _progress(3, "Failed to register agent", False)
-                msg = "Agent registration failed"
-                raise RuntimeError(msg)
-            _progress(3, "Agent registered")
+        _progress(4, "Deploying Safe multisig...")
+        multisig = self.deploy(service_key)
+        if not multisig:
+            _progress(4, "Failed to deploy Safe", False)
+            msg = "Safe deployment failed"
+            raise RuntimeError(msg)
+        result["multisig_address"] = multisig
+        _progress(4, f"Safe deployed: {multisig[:16]}...")
 
-            _progress(4, "Deploying Safe multisig...")
-            multisig = self.deploy(service_key)
-            if not multisig:
-                _progress(4, "Failed to deploy Safe", False)
-                msg = "Safe deployment failed"
-                raise RuntimeError(msg)
-            result["multisig_address"] = multisig
-            self.chain_config.multisig_address = multisig
-            _progress(4, f"Safe deployed: {multisig[:16]}...")
-        else:
-            _progress(2, "Already activated")
-            _progress(3, "Already registered")
-            _progress(4, f"Safe exists: {result.get('multisig_address', '')[:16]}...")
-
-        # Step 5: Create mech on marketplace (skip if already done)
-        if needs_mech:
-            _progress(5, "Creating mech on marketplace...")
-            mech_addr = self.create_mech(service_key)
-            if not mech_addr:
-                _progress(5, "Failed to create mech", False)
-                msg = "Mech creation failed"
-                raise RuntimeError(msg)
-            result["mech_address"] = mech_addr
-            self.chain_config.mech_address = mech_addr
-            _progress(5, f"Mech created: {mech_addr[:16]}...")
-        else:
-            _progress(5, f"Mech exists: {result.get('mech_address', '')[:16]}...")
+        # Step 5: Create mech on marketplace
+        _progress(5, "Creating mech on marketplace...")
+        mech_addr = self.create_mech(service_key)
+        if not mech_addr:
+            _progress(5, "Failed to create mech", False)
+            msg = "Mech creation failed"
+            raise RuntimeError(msg)
+        result["mech_address"] = mech_addr
+        self.chain_config.mech_address = mech_addr
+        _progress(5, f"Mech created: {mech_addr[:16]}...")
 
         # Step 6: Stake
         _progress(6, "Staking service...")

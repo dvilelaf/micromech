@@ -228,3 +228,29 @@ def check_balances(chain_name: str) -> tuple[float, float]:
     except Exception:
         logger.debug("Failed to check balances on {}", chain_name)
         return 0.0, 0.0
+
+
+def get_service_info(chain_name: str) -> dict:
+    """Read service data from iwa's olas plugin.
+
+    Returns dict with service_id, service_key, multisig_address
+    (or empty dict if unavailable).
+    """
+    try:
+        from iwa.core.models import Config
+        olas = Config().get_plugin_config("olas")
+        if olas:
+            for service in getattr(olas, "services", []):
+                if getattr(service, "chain_name", "") == chain_name:
+                    return {
+                        "service_id": service.service_id,
+                        "service_key": (
+                            f"{chain_name}:{service.service_id}"
+                        ),
+                        "multisig_address": getattr(
+                            service, "multisig", None
+                        ),
+                    }
+    except ImportError:
+        pass
+    return {}

@@ -348,13 +348,15 @@ def create_web_app(
         try:
             cfg = MicromechConfig.load()
             for name, chain_cfg in cfg.chains.items():
+                from micromech.core.bridge import get_service_info
+                svc = get_service_info(name)
                 chains_deployed[name] = {
                     "state": chain_cfg.detect_setup_state(),
                     "complete": chain_cfg.setup_complete,
-                    "service_id": chain_cfg.service_id,
-                    "service_key": chain_cfg.service_key,
+                    "service_id": svc.get("service_id"),
+                    "service_key": svc.get("service_key"),
                     "mech_address": chain_cfg.mech_address,
-                    "multisig_address": chain_cfg.multisig_address,
+                    "multisig_address": svc.get("multisig_address"),
                 }
         except Exception:
             pass
@@ -789,13 +791,16 @@ def create_web_app(
                 if chain and chain in config.chains
                 else config.enabled_chains
             )
+            from micromech.core.bridge import get_service_info
             for name, cfg in chains_to_check.items():
-                if not cfg.service_key:
+                svc = get_service_info(name)
+                svc_key = svc.get("service_key")
+                if not svc_key:
                     results[name] = {"status": "not_configured"}
                     continue
                 try:
                     lc = MechLifecycle(config, chain_name=name)
-                    status = lc.get_status(cfg.service_key)
+                    status = lc.get_status(svc_key)
                     results[name] = status or {"status": "unknown"}
                 except Exception:
                     results[name] = {"status": "error"}
@@ -854,8 +859,11 @@ def create_web_app(
 
                     # Get delivery count (uses multisig address)
                     deliveries = 0
-                    if cfg.multisig_address:
-                        ms_addr = cs(cfg.multisig_address)
+                    from micromech.core.bridge import get_service_info
+                    _svc = get_service_info(name)
+                    _multisig = _svc.get("multisig_address")
+                    if _multisig:
+                        ms_addr = cs(_multisig)
                         deliveries = bridge.with_retry(
                             lambda _ms=ms_addr: marketplace.functions.mapMechServiceDeliveryCounts(
                                 _ms
@@ -970,10 +978,12 @@ def create_web_app(
             config = MicromechConfig.load()
             chain = body.get("chain", "gnosis")
             lc = MechLifecycle(config, chain_name=chain)
-            # Use service_key from request body, falling back to config
+            # Use service_key from request body, falling back to iwa
             service_key = body.get("service_key", "") or ""
-            if not service_key and chain in config.chains:
-                service_key = config.chains[chain].service_key or ""
+            if not service_key:
+                from micromech.core.bridge import get_service_info
+                svc = get_service_info(chain)
+                service_key = svc.get("service_key", "")
 
             if action == "stake":
                 ok = lc.stake(service_key, body.get("contract"))

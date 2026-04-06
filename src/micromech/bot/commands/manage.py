@@ -150,7 +150,10 @@ async def handle_manage_callback(
         return
 
     chain_config = enabled[chain_name]
-    if not chain_config.service_key:
+    from micromech.core.bridge import get_service_info
+    svc_info = get_service_info(chain_name)
+    svc_key = svc_info.get("service_key")
+    if not svc_key:
         await query.answer()
         await query.edit_message_text(
             f"{bold(chain_name.upper())}: Not deployed", parse_mode="HTML"
@@ -166,7 +169,7 @@ async def handle_manage_callback(
         return
 
     try:
-        status = await asyncio.to_thread(lifecycle.get_status, chain_config.service_key)
+        status = await asyncio.to_thread(lifecycle.get_status, svc_key)
         if not status:
             await query.edit_message_text(
                 f"{bold(chain_name.upper())}: Could not fetch status", parse_mode="HTML"
@@ -234,7 +237,10 @@ async def _execute_action(
     """Execute a manage action (stake/unstake/restake)."""
     enabled = config.enabled_chains
     chain_config = enabled.get(chain_name)
-    if not chain_config or not chain_config.service_key:
+    from micromech.core.bridge import get_service_info
+    svc_info = get_service_info(chain_name)
+    service_key = svc_info.get("service_key")
+    if not chain_config or not service_key:
         await query.answer("Chain not configured")
         return
 
@@ -253,7 +259,6 @@ async def _execute_action(
         return
 
     try:
-        service_key = chain_config.service_key
 
         if action == "stake":
             success = await asyncio.to_thread(

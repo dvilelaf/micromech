@@ -216,8 +216,6 @@ def init(
     state = chain_cfg.detect_setup_state()
     if chain_cfg.setup_complete:
         typer.echo("  Service already fully deployed!")
-        typer.echo(f"    service_id: {chain_cfg.service_id}")
-        typer.echo(f"    multisig: {chain_cfg.multisig_address}")
         typer.echo(f"    mech: {chain_cfg.mech_address}")
         typer.echo("\n  Start with: micromech run")
         config.save()
@@ -845,7 +843,7 @@ def doctor(
     for chain_name, chain_cfg in cfg.chains.items():
         state = chain_cfg.detect_setup_state()
         if chain_cfg.setup_complete:
-            ok(f"{chain_name}: complete (service #{chain_cfg.service_id})")
+            ok(f"{chain_name}: complete (mech: {chain_cfg.mech_address})")
         else:
             warn(f"{chain_name}: {state}")
 

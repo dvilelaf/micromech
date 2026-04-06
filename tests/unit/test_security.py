@@ -381,7 +381,6 @@ class TestDeliveryChainId:
         chain_cfg = ChainConfig(
             chain="gnosis",
             mech_address="0x77af31De935740567Cf4fF1986D04B2c964A786a",
-            multisig_address="0xccA28b516a8c596742Bf23D06324c638230705aE",
             marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
             factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
             staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
