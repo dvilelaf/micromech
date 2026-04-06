@@ -230,27 +230,46 @@ def check_balances(chain_name: str) -> tuple[float, float]:
         return 0.0, 0.0
 
 
+_service_info_cache: dict[str, tuple[float, dict]] = {}
+_SERVICE_INFO_TTL = 30  # seconds
+
+
 def get_service_info(chain_name: str) -> dict:
-    """Read service data from iwa's olas plugin.
+    """Read service data from iwa's olas plugin (cached 30s).
 
     Returns dict with service_id, service_key, multisig_address
     (or empty dict if unavailable).
     """
+    import time
+    now = time.monotonic()
+    if chain_name in _service_info_cache:
+        ts, cached = _service_info_cache[chain_name]
+        if now - ts < _SERVICE_INFO_TTL:
+            return cached
     try:
         from iwa.core.models import Config
         olas = Config().get_plugin_config("olas")
         if olas:
-            for service in getattr(olas, "services", []):
-                if getattr(service, "chain_name", "") == chain_name:
-                    return {
-                        "service_id": service.service_id,
-                        "service_key": (
-                            f"{chain_name}:{service.service_id}"
-                        ),
-                        "multisig_address": getattr(
-                            service, "multisig", None
-                        ),
-                    }
+            services = olas.get("services") if hasattr(olas, "get") else getattr(olas, "services", None)
+            if services:
+                items = services.values() if hasattr(services, "values") else services
+                for service in items:
+                    svc_chain = service.get("chain_name", "") if hasattr(service, "get") else getattr(service, "chain_name", "")
+                    if svc_chain == chain_name:
+                        svc_id = service.get("service_id") if hasattr(service, "get") else getattr(service, "service_id", None)
+                        multisig = (
+                            service.get("multisig_address")
+                            if hasattr(service, "get")
+                            else getattr(service, "multisig_address", None)
+                        )
+                        result = {
+                            "service_id": svc_id,
+                            "service_key": f"{chain_name}:{svc_id}",
+                            "multisig_address": multisig,
+                        }
+                        _service_info_cache[chain_name] = (now, result)
+                        return result
     except ImportError:
         pass
+    _service_info_cache[chain_name] = (now, {})
     return {}

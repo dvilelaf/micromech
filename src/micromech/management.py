@@ -354,45 +354,60 @@ class MechLifecycle:
             result["staked"] = True
             return result
 
-        # Full deploy: create → activate → register → deploy → mech → stake
-        # Step 1: Create service
-        _progress(1, "Creating service...")
-        service_id = self.create_service(
-            agent_id=agent_id, bond_olas=bond_olas,
-        )
-        if not service_id:
-            _progress(1, "Failed to create service", False)
-            msg = "Service creation failed"
-            raise RuntimeError(msg)
-        result["service_id"] = service_id
-        _progress(1, f"Service created: #{service_id}")
+        # Resume logic: check what iwa already has for this chain
+        has_service = bool(svc_info.get("service_id"))
+        has_multisig = bool(svc_info.get("multisig_address"))
 
-        service_key = f"{self.chain_name}:{service_id}"
-        result["service_key"] = service_key
+        # Step 1: Create service (skip if iwa already has one)
+        if has_service:
+            service_id = svc_info["service_id"]
+            result["service_id"] = service_id
+            service_key = svc_info["service_key"]
+            result["service_key"] = service_key
+            _progress(1, f"Service exists: #{service_id}")
+        else:
+            _progress(1, "Creating service...")
+            service_id = self.create_service(
+                agent_id=agent_id, bond_olas=bond_olas,
+            )
+            if not service_id:
+                _progress(1, "Failed to create service", False)
+                msg = "Service creation failed"
+                raise RuntimeError(msg)
+            result["service_id"] = service_id
+            service_key = f"{self.chain_name}:{service_id}"
+            result["service_key"] = service_key
+            _progress(1, f"Service created: #{service_id}")
 
-        # Steps 2-4: activate → register → deploy Safe
-        _progress(2, "Activating registration...")
-        if not self.activate(service_key):
-            _progress(2, "Failed to activate registration", False)
-            msg = "Activation failed"
-            raise RuntimeError(msg)
-        _progress(2, "Registration activated")
+        # Steps 2-4: activate → register → deploy Safe (skip if multisig exists)
+        if has_multisig:
+            result["multisig_address"] = svc_info["multisig_address"]
+            _progress(2, "Already activated")
+            _progress(3, "Already registered")
+            _progress(4, f"Safe exists: {svc_info['multisig_address'][:16]}...")
+        else:
+            _progress(2, "Activating registration...")
+            if not self.activate(service_key):
+                _progress(2, "Failed to activate registration", False)
+                msg = "Activation failed"
+                raise RuntimeError(msg)
+            _progress(2, "Registration activated")
 
-        _progress(3, "Registering agent...")
-        if not self.register_agent(service_key):
-            _progress(3, "Failed to register agent", False)
-            msg = "Agent registration failed"
-            raise RuntimeError(msg)
-        _progress(3, "Agent registered")
+            _progress(3, "Registering agent...")
+            if not self.register_agent(service_key):
+                _progress(3, "Failed to register agent", False)
+                msg = "Agent registration failed"
+                raise RuntimeError(msg)
+            _progress(3, "Agent registered")
 
-        _progress(4, "Deploying Safe multisig...")
-        multisig = self.deploy(service_key)
-        if not multisig:
-            _progress(4, "Failed to deploy Safe", False)
-            msg = "Safe deployment failed"
-            raise RuntimeError(msg)
-        result["multisig_address"] = multisig
-        _progress(4, f"Safe deployed: {multisig[:16]}...")
+            _progress(4, "Deploying Safe multisig...")
+            multisig = self.deploy(service_key)
+            if not multisig:
+                _progress(4, "Failed to deploy Safe", False)
+                msg = "Safe deployment failed"
+                raise RuntimeError(msg)
+            result["multisig_address"] = multisig
+            _progress(4, f"Safe deployed: {multisig[:16]}...")
 
         # Step 5: Create mech on marketplace
         _progress(5, "Creating mech on marketplace...")
