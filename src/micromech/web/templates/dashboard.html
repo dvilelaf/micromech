@@ -551,9 +551,9 @@
     }
 
     function ipfsLink(hexId) {
-        // Strip 0x prefix if present, build CIDv1 for IPFS gateway
+        // Strip 0x prefix, build CIDv1 (raw codec + sha256): f01551220{digest}
         const clean = hexId.startsWith('0x') ? hexId.slice(2) : hexId;
-        return `https://gateway.autonolas.tech/ipfs/f01701220${clean}`;
+        return `https://gateway.autonolas.tech/ipfs/f01551220${clean}`;
     }
 
     function renderRequestRow(r) {
