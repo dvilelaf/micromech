@@ -691,7 +691,7 @@ def create_web_app(
         sem = _get_sse_semaphore()
         # Acquire eagerly (before returning StreamingResponse) to avoid TOCTOU
         try:
-            await asyncio.wait_for(sem.acquire(), timeout=0)
+            await asyncio.wait_for(sem.acquire(), timeout=1)
         except asyncio.TimeoutError:
             return JSONResponse(
                 {"error": "Too many SSE connections"},

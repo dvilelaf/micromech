@@ -308,11 +308,6 @@
                         <div class="metric-value" id="m-uptime">0m</div>
                         <div class="metric-label">Uptime</div>
                     </div>
-                    <div class="glass metric-card" id="karma-card">
-                        <div class="metric-value" id="m-karma" style="font-size:1.4rem;">-</div>
-                        <div class="metric-label">Reputation</div>
-                        <div id="karma-detail" style="font-size:0.7rem;color:var(--text-muted);margin-top:0.25rem;display:none;"></div>
-                    </div>
                 </div>
 
                 <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:1.5rem; max-width:700px; margin-bottom:1.5rem;">
@@ -1288,44 +1283,16 @@
         try {
             const r = await fetch('/api/karma');
             const data = await r.json();
-            if (data.error) {
-                setText('m-karma', '-');
-                document.getElementById('karma-detail').style.display = 'none';
-                return;
-            }
+            if (data.error) return;
 
-            let totalDeliveries = 0, totalTimeouts = 0, found = false;
+            let found = false;
             const rows = [];
 
             for (const chain in data) {
                 const d = data[chain];
                 if (d.karma === null || d.karma === undefined) continue;
                 found = true;
-                totalDeliveries += d.deliveries || 0;
-                totalTimeouts += d.timeouts || 0;
                 rows.push({chain, deliveries: d.deliveries || 0, timeouts: d.timeouts || 0});
-            }
-
-            // Overview card — show human label instead of raw number
-            const el = document.getElementById('m-karma');
-            const detail = document.getElementById('karma-detail');
-            if (!found) {
-                el.textContent = '-';
-                detail.style.display = 'none';
-                return;
-            }
-
-            const rep = reputationLabel(totalDeliveries, totalTimeouts);
-            el.textContent = rep.icon + ' ' + rep.text;
-            el.style.color = rep.color;
-            el.className = 'metric-value';
-
-            if (totalDeliveries > 0) {
-                const pct = ((totalDeliveries - totalTimeouts) / totalDeliveries * 100).toFixed(1);
-                detail.style.display = 'block';
-                detail.textContent = pct + '% reliability';
-            } else {
-                detail.style.display = 'none';
             }
 
             // Management tab — detailed breakdown per chain
