@@ -79,10 +79,18 @@ def _push_log_line(ts: str, level: str, msg: str) -> None:
 def _log_sink(message: Any) -> None:
     """Loguru sink that pushes log lines to all connected SSE clients."""
     record = message.record
+    # Format like terminal: timestamp | LEVEL | module:func:line - message
+    module = record.get("name", "")
+    func = record.get("function", "")
+    line_no = record.get("line", "")
+    location = f"{module}:{func}:{line_no}" if module else ""
+    ts = record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    msg_text = record["message"]
+    full_msg = f"{ts} | {record['level'].name:<8} | {location} - {msg_text}" if location else msg_text
     _push_log_line(
         ts=record["time"].strftime("%H:%M:%S.%f")[:-3],
         level=record["level"].name,
-        msg=str(message).rstrip(),
+        msg=full_msg,
     )
 
 
@@ -994,6 +1002,10 @@ def create_web_app(
         stdlib_handler = _StdlibLogHandler()
         stdlib_handler.setFormatter(logging.Formatter("%(message)s"))
         logging.root.addHandler(stdlib_handler)
+        # Uvicorn loggers don't propagate — attach handler directly
+        for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+            uv_logger = logging.getLogger(name)
+            uv_logger.addHandler(stdlib_handler)
         _log_sink_registered = True
 
     @app.get("/api/logs/stream")
