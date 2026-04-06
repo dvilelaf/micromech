@@ -465,3 +465,44 @@ class TestHealthAPI:
         data = resp.json()
         assert data["status"] == "ok"
         assert "timestamp" in data
+
+
+class TestRecordToDict:
+    """Verify _record_to_dict includes request IPFS CID."""
+
+    def test_request_ipfs_cid_from_multihash(self):
+        from micromech.web.app import _record_to_dict
+        from micromech.core.models import MechRequest, RequestRecord
+
+        req = MechRequest.model_construct(
+            request_id="abc123",
+            chain="gnosis",
+            status="delivered",
+            tool="echo",
+            prompt="test",
+            data=bytes.fromhex("1220" + "ab" * 32),  # valid multihash
+            created_at=None,
+            is_offchain=False,
+        )
+        record = RequestRecord.model_construct(request=req, result=None, response=None)
+        d = _record_to_dict(record)
+        assert d["request_ipfs_cid"] is not None
+        assert d["request_ipfs_cid"].startswith("b")  # bafkrei...
+
+    def test_request_ipfs_cid_none_for_raw_data(self):
+        from micromech.web.app import _record_to_dict
+        from micromech.core.models import MechRequest, RequestRecord
+
+        req = MechRequest.model_construct(
+            request_id="abc123",
+            chain="gnosis",
+            status="pending",
+            tool="echo",
+            prompt="test",
+            data=b'{"prompt":"test"}',  # raw JSON, not multihash
+            created_at=None,
+            is_offchain=False,
+        )
+        record = RequestRecord.model_construct(request=req, result=None, response=None)
+        d = _record_to_dict(record)
+        assert d["request_ipfs_cid"] is None
