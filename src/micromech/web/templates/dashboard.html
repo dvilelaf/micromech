@@ -551,21 +551,37 @@
     }
 
     function ipfsLink(hexId) {
-        // Strip 0x prefix, build CIDv1 (raw codec + sha256): f01551220{digest}
+        // Build CIDv1 hex (raw codec + sha256) for Autonolas IPFS gateway
         const clean = hexId.startsWith('0x') ? hexId.slice(2) : hexId;
         return `https://gateway.autonolas.tech/ipfs/f01551220${clean}`;
     }
 
+    // Block explorer URLs per chain
+    const EXPLORER_URLS = {
+        gnosis: 'https://gnosisscan.io/tx/',
+        base: 'https://basescan.org/tx/',
+        ethereum: 'https://etherscan.io/tx/',
+        polygon: 'https://polygonscan.com/tx/',
+        optimism: 'https://optimistic.etherscan.io/tx/',
+        arbitrum: 'https://arbiscan.io/tx/',
+        celo: 'https://celoscan.io/tx/',
+    };
+    function explorerTxLink(chain, txHash) {
+        const base = EXPLORER_URLS[chain] || EXPLORER_URLS.gnosis;
+        return base + txHash;
+    }
+
     function renderRequestRow(r) {
-        const shortReqId = (r.request_id || '').substring(0, 14) + '...';
-        const reqLink = ipfsLink(r.request_id || '');
+        const rid = r.request_id || '';
+        const shortReqId = rid.substring(0, 14) + '...';
+        const reqLink = ipfsLink(rid);
         const txHash = r.tx_hash || '';
-        const shortTx = txHash ? txHash.substring(0, 14) + '...' : '-';
-        const txLink = txHash ? ipfsLink(txHash) : '';
+        const shortTx = txHash ? txHash.substring(0, 14) + '...' : '';
+        const txLink = txHash ? explorerTxLink(r.chain, txHash) : '';
         const promptText = r.prompt ? r.prompt.substring(0, 60) : '';
         return `
             <tr>
-                <td style="font-family:var(--font-mono);font-size:0.72rem"><a href="${escapeHtml(reqLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(r.request_id || '')}">${escapeHtml(shortReqId)}</a></td>
+                <td style="font-family:var(--font-mono);font-size:0.72rem"><a href="${escapeHtml(reqLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(rid)}">${escapeHtml(shortReqId)}</a></td>
                 <td style="font-family:var(--font-mono);font-size:0.72rem">${txHash ? `<a href="${escapeHtml(txLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(txHash)}">${escapeHtml(shortTx)}</a>` : '<span style="color:var(--text-muted)">-</span>'}</td>
                 <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
                 <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
