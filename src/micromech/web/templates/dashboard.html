@@ -597,11 +597,12 @@
         const respIpfs = r.ipfs_hash || '';
         const shortResp = respIpfs ? respIpfs.substring(0, 14) + '...' : '';
         const respLink = respIpfs ? ipfsResponseLink(respIpfs) : '';
-        // Request ID is a contract-computed hash, not an IPFS CID.
-        // Show as copy-to-clipboard instead of a broken IPFS link.
-        const ridCell = rid
-            ? `<span style="cursor:pointer;color:var(--accent-color);text-decoration:none" title="Click to copy: ${escapeHtml(rid)}" onclick="copyToClipboard('${escapeHtml(rid)}')">${escapeHtml(shortReqId)}</span>`
-            : '<span style="color:var(--text-muted)">-</span>';
+        // Request data CID (IPFS multihash of request JSON) — link to gateway
+        const reqCid = r.request_ipfs_cid || '';
+        const reqLink = reqCid ? `https://gateway.autonolas.tech/ipfs/${reqCid}` : '';
+        const ridCell = reqLink
+            ? `<a href="${escapeHtml(reqLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="View request on IPFS">${escapeHtml(shortReqId)}</a>`
+            : `<span style="color:var(--text-muted)" title="${escapeHtml(rid)}">${escapeHtml(shortReqId)}</span>`;
         return `
             <tr>
                 <td style="font-family:var(--font-mono);font-size:0.72rem">${ridCell}</td>

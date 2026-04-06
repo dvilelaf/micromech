@@ -1059,8 +1059,17 @@ def create_web_app(
 def _record_to_dict(record: Any) -> dict:
     """Convert a RequestRecord to a JSON-safe dict."""
     r = record.request
+    # Convert requestData multihash to IPFS CID for linking
+    request_ipfs_cid = None
+    if r.data and len(r.data) == 34 and r.data[:2] == b"\x12\x20":
+        try:
+            from micromech.ipfs.client import multihash_to_cid
+            request_ipfs_cid = multihash_to_cid(r.data)
+        except Exception:
+            pass
     result = {
         "request_id": r.request_id,
+        "request_ipfs_cid": request_ipfs_cid,
         "chain": r.chain,
         "status": r.status,
         "tool": r.tool,
