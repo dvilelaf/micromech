@@ -16,7 +16,6 @@ import time
 import warnings
 from typing import Any
 
-import requests as http_requests
 from eth_account import Account
 from rich.console import Console
 from rich.live import Live
@@ -208,10 +207,19 @@ def build_table(rows: list[RequestRow], title: str) -> Table:
 
 def poll_results(
     rows: list[RequestRow],
-    base_url: str,
+    anvil_w3s: dict[str, Web3],
+    marketplaces: dict[str, Any],
     stop_event: threading.Event,
 ):
-    """Background thread: poll HTTP /result/{request_id} for pending requests."""
+    """Background thread: poll on-chain Deliver events for completed requests."""
+    # Track last polled block per chain
+    last_block: dict[str, int] = {}
+    for chain_name, w3 in anvil_w3s.items():
+        try:
+            last_block[chain_name] = w3.eth.block_number
+        except Exception:
+            pass
+
     while not stop_event.is_set():
         try:
             pending = [r for r in rows if r.status == "pending" and r.request_id]
@@ -219,30 +227,50 @@ def poll_results(
                 stop_event.wait(2)
                 continue
 
+            # Build lookup of pending request_ids
+            pending_ids: dict[str, RequestRow] = {}
             for row in pending:
+                hex_str = row.request_id[2:] if row.request_id.startswith("0x") else row.request_id
+                pending_ids[hex_str.lower()] = row
+
+            # Poll each chain for Deliver events
+            for chain_name, mp in marketplaces.items():
+                w3 = anvil_w3s.get(chain_name)
+                if not w3:
+                    continue
                 try:
-                    resp = http_requests.get(
-                        f"{base_url}/result/{row.request_id}", timeout=5,
+                    current = w3.eth.block_number
+                    from_block = last_block.get(chain_name, current)
+                    if current <= from_block:
+                        continue
+
+                    logs = mp.events.Deliver.get_logs(
+                        from_block=from_block + 1,
+                        to_block=current,
                     )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        status = data.get("status", "")
-                        if status in ("executed", "delivered"):
-                            row.response = format_response(data.get("result"))
+                    last_block[chain_name] = current
+
+                    for log in logs:
+                        rid = log["args"]["requestId"]
+                        rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
+                        row = pending_ids.get(rid_hex.lower())
+                        if row:
+                            # Try to parse delivery data as JSON
+                            delivery_data = log["args"].get("deliveryData", b"")
+                            try:
+                                result_data = json.loads(delivery_data)
+                                row.response = format_response(result_data)
+                            except Exception:
+                                row.response = f"Delivered ({len(delivery_data)} bytes)"
                             row.status = "done"
                             row.elapsed = time.time() - row.t0
-                    elif resp.status_code == 404:
-                        # Not yet known to the mech, keep polling
-                        pass
-                except http_requests.RequestException as e:
-                    # Log but don't crash the poller
-                    import sys
-                    print(f"[poller] HTTP error for {row.request_id}: {e}", file=sys.stderr)
+                except Exception:
+                    pass
 
-            stop_event.wait(2.5)
+            stop_event.wait(3)
         except Exception as e:
             import sys
-            print(f"[poller] Unexpected error: {e}", file=sys.stderr)
+            print(f"[poller] Error: {e}", file=sys.stderr)
             stop_event.wait(5)
 
 
@@ -300,24 +328,16 @@ def main():
     import os
     tools = [t for t in TOOL_PROMPTS if t != "gemma4-api" or os.environ.get("GOOGLE_API_KEY")]
 
-    # Detect mech HTTP API URL from config
-    host = cfg.runtime.host
-    port = cfg.runtime.port
-    if host in ("0.0.0.0", "::"):
-        host = "127.0.0.1"
-    base_url = f"http://{host}:{port}"
-
-    console.print(f"  API: [dim]{base_url}[/dim]")
     console.print()
 
     # State
     rows: list[RequestRow] = []
     stop_event = threading.Event()
 
-    # Start background poller
+    # Start on-chain poller (watches Deliver events, no HTTP dependency)
     poller = threading.Thread(
         target=poll_results,
-        args=(rows, base_url, stop_event),
+        args=(rows, anvil_w3s, marketplaces, stop_event),
         daemon=True,
     )
     poller.start()
