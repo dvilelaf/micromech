@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from micromech.core.constants import (
     CHAIN_DEFAULTS,
@@ -227,6 +227,8 @@ def _default_chains() -> dict[str, ChainConfig]:
 class MicromechConfig(BaseModel):
     """Top-level configuration."""
 
+    model_config = ConfigDict(extra="ignore")
+
     version: str = "1"
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
     chains: dict[str, ChainConfig] = Field(default_factory=_default_chains)
@@ -262,17 +264,13 @@ class MicromechConfig(BaseModel):
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "MicromechConfig":
-        """Load config via iwa's plugin system.
+        """Load config via iwa's plugin system (singleton).
 
         Falls back to standalone YAML file if iwa is not available.
         """
         try:
             from iwa.core.models import Config
-            iwa_cfg = Config()
-            # Register if not already done
-            if "micromech" not in iwa_cfg._plugin_models:
-                iwa_cfg.register_plugin_config("micromech", cls)
-            cfg = iwa_cfg.get_plugin_config("micromech")
+            cfg = Config().get_plugin_config("micromech")
             if cfg is not None:
                 return cfg
         except ImportError:
@@ -306,3 +304,21 @@ class MicromechConfig(BaseModel):
         config_path.write_text(
             yaml.dump(data, default_flow_style=False, sort_keys=False)
         )
+
+
+def register_plugin() -> None:
+    """Register MicromechConfig with iwa's plugin system.
+
+    Call once at startup before any MicromechConfig.load().
+    Safe to call multiple times (idempotent) and when iwa
+    is not installed (silently ignored).
+    """
+    try:
+        from iwa.core.models import Config
+        iwa_cfg = Config()
+        if "micromech" not in iwa_cfg._plugin_models:
+            iwa_cfg.register_plugin_config(
+                "micromech", MicromechConfig,
+            )
+    except ImportError:
+        pass

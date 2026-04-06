@@ -42,6 +42,8 @@ NATIVE_SYMBOL = {
 
 def _load_config(config_path: Optional[Path] = None) -> MicromechConfig:
     """Load config via iwa plugin system (or fallback file)."""
+    from micromech.core.config import register_plugin
+    register_plugin()
     return MicromechConfig.load(config_path)
 
 
@@ -66,7 +68,8 @@ def init(
     skip_funding: bool = typer.Option(False, "--skip-funding-check"),
 ) -> None:
     """Setup wizard — wallet, chain, funding, deploy. Get running in 3 minutes."""
-    # config loaded via iwa plugin
+    from micromech.core.config import register_plugin
+    register_plugin()
     total_steps = 5
 
     typer.echo("\nmicromech setup wizard")
@@ -777,6 +780,8 @@ def doctor(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Diagnose common issues — wallet, RPCs, service state, tools."""
+    from micromech.core.config import register_plugin
+    register_plugin()
     issues = 0
     warnings = 0
 
