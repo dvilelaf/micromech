@@ -30,7 +30,6 @@ from micromech.core.constants import (
 )
 
 DEFAULT_CONFIG_DIR = Path("data")
-DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "micromech.yaml"
 
 
 class RuntimeConfig(BaseModel):
@@ -263,16 +262,45 @@ class MicromechConfig(BaseModel):
 
     @classmethod
     def load(cls, path: Optional[Path] = None) -> "MicromechConfig":
-        """Load config from YAML file. Returns defaults if file doesn't exist."""
-        config_path = path or DEFAULT_CONFIG_PATH
+        """Load config via iwa's plugin system.
+
+        Falls back to standalone YAML file if iwa is not available.
+        """
+        try:
+            from iwa.core.models import Config
+            iwa_cfg = Config()
+            # Register if not already done
+            if "micromech" not in iwa_cfg._plugin_models:
+                iwa_cfg.register_plugin_config("micromech", cls)
+            cfg = iwa_cfg.get_plugin_config("micromech")
+            if cfg is not None:
+                return cfg
+        except ImportError:
+            pass
+
+        # Fallback: standalone YAML (no iwa)
+        config_path = path or (DEFAULT_CONFIG_DIR / "micromech.yaml")
         if config_path.exists():
             data = yaml.safe_load(config_path.read_text()) or {}
             return cls.model_validate(data)
         return cls()
 
     def save(self, path: Optional[Path] = None) -> None:
-        """Save config to YAML file."""
-        config_path = path or DEFAULT_CONFIG_PATH
+        """Save config via iwa's plugin system.
+
+        Falls back to standalone YAML file if iwa is not available.
+        """
+        try:
+            from iwa.core.models import Config
+            iwa_cfg = Config()
+            iwa_cfg.plugins["micromech"] = self
+            iwa_cfg.save_config()
+            return
+        except ImportError:
+            pass
+
+        # Fallback: standalone YAML (no iwa)
+        config_path = path or (DEFAULT_CONFIG_DIR / "micromech.yaml")
         config_path.parent.mkdir(parents=True, exist_ok=True)
         data = self.model_dump(mode="json")
         config_path.write_text(

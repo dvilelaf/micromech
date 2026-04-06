@@ -9,7 +9,7 @@ from typing import Optional
 import typer
 from loguru import logger
 
-from micromech.core.config import DEFAULT_CONFIG_PATH, MicromechConfig
+from micromech.core.config import MicromechConfig
 from micromech.core.constants import CHAIN_DEFAULTS, MIN_NATIVE_WEI, MIN_OLAS_WHOLE
 
 app = typer.Typer(
@@ -40,10 +40,9 @@ NATIVE_SYMBOL = {
 }
 
 
-def _load_config(config_path: Optional[Path]) -> MicromechConfig:
-    """Load config, using default path if not specified."""
-    path = config_path or DEFAULT_CONFIG_PATH
-    return MicromechConfig.load(path)
+def _load_config(config_path: Optional[Path] = None) -> MicromechConfig:
+    """Load config via iwa plugin system (or fallback file)."""
+    return MicromechConfig.load(config_path)
 
 
 def _print_step(step: int, total: int, msg: str) -> None:
@@ -67,7 +66,7 @@ def init(
     skip_funding: bool = typer.Option(False, "--skip-funding-check"),
 ) -> None:
     """Setup wizard — wallet, chain, funding, deploy. Get running in 3 minutes."""
-    path = config_path or DEFAULT_CONFIG_PATH
+    # config loaded via iwa plugin
     total_steps = 5
 
     typer.echo("\nmicromech setup wizard")
@@ -205,12 +204,11 @@ def init(
     )
 
     # Check existing state
-    if path.exists():
-        config = MicromechConfig.load(path)
-        if selected_chain in config.chains:
-            chain_cfg = config.chains[selected_chain]
+    config = MicromechConfig.load()
+    if selected_chain in config.chains:
+        chain_cfg = config.chains[selected_chain]
     else:
-        config = MicromechConfig(chains={selected_chain: chain_cfg})
+        config.chains[selected_chain] = chain_cfg
 
     state = chain_cfg.detect_setup_state()
     if chain_cfg.setup_complete:
@@ -219,7 +217,7 @@ def init(
         typer.echo(f"    multisig: {chain_cfg.multisig_address}")
         typer.echo(f"    mech: {chain_cfg.mech_address}")
         typer.echo("\n  Start with: micromech run")
-        config.save(path)
+        config.save()
         return
 
     if state != "needs_create":
@@ -238,9 +236,9 @@ def init(
         # Update config with deployment results
         chain_cfg.apply_deploy_result(result)
         config.chains[selected_chain] = chain_cfg
-        config.save(path)
+        config.save()
 
-        typer.echo(f"\n  Config saved to {path}")
+        typer.echo("\n  Config saved.")
         typer.echo("\n  Your mech is ready! Start with:\n")
         typer.echo("    micromech run")
         typer.echo("\n  Dashboard: http://localhost:8090")
@@ -250,7 +248,7 @@ def init(
         typer.echo("  Fix the issue and re-run: micromech init (it will resume)")
         # Save partial state
         config.chains[selected_chain] = chain_cfg
-        config.save(path)
+        config.save()
         raise typer.Exit(1)
     except ImportError:
         typer.echo("  iwa not installed. Install with: pip install micromech[chain]")
@@ -800,17 +798,12 @@ def doctor(
 
     # 1. Config
     typer.echo("\nConfig:")
-    path = config_path or DEFAULT_CONFIG_PATH
-    if path.exists():
-        try:
-            cfg = MicromechConfig.load(path)
-            ok(f"Config loaded from {path}")
-            ok(f"Chains configured: {list(cfg.chains.keys())}")
-        except Exception as e:
-            fail(f"Config parse error: {e}")
-            raise typer.Exit(1)
-    else:
-        warn(f"No config at {path} (run 'micromech init' first)")
+    try:
+        cfg = MicromechConfig.load()
+        ok(f"Config loaded")
+        ok(f"Chains configured: {list(cfg.chains.keys())}")
+    except Exception as e:
+        fail(f"Config load error: {e}")
         cfg = MicromechConfig()
 
     # 2. Wallet

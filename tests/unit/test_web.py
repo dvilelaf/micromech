@@ -440,11 +440,9 @@ class TestSetupAPI:
         mock_wallet.address = "0x" + "11" * 20
         mock_module = MagicMock(Wallet=MagicMock(return_value=mock_wallet))
         with (
-            patch("micromech.web.app.DEFAULT_CONFIG_PATH") as mock_path,
             patch.dict("sys.modules", {"iwa.core.wallet": mock_module}),
             patch("micromech.core.bridge._cached_wallet", None),
         ):
-            mock_path.exists.return_value = False
             resp = web_client.get("/api/setup/state")
         assert resp.status_code == 200
         data = resp.json()

@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 
-from micromech.core.config import DEFAULT_CONFIG_PATH, MicromechConfig
+from micromech.core.config import MicromechConfig
 
 if TYPE_CHECKING:
     from micromech.core.persistence import PersistentQueue
@@ -156,10 +156,7 @@ def _needs_setup() -> bool:
     if _setup_needed is not None:
         return _setup_needed
     try:
-        if not DEFAULT_CONFIG_PATH.exists():
-            _setup_needed = True
-            return True
-        cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
+        cfg = MicromechConfig.load()
         for chain_cfg in cfg.chains.values():
             if chain_cfg.setup_complete:
                 _setup_needed = False
@@ -314,23 +311,21 @@ def create_web_app(
         except Exception:
             pass
 
-        config_exists = DEFAULT_CONFIG_PATH.exists()
         chains_deployed: dict[str, dict] = {}
 
-        if config_exists:
-            try:
-                cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
-                for name, chain_cfg in cfg.chains.items():
-                    chains_deployed[name] = {
-                        "state": chain_cfg.detect_setup_state(),
-                        "complete": chain_cfg.setup_complete,
-                        "service_id": chain_cfg.service_id,
-                        "service_key": chain_cfg.service_key,
-                        "mech_address": chain_cfg.mech_address,
-                        "multisig_address": chain_cfg.multisig_address,
-                    }
-            except Exception:
-                pass
+        try:
+            cfg = MicromechConfig.load()
+            for name, chain_cfg in cfg.chains.items():
+                chains_deployed[name] = {
+                    "state": chain_cfg.detect_setup_state(),
+                    "complete": chain_cfg.setup_complete,
+                    "service_id": chain_cfg.service_id,
+                    "service_key": chain_cfg.service_key,
+                    "mech_address": chain_cfg.mech_address,
+                    "multisig_address": chain_cfg.multisig_address,
+                }
+        except Exception:
+            pass
 
         any_complete = any(c["complete"] for c in chains_deployed.values())
         if not wallet_exists:
@@ -347,7 +342,7 @@ def create_web_app(
             "wallet_address": wallet_address,
             "needs_password": needs_password,
             "wallet_file_exists": wallet_file_exists,
-            "config_exists": config_exists,
+            "config_exists": bool(chains_deployed),
             "chains": chains_deployed,
             "step": step,
         }
@@ -504,10 +499,7 @@ def create_web_app(
             # Lock for config read/write to prevent parallel deploys
             # from overwriting each other's results
             with _config_lock:
-                if DEFAULT_CONFIG_PATH.exists():
-                    cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
-                else:
-                    cfg = MicromechConfig()
+                cfg = MicromechConfig.load()
                 defaults = CHAIN_DEFAULTS.get(chain_name, {})
                 if chain_name not in cfg.chains:
                     cfg.chains[chain_name] = ChainConfig(
@@ -516,7 +508,7 @@ def create_web_app(
                         factory_address=defaults.get("factory", ""),
                         staking_address=defaults.get("staking", ""),
                     )
-                cfg.save(DEFAULT_CONFIG_PATH)
+                cfg.save()
 
             def on_progress(step, total, msg, success=True):
                 progress_q.put({
@@ -529,9 +521,9 @@ def create_web_app(
 
             # Save results with lock (re-read to merge with other deploys)
             with _config_lock:
-                fresh_cfg = MicromechConfig.load(DEFAULT_CONFIG_PATH)
+                fresh_cfg = MicromechConfig.load()
                 fresh_cfg.chains[chain_name].apply_deploy_result(result)
-                fresh_cfg.save(DEFAULT_CONFIG_PATH)
+                fresh_cfg.save()
 
             return result
 

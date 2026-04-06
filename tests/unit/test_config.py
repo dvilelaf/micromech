@@ -168,23 +168,29 @@ class TestMicromechConfig:
         assert isinstance(cfg.llm, LLMConfig)
         assert len(cfg.tools) >= 1
 
-    def test_save_and_load(self, tmp_path: Path):
+    def test_save_and_load_fallback(self, tmp_path: Path):
+        """Save/load via fallback path (no iwa)."""
+        from unittest.mock import patch
+
+        config_path = tmp_path / "micromech.yaml"
         cfg = MicromechConfig(
             runtime=RuntimeConfig(port=9999),
             chains={"base": _chain_cfg(chain="base")},
         )
-        config_path = tmp_path / "config.yaml"
-        cfg.save(config_path)
 
-        assert config_path.exists()
+        # Force fallback (mock iwa import failure)
+        with patch.dict("sys.modules", {"iwa.core.models": None}):
+            cfg.save(config_path)
+            assert config_path.exists()
+            loaded = MicromechConfig.load(config_path)
 
-        loaded = MicromechConfig.load(config_path)
         assert loaded.runtime.port == 9999
         assert "base" in loaded.chains
         assert loaded.chains["base"].chain == "base"
 
-    def test_load_nonexistent_returns_defaults(self, tmp_path: Path):
-        cfg = MicromechConfig.load(tmp_path / "nonexistent.yaml")
+    def test_load_defaults(self):
+        """Load returns defaults when no config exists."""
+        cfg = MicromechConfig.load()
         assert cfg.runtime.port == 8090
 
     def test_from_dict(self):
