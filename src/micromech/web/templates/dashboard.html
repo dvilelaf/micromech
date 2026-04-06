@@ -267,7 +267,6 @@
             <button class="tab-btn active" data-tab="overview">Overview</button>
             <button class="tab-btn" data-tab="activity">Live Activity</button>
             <button class="tab-btn" data-tab="tools">Tools</button>
-            <button class="tab-btn" data-tab="charts">Charts</button>
             <button class="tab-btn" data-tab="management">Management</button>
             <button class="tab-btn" data-tab="logs">Logs</button>
         </nav>
@@ -321,6 +320,39 @@
                     </div>
                 </div>
 
+                <div class="charts-grid">
+                    <div class="glass chart-card">
+                        <h3>Daily Requests (30 days)</h3>
+                        <canvas id="dailyChart"></canvas>
+                    </div>
+                    <div class="glass chart-card">
+                        <h3>Monthly Requests</h3>
+                        <canvas id="monthlyChart"></canvas>
+                    </div>
+                </div>
+                <div class="charts-grid" style="margin-top:1.5rem;">
+                    <div class="glass chart-card" style="max-width:350px;">
+                        <h3>Requests by Tool</h3>
+                        <canvas id="toolChart"></canvas>
+                    </div>
+                    <div class="glass chart-card">
+                        <h3>Tool Performance</h3>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Tool</th>
+                                    <th class="val">Total</th>
+                                    <th class="val">Delivered</th>
+                                    <th class="val">Failed</th>
+                                    <th class="val">Avg Time</th>
+                                    <th class="val">Success %</th>
+                                </tr>
+                            </thead>
+                            <tbody id="overview-tool-stats"></tbody>
+                        </table>
+                    </div>
+                </div>
+
             </section>
 
             <!-- Activity Tab -->
@@ -348,6 +380,36 @@
                         </table>
                     </div>
                 </div>
+
+                <!-- History -->
+                <div class="glass" style="margin-top:1.5rem;">
+                    <div class="section-header" style="margin-bottom:1rem;">
+                        <h3>History</h3>
+                    </div>
+                    <div style="margin-bottom:1rem;">
+                        <input type="text" id="history-search" placeholder="Search by prompt, tool, or request ID..." style="width:100%;max-width:400px;" oninput="filterHistory()">
+                    </div>
+                    <div style="overflow-x:auto;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Chain</th>
+                                    <th>Tool</th>
+                                    <th>Prompt</th>
+                                    <th>Status</th>
+                                    <th>Request ID</th>
+                                    <th class="val">Time</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-requests"></tbody>
+                        </table>
+                    </div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:1rem;">
+                        <button class="btn btn-sm btn-secondary" id="history-prev" onclick="historyPrevPage()" disabled>Previous</button>
+                        <span style="font-size:0.8rem;color:var(--text-muted);" id="history-page-info">Page 1 of 1</span>
+                        <button class="btn btn-sm btn-secondary" id="history-next" onclick="historyNextPage()" disabled>Next</button>
+                    </div>
+                </div>
             </section>
 
             <!-- Tools Tab -->
@@ -372,32 +434,6 @@
                         </thead>
                         <tbody id="tool-stats"></tbody>
                     </table>
-                </div>
-            </section>
-
-            <!-- Charts Tab -->
-            <section id="tab-charts" class="tab-pane">
-                <div class="section-header" style="margin-bottom:1rem;">
-                    <h3>Charts</h3>
-                    <select class="inline-chain-filter" id="filter-charts" onchange="onSectionChainChange('charts')">
-                        <option value="">All chains</option>
-                    </select>
-                </div>
-                <div class="charts-grid">
-                    <div class="glass chart-card">
-                        <h3>Daily Requests (30 days)</h3>
-                        <canvas id="dailyChart"></canvas>
-                    </div>
-                    <div class="glass chart-card">
-                        <h3>Monthly Requests</h3>
-                        <canvas id="monthlyChart"></canvas>
-                    </div>
-                </div>
-                <div style="margin-top:1.5rem; max-width:350px;">
-                    <div class="glass chart-card">
-                        <h3>Requests by Tool</h3>
-                        <canvas id="toolChart"></canvas>
-                    </div>
                 </div>
             </section>
 
@@ -467,7 +503,11 @@
         sseConnected: false,
         chains: [],
         selectedChain: '',  // '' = all chains (kept for API helpers)
-        sectionChains: { activity: '', tools: '', charts: '' },
+        sectionChains: { activity: '', tools: '' },
+        historyData: [],
+        historyFiltered: [],
+        historyPage: 0,
+        historyPageSize: 20,
         logLines: [],
         logInitialized: false,
     };
@@ -486,8 +526,9 @@
         const pane = document.getElementById('tab-' + tabName);
         if (pane) pane.classList.add('active');
         location.hash = tabName;
+        if (tabName === 'overview') { loadCharts(); loadOverviewToolStats(); }
         if (tabName === 'tools') loadToolStats();
-        if (tabName === 'charts') loadCharts();
+        if (tabName === 'activity') loadHistory();
         if (tabName === 'management') loadManagementTab();
     }
     document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -683,7 +724,7 @@
     // --- Historical Charts ---
     function loadCharts() {
         // Daily
-        fetch('/api/metrics/daily?days=30' + chainQueryAmp('charts')).then(r => r.json()).then(data => {
+        fetch('/api/metrics/daily?days=30').then(r => r.json()).then(data => {
             if (state.dailyChart) state.dailyChart.destroy();
             const ctx = document.getElementById('dailyChart').getContext('2d');
             state.dailyChart = new Chart(ctx, {
@@ -718,7 +759,7 @@
         });
 
         // Monthly
-        fetch('/api/metrics/monthly?months=12' + chainQueryAmp('charts')).then(r => r.json()).then(data => {
+        fetch('/api/metrics/monthly?months=12').then(r => r.json()).then(data => {
             if (state.monthlyChart) state.monthlyChart.destroy();
             const ctx = document.getElementById('monthlyChart').getContext('2d');
             state.monthlyChart = new Chart(ctx, {
@@ -745,7 +786,7 @@
         });
 
         // Tool breakdown
-        fetch('/api/metrics/tools' + chainQueryPrefix('charts')).then(r => r.json()).then(tools => {
+        fetch('/api/metrics/tools').then(r => r.json()).then(tools => {
             if (state.toolChart) state.toolChart.destroy();
             const ctx = document.getElementById('toolChart').getContext('2d');
             state.toolChart = new Chart(ctx, {
@@ -1179,7 +1220,7 @@
         const chains = await fetch('/api/chains').then(r => r.json());
         state.chains = chains;
         // Populate all inline chain filter dropdowns
-        ['filter-activity', 'filter-tools', 'filter-charts'].forEach(id => {
+        ['filter-activity', 'filter-tools'].forEach(id => {
             const sel = document.getElementById(id);
             if (!sel) return;
             chains.forEach(c => sel.add(new Option(c, c)));
@@ -1193,8 +1234,6 @@
             loadActivityRequests();
         } else if (section === 'tools') {
             loadToolStats();
-        } else if (section === 'charts') {
-            loadCharts();
         }
     }
 
@@ -1329,11 +1368,105 @@
         connectLogStream();  // Always keep log stream connected
     };
 
+    // --- History (paginated, client-side) ---
+    function loadHistory() {
+        fetch('/api/requests?limit=100').then(r => r.json()).then(rows => {
+            state.historyData = rows;
+            state.historyPage = 0;
+            filterHistory();
+        });
+    }
+
+    function filterHistory() {
+        const q = (document.getElementById('history-search').value || '').toLowerCase().trim();
+        if (q) {
+            state.historyFiltered = state.historyData.filter(r =>
+                (r.prompt || '').toLowerCase().includes(q) ||
+                (r.tool || '').toLowerCase().includes(q) ||
+                (r.request_id || '').toLowerCase().includes(q)
+            );
+        } else {
+            state.historyFiltered = state.historyData.slice();
+        }
+        state.historyPage = 0;
+        renderHistoryPage();
+    }
+
+    function renderHistoryPage() {
+        const data = state.historyFiltered;
+        const pageSize = state.historyPageSize;
+        const totalPages = Math.max(1, Math.ceil(data.length / pageSize));
+        const page = Math.min(state.historyPage, totalPages - 1);
+        state.historyPage = page;
+        const start = page * pageSize;
+        const slice = data.slice(start, start + pageSize);
+
+        const tbody = document.getElementById('history-requests');
+        if (!slice.length) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No matching requests</td></tr>';
+        } else {
+            tbody.innerHTML = slice.map(r => {
+                const ipfsLink = `https://gateway.autonolas.tech/ipfs/f01701220${r.request_id}`;
+                const shortId = r.request_id.substring(0, 12) + '...';
+                const promptText = r.prompt ? r.prompt.substring(0, 60) : '';
+                return `
+                    <tr>
+                        <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
+                        <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
+                        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.prompt || '')}">${escapeHtml(promptText)}</td>
+                        <td><span class="badge badge-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
+                        <td style="font-family:var(--font-mono);font-size:0.75rem"><a href="${escapeHtml(ipfsLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(r.request_id)}">${escapeHtml(shortId)}</a></td>
+                        <td class="val">${r.created_at ? relativeTime(r.created_at) : '-'}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        document.getElementById('history-page-info').textContent = `Page ${page + 1} of ${totalPages}`;
+        document.getElementById('history-prev').disabled = page === 0;
+        document.getElementById('history-next').disabled = page >= totalPages - 1;
+    }
+
+    function historyPrevPage() {
+        if (state.historyPage > 0) { state.historyPage--; renderHistoryPage(); }
+    }
+    function historyNextPage() {
+        const totalPages = Math.ceil(state.historyFiltered.length / state.historyPageSize);
+        if (state.historyPage < totalPages - 1) { state.historyPage++; renderHistoryPage(); }
+    }
+
+    // --- Overview Tool Stats table ---
+    function loadOverviewToolStats() {
+        fetch('/api/metrics/tools').then(r => r.json()).then(tools => {
+            const tbody = document.getElementById('overview-tool-stats');
+            if (!tools.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No data yet</td></tr>';
+                return;
+            }
+            tbody.innerHTML = tools.map(t => {
+                const total = t.delivered + t.failed;
+                const rate = total > 0 ? ((t.delivered / total) * 100).toFixed(1) : '-';
+                return `
+                    <tr>
+                        <td><span class="tool-tag">${escapeHtml(t.tool)}</span></td>
+                        <td class="val">${t.total}</td>
+                        <td class="val" style="color:var(--success)">${t.delivered}</td>
+                        <td class="val" style="color:var(--error)">${t.failed}</td>
+                        <td class="val">${t.avg_time.toFixed(2)}s</td>
+                        <td class="val">${rate}%</td>
+                    </tr>
+                `;
+            }).join('');
+        });
+    }
+
     // --- Init ---
     loadChains();
     initQueueChart();
     initChannelChart();
     loadActivityRequests();
+    loadCharts();
+    loadOverviewToolStats();
     loadKarma();
     connectSSE();
     connectLogStream();
