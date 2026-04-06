@@ -581,7 +581,7 @@
         const promptText = r.prompt ? r.prompt.substring(0, 60) : '';
         return `
             <tr>
-                <td style="font-family:var(--font-mono);font-size:0.72rem"><a href="${escapeHtml(reqLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(rid)}">${escapeHtml(shortReqId)}</a></td>
+                <td style="font-family:var(--font-mono);font-size:0.72rem;cursor:pointer" title="${escapeHtml(rid)}" onclick="navigator.clipboard.writeText('${escapeHtml(rid)}')">${escapeHtml(shortReqId)}</td>
                 <td style="font-family:var(--font-mono);font-size:0.72rem">${txHash ? `<a href="${escapeHtml(txLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(txHash)}">${escapeHtml(shortTx)}</a>` : '<span style="color:var(--text-muted)">-</span>'}</td>
                 <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
                 <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
