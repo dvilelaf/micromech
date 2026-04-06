@@ -13,6 +13,7 @@ import random
 import sys
 import threading
 import time
+import uuid
 import warnings
 from typing import Any
 
@@ -205,6 +206,37 @@ def build_table(rows: list[RequestRow], title: str) -> Table:
 
 # ── Result poller (background) ───────────────────────────────────────
 
+def _parse_delivery_data(delivery_data: bytes) -> str:
+    """Parse on-chain delivery data: IPFS multihash or raw JSON."""
+    from micromech.ipfs.client import is_ipfs_multihash, multihash_to_cid
+
+    if is_ipfs_multihash(delivery_data):
+        cid = multihash_to_cid(delivery_data)
+        # Try to fetch the actual result from IPFS gateway
+        try:
+            import requests as req_lib
+
+            resp = req_lib.get(
+                f"https://gateway.autonolas.tech/ipfs/{cid}",
+                timeout=10,
+            )
+            resp.raise_for_status()
+            result_data = resp.json()
+            formatted = format_response(result_data)
+            if formatted:
+                return formatted
+        except Exception:
+            pass
+        return f"[dim]IPFS: {cid[:20]}...[/dim]"
+
+    # Fallback: try raw JSON
+    try:
+        result_data = json.loads(delivery_data)
+        return format_response(result_data)
+    except Exception:
+        return f"Delivered ({len(delivery_data)} bytes)"
+
+
 def poll_results(
     rows: list[RequestRow],
     anvil_w3s: dict[str, Web3],
@@ -255,13 +287,8 @@ def poll_results(
                         rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
                         row = pending_ids.get(rid_hex.lower())
                         if row:
-                            # Try to parse delivery data as JSON
                             delivery_data = log["args"].get("deliveryData", b"")
-                            try:
-                                result_data = json.loads(delivery_data)
-                                row.response = format_response(result_data)
-                            except Exception:
-                                row.response = f"Delivered ({len(delivery_data)} bytes)"
+                            row.response = _parse_delivery_data(delivery_data)
                             row.status = "done"
                             row.elapsed = time.time() - row.t0
                 except Exception:
@@ -272,6 +299,47 @@ def poll_results(
             import sys
             print(f"[poller] Error: {e}", file=sys.stderr)
             stop_event.wait(5)
+
+
+# ── IPFS helpers ────────────────────────────────────────────────────
+
+def _push_request_to_ipfs(prompt: str, tool: str) -> bytes:
+    """Push mech request metadata to IPFS and return multihash bytes.
+
+    Follows the same flow as iwa's push_metadata_to_ipfs:
+    1. Build Valory v2 metadata dict with nonce
+    2. Serialize as pretty-printed JSON (indent=4, ensure_ascii=False)
+    3. Push to IPFS via registry.autonolas.tech
+    4. Return multihash bytes (34 bytes: 0x12 0x20 + sha256 digest)
+    """
+    from micromech.ipfs.client import cid_hex_to_multihash_bytes, compute_cid_hex
+
+    metadata = {
+        "prompt": prompt,
+        "tool": tool,
+        "nonce": str(uuid.uuid4()),
+        "schema_version": "2.0",
+    }
+
+    # Match Valory agent serialization format exactly
+    json_bytes = json.dumps(metadata, ensure_ascii=False, indent=4).encode("utf-8")
+
+    # Push to IPFS (best-effort; if it fails, compute CID locally)
+    try:
+        import requests as req_lib
+
+        resp = req_lib.post(
+            "https://registry.autonolas.tech/api/v0/add",
+            files={"file": ("data", json_bytes, "application/octet-stream")},
+            params={"pin": "true", "cid-version": "1"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+    except Exception:
+        pass  # CID is content-addressed; local computation is sufficient
+
+    cid_hex = compute_cid_hex(json_bytes)
+    return cid_hex_to_multihash_bytes(cid_hex)
 
 
 # ── Main ─────────────────────────────────────────────────────────────
@@ -364,7 +432,7 @@ def main():
 
                 # Send on-chain request
                 try:
-                    request_data = json.dumps({"prompt": prompt, "tool": tool}).encode()
+                    request_data = _push_request_to_ipfs(prompt, tool)
                     fee = mp.functions.fee().call()
                     value = cc.delivery_rate + fee
 

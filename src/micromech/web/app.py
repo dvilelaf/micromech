@@ -1073,4 +1073,5 @@ def _record_to_dict(record: Any) -> dict:
         result["error"] = record.result.error
     if record.response:
         result["tx_hash"] = record.response.delivery_tx_hash
+        result["ipfs_hash"] = record.response.ipfs_hash
     return result

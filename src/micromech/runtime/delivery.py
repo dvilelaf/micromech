@@ -137,11 +137,12 @@ class DeliveryManager:
         delivered = 0
         for record in records:
             try:
-                tx_hash = await self._deliver_one(record)
+                tx_hash, ipfs_hash = await self._deliver_one(record)
                 if tx_hash:
                     self.queue.mark_delivered(
                         record.request.request_id,
                         tx_hash=tx_hash,
+                        ipfs_hash=ipfs_hash,
                     )
                     delivered += 1
                     self._delivered_count += 1
@@ -171,16 +172,23 @@ class DeliveryManager:
 
         return delivered
 
-    async def _deliver_one(self, record: RequestRecord) -> Optional[str]:
-        """Deliver a single response. Returns tx hash or None.
+    async def _deliver_one(
+        self, record: RequestRecord,
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Deliver a single response.
 
-        Pushes the result to IPFS first (if enabled), then delivers on-chain:
-        - On-chain requests: deliverToMarketplace(requestIds[], datas[])
-        - Off-chain (HTTP) requests: deliverMarketplaceWithSignatures(...)
+        Returns (tx_hash, ipfs_cid_hex) or (None, None).
+
+        Pushes the result to IPFS first (if enabled), then
+        delivers on-chain:
+        - On-chain: deliverToMarketplace(requestIds[], datas[])
+        - Off-chain: deliverMarketplaceWithSignatures(...)
         """
         if record.result is None:
-            logger.error("No result for {}", record.request.request_id)
-            return None
+            logger.error(
+                "No result for {}", record.request.request_id,
+            )
+            return None, None
 
         request_id = record.request.request_id
 
@@ -195,26 +203,45 @@ class DeliveryManager:
             separators=(",", ":"),
         ).encode("utf-8")
 
-        # Push to IPFS and get multihash bytes for on-chain delivery
+        # Push to IPFS and get multihash bytes for delivery
+        ipfs_cid_hex: Optional[str] = None
         if self.config.ipfs.enabled:
             try:
-                from micromech.ipfs.client import cid_hex_to_multihash_bytes, push_to_ipfs
+                from micromech.ipfs.client import (
+                    cid_hex_to_multihash_bytes,
+                    push_to_ipfs,
+                )
 
-                _, cid_hex = await push_to_ipfs(response_payload, api_url=self.config.ipfs.api_url)
-                delivery_data = cid_hex_to_multihash_bytes(cid_hex)
+                _, cid_hex = await push_to_ipfs(
+                    response_payload,
+                    api_url=self.config.ipfs.api_url,
+                )
+                delivery_data = cid_hex_to_multihash_bytes(
+                    cid_hex,
+                )
+                ipfs_cid_hex = cid_hex
             except Exception as e:
                 if not self._ipfs_warning_logged:
-                    logger.warning("IPFS unavailable, delivering raw data: {}", e)
+                    logger.warning(
+                        "IPFS unavailable, delivering raw: {}",
+                        e,
+                    )
                     self._ipfs_warning_logged = True
                 delivery_data = response_payload
         else:
             delivery_data = response_payload
 
         if record.request.is_offchain:
-            tx_hash = await asyncio.to_thread(self._submit_offchain_delivery, record, delivery_data)
+            tx_hash = await asyncio.to_thread(
+                self._submit_offchain_delivery,
+                record, delivery_data,
+            )
         else:
-            tx_hash = await asyncio.to_thread(self._submit_delivery, request_id, delivery_data)
-        return tx_hash
+            tx_hash = await asyncio.to_thread(
+                self._submit_delivery,
+                request_id, delivery_data,
+            )
+        return tx_hash, ipfs_cid_hex
 
     def _submit_delivery(self, request_id: str, data: bytes) -> str:
         """Submit deliverToMarketplace transaction on-chain (sync, runs in thread).
