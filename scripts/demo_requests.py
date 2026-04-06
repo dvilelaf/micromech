@@ -317,7 +317,10 @@ def poll_results(
                         request_ids = log["args"]["requestIds"]
                         tx_hash = log["transactionHash"]
 
-                        # Get TX receipt and decode Deliver events for deliveryData
+                        # Get TX receipt and decode Deliver events for deliveryData.
+                        # The marketplace contract emits the Deliver event (with
+                        # deliveryData) — use the same contract instance (mp) to
+                        # decode it from the receipt.
                         delivery_map: dict[str, bytes] = {}
                         try:
                             from web3._utils.events import EventLogErrorFlags

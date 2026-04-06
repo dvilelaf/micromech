@@ -551,15 +551,25 @@
         });
     }
 
-    function ipfsLink(hexId) {
-        // Build IPFS gateway URL from hex ID.
-        // Request IDs are multihash hex (1220<sha256>) — prepend CIDv1 prefix.
-        // Full CID hex (f01551220...) is used as-is.
-        const clean = hexId.startsWith('0x') ? hexId.slice(2) : hexId;
-        if (clean.startsWith('f0155')) {
+    function ipfsResponseLink(hexHash) {
+        // Build IPFS gateway URL from a response CID hex.
+        // The DB stores the full CIDv1 hex (e.g. f01551220<sha256>).
+        // If already a full CID hex (starts with 'f01'), use as-is.
+        // For raw multihash (1220<sha256>), prepend CIDv1 raw codec prefix.
+        const clean = hexHash.startsWith('0x') ? hexHash.slice(2) : hexHash;
+        if (clean.startsWith('f01')) {
             return `https://gateway.autonolas.tech/ipfs/${clean}`;
         }
+        if (clean.startsWith('1220')) {
+            return `https://gateway.autonolas.tech/ipfs/f0155${clean}`;
+        }
         return `https://gateway.autonolas.tech/ipfs/f01551220${clean}`;
+    }
+
+    function copyToClipboard(text) {
+        navigator.clipboard.writeText(text).then(() => {
+            // Brief visual feedback — no alert
+        }).catch(() => {});
     }
 
     // Block explorer URLs per chain
@@ -580,17 +590,21 @@
     function renderRequestRow(r) {
         const rid = r.request_id || '';
         const shortReqId = rid.substring(0, 14) + '...';
-        const reqLink = ipfsLink(rid);
         const txHash = r.tx_hash || '';
         const shortTx = txHash ? txHash.substring(0, 14) + '...' : '';
         const txLink = txHash ? explorerTxLink(r.chain, txHash) : '';
         const promptText = r.prompt ? r.prompt.substring(0, 60) : '';
         const respIpfs = r.ipfs_hash || '';
         const shortResp = respIpfs ? respIpfs.substring(0, 14) + '...' : '';
-        const respLink = respIpfs ? ipfsLink(respIpfs) : '';
+        const respLink = respIpfs ? ipfsResponseLink(respIpfs) : '';
+        // Request ID is a contract-computed hash, not an IPFS CID.
+        // Show as copy-to-clipboard instead of a broken IPFS link.
+        const ridCell = rid
+            ? `<span style="cursor:pointer;color:var(--accent-color);text-decoration:none" title="Click to copy: ${escapeHtml(rid)}" onclick="copyToClipboard('${escapeHtml(rid)}')">${escapeHtml(shortReqId)}</span>`
+            : '<span style="color:var(--text-muted)">-</span>';
         return `
             <tr>
-                <td style="font-family:var(--font-mono);font-size:0.72rem"><a href="${escapeHtml(ipfsLink(rid))}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(rid)}">${escapeHtml(shortReqId)}</a></td>
+                <td style="font-family:var(--font-mono);font-size:0.72rem">${ridCell}</td>
                 <td style="font-family:var(--font-mono);font-size:0.72rem">${txHash ? `<a href="${escapeHtml(txLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(txHash)}">${escapeHtml(shortTx)}</a>` : '<span style="color:var(--text-muted)">-</span>'}</td>
                 <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
                 <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
