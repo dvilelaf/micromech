@@ -216,10 +216,9 @@ def _parse_delivery_data(delivery_data: bytes) -> str:
         try:
             import requests as req_lib
 
-            resp = req_lib.get(
-                f"https://gateway.autonolas.tech/ipfs/{cid}",
-                timeout=10,
-            )
+            from micromech.core.config import MicromechConfig
+            gw = MicromechConfig.load().ipfs.gateway
+            resp = req_lib.get(f"{gw}{cid}", timeout=10)
             resp.raise_for_status()
             result_data = resp.json()
             formatted = format_response(result_data)
@@ -316,11 +315,37 @@ def poll_results(
                     for log in logs:
                         # MarketplaceDelivery has requestIds (bytes32[])
                         request_ids = log["args"]["requestIds"]
+                        tx_hash = log["transactionHash"]
+
+                        # Get TX receipt and decode Deliver events for deliveryData
+                        delivery_map: dict[str, bytes] = {}
+                        try:
+                            from web3._utils.events import EventLogErrorFlags
+
+                            receipt = w3.eth.get_transaction_receipt(tx_hash)
+                            deliver_logs = mp.events.Deliver().process_receipt(
+                                receipt, errors=EventLogErrorFlags.Discard,
+                            )
+                            for dl in deliver_logs:
+                                rid_d = dl["args"]["requestId"]
+                                rid_hex_d = rid_d.hex() if isinstance(rid_d, bytes) else str(rid_d)
+                                delivery_map[rid_hex_d.lower()] = dl["args"]["deliveryData"]
+                        except Exception:
+                            pass
+
                         for rid in request_ids:
                             rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
                             row = pending_ids.get(rid_hex.lower())
                             if row:
-                                row.response = "[green]delivered[/green]"
+                                # Try to parse actual response from deliveryData
+                                dd = delivery_map.get(rid_hex.lower())
+                                if dd:
+                                    try:
+                                        row.response = _parse_delivery_data(dd)
+                                    except Exception:
+                                        row.response = "[green]delivered[/green]"
+                                else:
+                                    row.response = "[green]delivered[/green]"
                                 row.status = "done"
                                 row.elapsed = time.time() - row.t0
                 except Exception:
