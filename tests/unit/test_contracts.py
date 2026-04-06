@@ -21,11 +21,12 @@ class TestABIConstants:
 
     def test_marketplace_request_abi_is_list(self):
         assert isinstance(MARKETPLACE_REQUEST_ABI, list)
-        assert len(MARKETPLACE_REQUEST_ABI) == 3
+        assert len(MARKETPLACE_REQUEST_ABI) == 4
         names = {entry.get("name") for entry in MARKETPLACE_REQUEST_ABI}
         assert "request" in names
         assert "MarketplaceRequest" in names
         assert "Deliver" in names
+        assert "MarketplaceDelivery" in names
 
     def test_metadata_abi_has_change_hash(self):
         assert isinstance(COMPLEMENTARY_SERVICE_METADATA_ABI, list)

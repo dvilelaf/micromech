@@ -237,13 +237,44 @@ def _parse_delivery_data(delivery_data: bytes) -> str:
         return f"Delivered ({len(delivery_data)} bytes)"
 
 
+def _fetch_result_from_api(request_id: str) -> str:
+    """Fetch the response for a request from the micromech HTTP API."""
+    try:
+        import requests as req_lib
+
+        resp = req_lib.get(
+            f"http://localhost:8090/api/requests/{request_id}",
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            result_str = data.get("result")
+            if result_str:
+                try:
+                    result_data = json.loads(result_str) if isinstance(result_str, str) else result_str
+                    formatted = format_response(result_data)
+                    if formatted:
+                        return formatted
+                except Exception:
+                    pass
+                return str(result_str)[:120]
+    except Exception:
+        pass
+    return "[dim]delivered[/dim]"
+
+
 def poll_results(
     rows: list[RequestRow],
     anvil_w3s: dict[str, Web3],
     marketplaces: dict[str, Any],
     stop_event: threading.Event,
 ):
-    """Background thread: poll on-chain Deliver events for completed requests."""
+    """Background thread: poll on-chain MarketplaceDelivery events for completed requests.
+
+    NOTE: The marketplace contract emits MarketplaceDelivery (not Deliver)
+    when deliverToMarketplace is called. The Deliver event in the ABI has a
+    different signature and is never emitted by the marketplace address.
+    """
     # Track last polled block per chain
     last_block: dict[str, int] = {}
     for chain_name, w3 in anvil_w3s.items():
@@ -265,7 +296,7 @@ def poll_results(
                 hex_str = row.request_id[2:] if row.request_id.startswith("0x") else row.request_id
                 pending_ids[hex_str.lower()] = row
 
-            # Poll each chain for Deliver events
+            # Poll each chain for MarketplaceDelivery events
             for chain_name, mp in marketplaces.items():
                 w3 = anvil_w3s.get(chain_name)
                 if not w3:
@@ -276,21 +307,22 @@ def poll_results(
                     if current <= from_block:
                         continue
 
-                    logs = mp.events.Deliver.get_logs(
+                    logs = mp.events.MarketplaceDelivery.get_logs(
                         from_block=from_block + 1,
                         to_block=current,
                     )
                     last_block[chain_name] = current
 
                     for log in logs:
-                        rid = log["args"]["requestId"]
-                        rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
-                        row = pending_ids.get(rid_hex.lower())
-                        if row:
-                            delivery_data = log["args"].get("deliveryData", b"")
-                            row.response = _parse_delivery_data(delivery_data)
-                            row.status = "done"
-                            row.elapsed = time.time() - row.t0
+                        # MarketplaceDelivery has requestIds (bytes32[])
+                        request_ids = log["args"]["requestIds"]
+                        for rid in request_ids:
+                            rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
+                            row = pending_ids.get(rid_hex.lower())
+                            if row:
+                                row.response = "[green]delivered[/green]"
+                                row.status = "done"
+                                row.elapsed = time.time() - row.t0
                 except Exception:
                     pass
 

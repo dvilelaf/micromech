@@ -95,6 +95,18 @@ MARKETPLACE_REQUEST_ABI = [
         "name": "Deliver",
         "type": "event",
     },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "deliveryMech", "type": "address"},
+            {"indexed": False, "name": "requesters", "type": "address[]"},
+            {"indexed": False, "name": "numDeliveries", "type": "uint256"},
+            {"indexed": False, "name": "requestIds", "type": "bytes32[]"},
+            {"indexed": False, "name": "deliveredRequests", "type": "bool[]"},
+        ],
+        "name": "MarketplaceDelivery",
+        "type": "event",
+    },
 ]
 
 
