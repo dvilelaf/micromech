@@ -229,8 +229,10 @@ web-anvil port="8090":
         exit 1
     fi
     echo "Detected forks:$ENV_VARS"
-    echo "Open http://localhost:{{port}}/setup"
-    env $ENV_VARS testing=true CHAINLIST_ENRICHMENT=false uv run micromech web --port {{port}}
+    TOKEN="dev-$(date +%s)"
+    # Open browser after a short delay
+    (sleep 2 && xdg-open "http://localhost:{{port}}?token=$TOKEN" 2>/dev/null || open "http://localhost:{{port}}?token=$TOKEN" 2>/dev/null) &
+    env $ENV_VARS testing=true CHAINLIST_ENRICHMENT=false MICROMECH_AUTH_TOKEN="$TOKEN" uv run micromech web --port {{port}}
 
 # Run CLI init wizard against Anvil fork
 init-anvil chain="gnosis":
