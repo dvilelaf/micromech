@@ -475,6 +475,7 @@
         monthlyChart: null,
         toolChart: null,
         sseConnected: false,
+        sseRetryMs: 3000,
         chains: [],
         selectedChain: '',  // '' = all chains (kept for API helpers)
         sectionChains: { activity: '' },
@@ -523,6 +524,7 @@
         state.metricsES = es;
         es.onopen = () => {
             state.sseConnected = true;
+            state.sseRetryMs = 3000;  // reset backoff on success
         };
         es.onmessage = (e) => {
             const data = JSON.parse(e.data);
@@ -541,7 +543,8 @@
             es.close();
             state.metricsES = null;
             updateRuntimeIndicator('disconnected');
-            setTimeout(connectSSE, 3000);
+            setTimeout(connectSSE, state.sseRetryMs);
+            state.sseRetryMs = Math.min(state.sseRetryMs * 2, 30000);
         };
     }
 
