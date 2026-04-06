@@ -1330,7 +1330,7 @@
     const origSwitchTab = switchTab;
     switchTab = function(tabName) {
         origSwitchTab(tabName);
-        if (tabName === 'logs') connectLogStream();
+        connectLogStream();  // Always keep log stream connected
     };
 
     // --- Init ---
@@ -1340,6 +1340,7 @@
     loadRecentRequests();
     loadKarma();
     connectSSE();
+    connectLogStream();
 
     // Refresh recent requests every 30s, karma every 60s
     setInterval(loadRecentRequests, 30000);
