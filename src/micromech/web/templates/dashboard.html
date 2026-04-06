@@ -358,52 +358,31 @@
             <section id="tab-activity" class="tab-pane">
                 <div class="glass">
                     <div class="section-header">
-                        <h3>Live Activity</h3>
-                        <select class="inline-chain-filter" id="filter-activity" onchange="onSectionChainChange('activity')">
-                            <option value="">All chains</option>
-                        </select>
+                        <h3>Requests</h3>
+                        <div style="display:flex;gap:0.75rem;align-items:center;">
+                            <input type="text" id="history-search" placeholder="Search..." style="width:200px;padding:0.35rem 0.6rem;font-size:0.8rem;border-radius:6px;border:1px solid var(--glass-border);background:rgba(0,0,0,0.3);color:var(--text-color);outline:none;" oninput="filterHistory()">
+                            <select class="inline-chain-filter" id="filter-activity" onchange="onSectionChainChange('activity')">
+                                <option value="">All chains</option>
+                            </select>
+                        </div>
                     </div>
-                    <div style="overflow-x:auto;">
+                    <div style="height:65vh;overflow-y:auto;overflow-x:auto;">
                         <table>
-                            <thead>
+                            <thead style="position:sticky;top:0;background:var(--card-bg);z-index:1;">
                                 <tr>
+                                    <th>Request ID</th>
+                                    <th>Response</th>
                                     <th>Chain</th>
                                     <th>Tool</th>
                                     <th>Prompt</th>
                                     <th>Status</th>
-                                    <th>Request ID</th>
                                     <th class="val">Time</th>
                                 </tr>
                             </thead>
                             <tbody id="activity-requests"></tbody>
                         </table>
                     </div>
-                </div>
-
-                <!-- History -->
-                <div class="glass" style="margin-top:1.5rem;">
-                    <div class="section-header" style="margin-bottom:1rem;">
-                        <h3>History</h3>
-                    </div>
-                    <div style="margin-bottom:1rem;">
-                        <input type="text" id="history-search" placeholder="Search by prompt, tool, or request ID..." style="width:100%;max-width:400px;" oninput="filterHistory()">
-                    </div>
-                    <div style="overflow-x:auto;">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>Chain</th>
-                                    <th>Tool</th>
-                                    <th>Prompt</th>
-                                    <th>Status</th>
-                                    <th>Request ID</th>
-                                    <th class="val">Time</th>
-                                </tr>
-                            </thead>
-                            <tbody id="history-requests"></tbody>
-                        </table>
-                    </div>
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:1rem;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:0.75rem;">
                         <button class="btn btn-sm btn-secondary" id="history-prev" onclick="historyPrevPage()" disabled>Previous</button>
                         <span style="font-size:0.8rem;color:var(--text-muted);" id="history-page-info">Page 1 of 1</span>
                         <button class="btn btn-sm btn-secondary" id="history-next" onclick="historyNextPage()" disabled>Next</button>
@@ -565,32 +544,36 @@
 
     // --- Activity Table ---
     function loadActivityRequests() {
-        fetch('/api/requests?limit=50' + chainQueryAmp('activity')).then(r => r.json()).then(rows => {
-            renderActivityTable(rows);
+        fetch('/api/requests?limit=100' + chainQueryAmp('activity')).then(r => r.json()).then(rows => {
+            state.historyData = rows;
+            filterHistory();
         });
     }
 
-    function renderActivityTable(rows) {
-        const tbody = document.getElementById('activity-requests');
-        if (!rows.length) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No requests yet</td></tr>';
-            return;
-        }
-        tbody.innerHTML = rows.map(r => {
-            const ipfsLink = `https://gateway.autonolas.tech/ipfs/f01701220${r.request_id}`;
-            const shortId = r.request_id.substring(0, 12) + '...';
-            const promptText = r.prompt ? r.prompt.substring(0, 60) : '';
-            return `
-                <tr>
-                    <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
-                    <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
-                    <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.prompt || '')}">${escapeHtml(promptText)}</td>
-                    <td><span class="badge badge-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
-                    <td style="font-family:var(--font-mono);font-size:0.75rem"><a href="${escapeHtml(ipfsLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(r.request_id)}">${escapeHtml(shortId)}</a></td>
-                    <td class="val">${r.created_at ? relativeTime(r.created_at) : '-'}</td>
-                </tr>
-            `;
-        }).join('');
+    function ipfsLink(hexId) {
+        // Strip 0x prefix if present, build CIDv1 for IPFS gateway
+        const clean = hexId.startsWith('0x') ? hexId.slice(2) : hexId;
+        return `https://gateway.autonolas.tech/ipfs/f01701220${clean}`;
+    }
+
+    function renderRequestRow(r) {
+        const shortReqId = (r.request_id || '').substring(0, 14) + '...';
+        const reqLink = ipfsLink(r.request_id || '');
+        const txHash = r.tx_hash || '';
+        const shortTx = txHash ? txHash.substring(0, 14) + '...' : '-';
+        const txLink = txHash ? ipfsLink(txHash) : '';
+        const promptText = r.prompt ? r.prompt.substring(0, 60) : '';
+        return `
+            <tr>
+                <td style="font-family:var(--font-mono);font-size:0.72rem"><a href="${escapeHtml(reqLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(r.request_id || '')}">${escapeHtml(shortReqId)}</a></td>
+                <td style="font-family:var(--font-mono);font-size:0.72rem">${txHash ? `<a href="${escapeHtml(txLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(txHash)}">${escapeHtml(shortTx)}</a>` : '<span style="color:var(--text-muted)">-</span>'}</td>
+                <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
+                <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
+                <td style="max-width:250px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.prompt || '')}">${escapeHtml(promptText)}</td>
+                <td><span class="badge badge-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
+                <td class="val">${r.created_at ? relativeTime(r.created_at) : '-'}</td>
+            </tr>
+        `;
     }
 
     function relativeTime(isoStr) {
@@ -1378,25 +1361,11 @@
         const start = page * pageSize;
         const slice = data.slice(start, start + pageSize);
 
-        const tbody = document.getElementById('history-requests');
+        const tbody = document.getElementById('activity-requests');
         if (!slice.length) {
-            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No matching requests</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No requests yet</td></tr>';
         } else {
-            tbody.innerHTML = slice.map(r => {
-                const ipfsLink = `https://gateway.autonolas.tech/ipfs/f01701220${r.request_id}`;
-                const shortId = r.request_id.substring(0, 12) + '...';
-                const promptText = r.prompt ? r.prompt.substring(0, 60) : '';
-                return `
-                    <tr>
-                        <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
-                        <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
-                        <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.prompt || '')}">${escapeHtml(promptText)}</td>
-                        <td><span class="badge badge-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
-                        <td style="font-family:var(--font-mono);font-size:0.75rem"><a href="${escapeHtml(ipfsLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(r.request_id)}">${escapeHtml(shortId)}</a></td>
-                        <td class="val">${r.created_at ? relativeTime(r.created_at) : '-'}</td>
-                    </tr>
-                `;
-            }).join('');
+            tbody.innerHTML = slice.map(r => renderRequestRow(r)).join('');
         }
 
         document.getElementById('history-page-info').textContent = `Page ${page + 1} of ${totalPages}`;
