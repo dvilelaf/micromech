@@ -303,13 +303,13 @@ def poll_results(
 
 # ── IPFS helpers ────────────────────────────────────────────────────
 
-def _push_request_to_ipfs(prompt: str, tool: str) -> bytes:
+def _push_request_to_ipfs(prompt: str, tool: str, api_url: str) -> bytes:
     """Push mech request metadata to IPFS and return multihash bytes.
 
     Follows the same flow as iwa's push_metadata_to_ipfs:
     1. Build Valory v2 metadata dict with nonce
     2. Serialize as pretty-printed JSON (indent=4, ensure_ascii=False)
-    3. Push to IPFS via registry.autonolas.tech
+    3. Push to IPFS
     4. Return multihash bytes (34 bytes: 0x12 0x20 + sha256 digest)
     """
     from micromech.ipfs.client import cid_hex_to_multihash_bytes, compute_cid_hex
@@ -329,7 +329,7 @@ def _push_request_to_ipfs(prompt: str, tool: str) -> bytes:
         import requests as req_lib
 
         resp = req_lib.post(
-            "https://registry.autonolas.tech/api/v0/add",
+            f"{api_url}/api/v0/add",
             files={"file": ("data", json_bytes, "application/octet-stream")},
             params={"pin": "true", "cid-version": "1"},
             timeout=30,
@@ -432,7 +432,7 @@ def main():
 
                 # Send on-chain request
                 try:
-                    request_data = _push_request_to_ipfs(prompt, tool)
+                    request_data = _push_request_to_ipfs(prompt, tool, cfg.ipfs.api_url)
                     fee = mp.functions.fee().call()
                     value = cc.delivery_rate + fee
 
