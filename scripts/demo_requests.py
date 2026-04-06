@@ -266,6 +266,7 @@ def poll_results(
     rows: list[RequestRow],
     anvil_w3s: dict[str, Web3],
     marketplaces: dict[str, Any],
+    cfg: Any,
     stop_event: threading.Event,
 ):
     """Background thread: poll on-chain MarketplaceDelivery events for completed requests.
@@ -317,24 +318,30 @@ def poll_results(
                         request_ids = log["args"]["requestIds"]
                         tx_hash = log["transactionHash"]
 
-                        # Get TX receipt and decode Deliver events for deliveryData.
-                        # The marketplace contract emits the Deliver event (with
-                        # deliveryData) — use the same contract instance (mp) to
-                        # decode it from the receipt.
+                        # Decode Deliver events from the MECH contract (not marketplace).
+                        # Marketplace emits MarketplaceDelivery (no delivery data).
+                        # Mech emits Deliver with args: requestId, data (IPFS multihash).
                         delivery_map: dict[str, bytes] = {}
                         try:
                             from web3._utils.events import EventLogErrorFlags
+                            from micromech.runtime.contracts import load_mech_abi
 
                             receipt = w3.eth.get_transaction_receipt(tx_hash)
-                            deliver_logs = mp.events.Deliver().process_receipt(
+                            mech_addr = cfg.chains[chain_name].mech_address
+                            mech_c = w3.eth.contract(
+                                address=w3.to_checksum_address(mech_addr),
+                                abi=load_mech_abi(),
+                            )
+                            deliver_logs = mech_c.events.Deliver().process_receipt(
                                 receipt, errors=EventLogErrorFlags.Discard,
                             )
                             for dl in deliver_logs:
                                 rid_d = dl["args"]["requestId"]
                                 rid_hex_d = rid_d.hex() if isinstance(rid_d, bytes) else str(rid_d)
-                                delivery_map[rid_hex_d.lower()] = dl["args"]["deliveryData"]
-                        except Exception:
-                            pass
+                                delivery_map[rid_hex_d.lower()] = dl["args"]["data"]
+                        except Exception as _e:
+                            import sys
+                            print(f"[poller] Deliver decode error: {_e}", file=sys.stderr)
 
                         for rid in request_ids:
                             rid_hex = rid.hex() if isinstance(rid, bytes) else str(rid)
@@ -470,7 +477,7 @@ def main():
     # Start on-chain poller (watches Deliver events, no HTTP dependency)
     poller = threading.Thread(
         target=poll_results,
-        args=(rows, anvil_w3s, marketplaces, stop_event),
+        args=(rows, anvil_w3s, marketplaces, cfg, stop_event),
         daemon=True,
     )
     poller.start()
