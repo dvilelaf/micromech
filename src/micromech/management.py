@@ -46,7 +46,6 @@ def _with_retries(fn: Callable, label: str, retries: int = MAX_RETRIES) -> Any:
                 label, attempt, retries, e, delay,
             )
             time.sleep(delay)
-    return None
 
 from micromech.core.config import ChainConfig, MicromechConfig
 
@@ -178,7 +177,7 @@ class MechLifecycle:
         """Create a mech on the marketplace. Delegates to iwa's MechSupplyMixin."""
         mgr = _get_service_manager(self.config, service_key)
         factory = factory_address or self.chain_config.factory_address
-        rate = delivery_rate or self.chain_config.delivery_rate
+        rate = delivery_rate if delivery_rate is not None else self.chain_config.delivery_rate
         try:
             # Call create on marketplace directly (iwa 0.6.0 compat)
             from micromech.core.bridge import get_wallet

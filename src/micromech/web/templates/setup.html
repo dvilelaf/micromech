@@ -773,9 +773,19 @@
             tools.forEach(t => {
                 const row = document.createElement('div');
                 row.className = 'balance-row';
-                row.innerHTML = '<span>' + (t.id || 'unknown') +
-                    (t.version ? ' <span style="color:var(--text-muted);font-size:0.75rem;">v' + t.version + '</span>' : '') +
-                    '</span><span style="color:var(--success);">enabled</span>';
+                const left = document.createElement('span');
+                left.textContent = t.id || 'unknown';
+                if (t.version) {
+                    const ver = document.createElement('span');
+                    ver.style.cssText = 'color:var(--text-muted);font-size:0.75rem;';
+                    ver.textContent = ' v' + t.version;
+                    left.appendChild(ver);
+                }
+                const right = document.createElement('span');
+                right.style.color = 'var(--success)';
+                right.textContent = 'enabled';
+                row.appendChild(left);
+                row.appendChild(right);
                 container.appendChild(row);
             });
         } catch (e) {
@@ -833,7 +843,7 @@
                     chains.length > 1 ? `Deployed on ${chains.length} chains!` : 'Your mech is ready!';
                 document.getElementById('success-desc').textContent = 'Starting runtime...';
                 document.getElementById('btn-go-dashboard').style.display = 'inline-block';
-                setTimeout(() => { window.location.href = '/?token=' + _t; }, 3000);
+                setTimeout(() => { window.location.href = '/?token=' + '{{ auth_token }}'; }, 3000);
             }, 1000);
         } else {
             // Show retry

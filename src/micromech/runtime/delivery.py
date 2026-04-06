@@ -225,7 +225,9 @@ class DeliveryManager:
         """
         mech_contract = self._get_mech_contract()
         # deliverToMarketplace must be called from the service multisig
-        sender = self.chain_config.multisig_address or self.chain_config.mech_address
+        if not self.chain_config.multisig_address:
+            raise ValueError("multisig_address not configured — cannot deliver")
+        sender = self.chain_config.multisig_address
         from_addr = self.bridge.web3.to_checksum_address(sender)
 
         # Convert request_id to bytes32
@@ -250,7 +252,11 @@ class DeliveryManager:
         deliveryRates[], paymentData).
         """
         mech_contract = self._get_mech_contract()
-        sender = self.chain_config.multisig_address or self.chain_config.mech_address
+        if not self.chain_config.multisig_address:
+            raise ValueError(
+                "multisig_address not configured — cannot deliver"
+            )
+        sender = self.chain_config.multisig_address
         from_addr = self.bridge.web3.to_checksum_address(sender)
 
         # requester: the sender from the HTTP request, or our own address

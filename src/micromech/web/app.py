@@ -65,6 +65,13 @@ def _get_sse_semaphore() -> asyncio.Semaphore:
 _log_queues: list[stdlib_queue.Queue] = []
 _log_sink_registered = False
 
+_SENSITIVE_RE = re.compile(r'token=[^ &"\']+')
+
+
+def _redact_sensitive(msg: str) -> str:
+    """Strip auth tokens from log messages before sending to SSE clients."""
+    return _SENSITIVE_RE.sub("token=***", msg)
+
 
 def _push_log_line(ts: str, level: str, msg: str) -> None:
     """Push a log line to all connected SSE clients."""
@@ -90,7 +97,7 @@ def _log_sink(message: Any) -> None:
     _push_log_line(
         ts=record["time"].strftime("%H:%M:%S.%f")[:-3],
         level=record["level"].name,
-        msg=full_msg,
+        msg=_redact_sensitive(full_msg),
     )
 
 
@@ -101,7 +108,7 @@ class _StdlibLogHandler(logging.Handler):
         try:
             import datetime
             ts = datetime.datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[:-3]
-            _push_log_line(ts=ts, level=record.levelname, msg=self.format(record))
+            _push_log_line(ts=ts, level=record.levelname, msg=_redact_sensitive(self.format(record)))
         except Exception:
             pass
 

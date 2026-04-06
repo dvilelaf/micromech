@@ -63,7 +63,7 @@
         }
 
         /* Tabs */
-        .tabs { display: flex; gap: 0.25rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.5rem; }
+        .tabs { display: flex; gap: 0.25rem; margin-bottom: 1.5rem; border-bottom: 1px solid var(--glass-border); padding-bottom: 0.5rem; overflow-x: auto; }
         .tab-btn {
             background: transparent; border: none; color: var(--text-muted); padding: 0.5rem 1rem;
             font-family: var(--font-main); font-size: 0.9rem; cursor: pointer; border-radius: 8px 8px 0 0;
@@ -263,12 +263,11 @@
             </div>
         </header>
 
-        <nav class="tabs">
-            <button class="tab-btn active" data-tab="overview">Overview</button>
-            <button class="tab-btn" data-tab="activity">Live Activity</button>
-            <button class="tab-btn" data-tab="tools">Tools</button>
-            <button class="tab-btn" data-tab="management">Management</button>
-            <button class="tab-btn" data-tab="logs">Logs</button>
+        <nav class="tabs" role="tablist">
+            <button class="tab-btn active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
+            <button class="tab-btn" data-tab="activity" role="tab" aria-selected="false">Live Activity</button>
+            <button class="tab-btn" data-tab="management" role="tab" aria-selected="false">Management</button>
+            <button class="tab-btn" data-tab="logs" role="tab" aria-selected="false">Logs</button>
         </nav>
 
         <main>
@@ -412,31 +411,6 @@
                 </div>
             </section>
 
-            <!-- Tools Tab -->
-            <section id="tab-tools" class="tab-pane">
-                <div class="glass">
-                    <div class="section-header">
-                        <h3>Tool Performance</h3>
-                        <select class="inline-chain-filter" id="filter-tools" onchange="onSectionChainChange('tools')">
-                            <option value="">All chains</option>
-                        </select>
-                    </div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Tool</th>
-                                <th class="val">Total</th>
-                                <th class="val">Delivered</th>
-                                <th class="val">Failed</th>
-                                <th class="val">Avg Time</th>
-                                <th class="val">Success %</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tool-stats"></tbody>
-                    </table>
-                </div>
-            </section>
-
             <!-- Management Tab -->
             <section id="tab-management" class="tab-pane">
                 <!-- Deployed Chains -->
@@ -503,7 +477,7 @@
         sseConnected: false,
         chains: [],
         selectedChain: '',  // '' = all chains (kept for API helpers)
-        sectionChains: { activity: '', tools: '' },
+        sectionChains: { activity: '' },
         historyData: [],
         historyFiltered: [],
         historyPage: 0,
@@ -519,15 +493,17 @@
 
     // --- Tabs (persisted via URL hash) ---
     function switchTab(tabName) {
-        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-btn').forEach(b => {
+            b.classList.remove('active');
+            b.setAttribute('aria-selected', 'false');
+        });
         document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
         const btn = document.querySelector(`.tab-btn[data-tab="${tabName}"]`);
-        if (btn) btn.classList.add('active');
+        if (btn) { btn.classList.add('active'); btn.setAttribute('aria-selected', 'true'); }
         const pane = document.getElementById('tab-' + tabName);
         if (pane) pane.classList.add('active');
         location.hash = tabName;
         if (tabName === 'overview') { loadCharts(); loadOverviewToolStats(); }
-        if (tabName === 'tools') loadToolStats();
         if (tabName === 'activity') loadHistory();
         if (tabName === 'management') loadManagementTab();
     }
@@ -542,7 +518,9 @@
 
     // --- SSE Stream ---
     function connectSSE() {
+        if (state.metricsES) return;
         const es = new EventSource('/api/metrics/stream?' + authQueryParam());
+        state.metricsES = es;
         es.onopen = () => {
             state.sseConnected = true;
         };
@@ -560,7 +538,10 @@
         };
         es.onerror = () => {
             state.sseConnected = false;
+            es.close();
+            state.metricsES = null;
             updateRuntimeIndicator('disconnected');
+            setTimeout(connectSSE, 3000);
         };
     }
 
@@ -623,10 +604,20 @@
         return diffDay + 'd ago';
     }
 
+    let _activityDebounceTimer = null;
     function addEvent(ev) {
         state.events.push(ev);
-        // SSE events trigger a table refresh so data stays current
-        loadActivityRequests();
+        // Cap events array at 200 entries
+        if (state.events.length > 200) {
+            state.events = state.events.slice(-200);
+        }
+        // Debounce: fetch at most once per 2 seconds
+        if (!_activityDebounceTimer) {
+            _activityDebounceTimer = setTimeout(() => {
+                _activityDebounceTimer = null;
+                loadActivityRequests();
+            }, 2000);
+        }
     }
 
     // --- Queue Chart ---
@@ -695,31 +686,6 @@
         });
     }
 
-
-    // --- Tool Stats ---
-    function loadToolStats() {
-        fetch('/api/metrics/tools' + chainQueryPrefix('tools')).then(r => r.json()).then(tools => {
-            const tbody = document.getElementById('tool-stats');
-            if (!tools.length) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No data yet</td></tr>';
-                return;
-            }
-            tbody.innerHTML = tools.map(t => {
-                const total = t.delivered + t.failed;
-                const rate = total > 0 ? ((t.delivered / total) * 100).toFixed(1) : '-';
-                return `
-                    <tr>
-                        <td><span class="tool-tag">${escapeHtml(t.tool)}</span></td>
-                        <td class="val">${t.total}</td>
-                        <td class="val" style="color:var(--success)">${t.delivered}</td>
-                        <td class="val" style="color:var(--error)">${t.failed}</td>
-                        <td class="val">${t.avg_time.toFixed(2)}s</td>
-                        <td class="val">${rate}%</td>
-                    </tr>
-                `;
-            }).join('');
-        });
-    }
 
     // --- Historical Charts ---
     function loadCharts() {
@@ -939,20 +905,20 @@
                 actionsHtml = `<span style="font-size:0.8rem;color:var(--text-muted);">Missing service key in config</span>`;
             } else if (isStaked) {
                 actionsHtml = `
-                    <button class="btn btn-sm btn-secondary" onclick="mgmtAction('checkpoint','${chainName}','${serviceKey}')">Checkpoint</button>
-                    <button class="btn btn-sm btn-success" onclick="mgmtAction('claim','${chainName}','${serviceKey}')">Claim Rewards</button>
-                    <button class="btn btn-sm btn-danger" onclick="mgmtAction('unstake','${chainName}','${serviceKey}')">Unstake</button>
-                    <button class="btn btn-sm btn-secondary" onclick="mgmtAction('status','${chainName}','${serviceKey}')">Refresh Status</button>`;
+                    <button class="btn btn-sm btn-secondary" data-action="checkpoint" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Checkpoint</button>
+                    <button class="btn btn-sm btn-success" data-action="claim" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Claim Rewards</button>
+                    <button class="btn btn-sm btn-danger" data-action="unstake" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Unstake</button>
+                    <button class="btn btn-sm btn-secondary" data-action="status" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Refresh Status</button>`;
             } else if (stakingState === 'loading') {
                 actionsHtml = `<span style="font-size:0.8rem;color:var(--text-muted);">Loading staking state...</span>`;
             } else if (staking.status === 'error' || staking.status === 'not_configured') {
                 actionsHtml = `
                     <span style="font-size:0.8rem;color:var(--warning);">Could not determine staking state</span>
-                    <button class="btn btn-sm btn-secondary" onclick="mgmtAction('status','${chainName}','${serviceKey}')">Retry</button>`;
+                    <button class="btn btn-sm btn-secondary" data-action="status" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Retry</button>`;
             } else {
                 actionsHtml = `
-                    <button class="btn btn-sm btn-primary" onclick="mgmtAction('stake','${chainName}','${serviceKey}')">Stake</button>
-                    <button class="btn btn-sm btn-secondary" onclick="mgmtAction('status','${chainName}','${serviceKey}')">Refresh Status</button>`;
+                    <button class="btn btn-sm btn-primary" data-action="stake" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Stake</button>
+                    <button class="btn btn-sm btn-secondary" data-action="status" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Refresh Status</button>`;
             }
 
             return `<div class="glass" data-chain-card="${chainName}">
@@ -962,11 +928,11 @@
                 </div>
                 <div class="chain-card-row">
                     <span class="label">Service ID</span>
-                    <span class="value">${chainInfo.service_id || '-'}</span>
+                    <span class="value">${escapeHtml(String(chainInfo.service_id || '-'))}</span>
                 </div>
                 <div class="chain-card-row">
                     <span class="label">Mech address</span>
-                    <span class="value addr-truncated" title="${chainInfo.mech_address || ''}">${truncateAddr(chainInfo.mech_address)}</span>
+                    <span class="value addr-truncated" title="${escapeHtml(chainInfo.mech_address || '')}">${escapeHtml(truncateAddr(chainInfo.mech_address))}</span>
                 </div>
                 ${setupStateHtml}
                 ${stakingDetailHtml}
@@ -974,6 +940,13 @@
                 <div class="chain-card-actions">${actionsHtml}</div>
             </div>`;
         }).join('');
+
+        // Attach click handlers via delegation (avoids inline onclick XSS)
+        container.querySelectorAll('[data-action]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                mgmtAction(btn.dataset.action, btn.dataset.chain, btn.dataset.key);
+            });
+        });
     }
 
     async function mgmtAction(action, chain, serviceKey) {
@@ -1220,7 +1193,7 @@
         const chains = await fetch('/api/chains').then(r => r.json());
         state.chains = chains;
         // Populate all inline chain filter dropdowns
-        ['filter-activity', 'filter-tools'].forEach(id => {
+        ['filter-activity'].forEach(id => {
             const sel = document.getElementById(id);
             if (!sel) return;
             chains.forEach(c => sel.add(new Option(c, c)));
@@ -1232,8 +1205,6 @@
         state.sectionChains[section] = sel ? sel.value : '';
         if (section === 'activity') {
             loadActivityRequests();
-        } else if (section === 'tools') {
-            loadToolStats();
         }
     }
 
@@ -1343,9 +1314,12 @@
         else if (level === 'WARNING') cssClass = 'log-warning';
         else if (level === 'SUCCESS') cssClass = 'log-success';
 
+        let msg = data.msg || `[${data.ts}] [${level}] (empty)`;
+        msg = msg.replace(/token=[^ &"]+/g, 'token=***');
+
         const line = document.createElement('div');
         line.className = 'log-line ' + cssClass;
-        line.textContent = data.msg || `[${data.ts}] [${level}] (empty)`;
+        line.textContent = msg;
         container.appendChild(line);
 
         while (container.children.length > 1000) container.removeChild(container.firstChild);
