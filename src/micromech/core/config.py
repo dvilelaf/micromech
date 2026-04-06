@@ -30,7 +30,7 @@ from micromech.core.constants import (
 )
 
 DEFAULT_CONFIG_DIR = Path("data")
-DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.yaml"
+DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "micromech.yaml"
 
 
 class RuntimeConfig(BaseModel):

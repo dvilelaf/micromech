@@ -105,7 +105,7 @@ After the quickstart, your `micromech/` folder contains:
 | `secrets.env` | Passwords, API keys, Telegram token, custom RPC endpoints | **Never share.** This is the main file you'll edit. |
 | `docker-compose.yml` | Docker configuration | Leave it alone unless you need to change ports. |
 | `data/` | All persistent data (wallet, database, config, AI models) | **Back this up regularly.** |
-| `data/config.yaml` | Mech settings (created after first setup) | You can edit it, but the web dashboard is easier. |
+| `data/micromech.yaml` | Mech settings (created after first setup) | You can edit it, but the web dashboard is easier. |
 | `data/wallet.json` | Your encrypted wallet | **Never share. Back this up.** |
 | `data/mech.db` | Request history database | Grows over time. No need to touch it. |
 | `updater.sh` | Auto-update script | Don't touch. |
