@@ -32,7 +32,7 @@ Repository = "https://github.com/dvilelaf/micromech"
 
 [project.optional-dependencies]
 chain = [
-    "iwa>=0.6.0",
+    "iwa>=0.6.6",
 ]
 telegram = [
     "python-telegram-bot>=21.0",
