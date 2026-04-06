@@ -741,6 +741,24 @@ class TestPageAuth:
         resp = web_client.get("/setup?token=wrong-token-xyz")
         assert resp.status_code == 401
 
+    def test_redirect_to_setup_preserves_token(self, web_client: TestClient):
+        """When / redirects to /setup, auth token is preserved in URL."""
+        with patch("micromech.web.app._needs_setup", return_value=True):
+            resp = web_client.get(
+                f"/?token={AUTH_TOKEN}", follow_redirects=False,
+            )
+            assert resp.status_code == 302
+            location = resp.headers["location"]
+            assert f"token={AUTH_TOKEN}" in location
+
+    def test_redirect_to_setup_no_token_no_leak(self, web_client: TestClient):
+        """When / redirects to /setup without token, no token in URL."""
+        with patch("micromech.web.app._needs_setup", return_value=True):
+            resp = web_client.get("/", follow_redirects=False)
+            assert resp.status_code == 302
+            location = resp.headers["location"]
+            assert AUTH_TOKEN not in location
+
 
 # ============================================================
 # SSE / Log Stream Connection Limits

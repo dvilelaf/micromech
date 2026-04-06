@@ -833,7 +833,7 @@
                     chains.length > 1 ? `Deployed on ${chains.length} chains!` : 'Your mech is ready!';
                 document.getElementById('success-desc').textContent = 'Starting runtime...';
                 document.getElementById('btn-go-dashboard').style.display = 'inline-block';
-                setTimeout(() => { window.location.href = '/'; }, 3000);
+                setTimeout(() => { window.location.href = '/?token=' + _t; }, 3000);
             }, 1000);
         } else {
             // Show retry
