@@ -321,10 +321,14 @@
                     </div>
                 </div>
 
+            </section>
+
+            <!-- Activity Tab -->
+            <section id="tab-activity" class="tab-pane">
                 <div class="glass">
                     <div class="section-header">
-                        <h3>Recent Requests</h3>
-                        <select class="inline-chain-filter" id="filter-requests" onchange="onSectionChainChange('requests')">
+                        <h3>Live Activity</h3>
+                        <select class="inline-chain-filter" id="filter-activity" onchange="onSectionChainChange('activity')">
                             <option value="">All chains</option>
                         </select>
                     </div>
@@ -332,26 +336,16 @@
                         <table>
                             <thead>
                                 <tr>
-                                    <th>Request ID</th>
                                     <th>Chain</th>
-                                    <th>Status</th>
                                     <th>Tool</th>
                                     <th>Prompt</th>
+                                    <th>Status</th>
+                                    <th>Request ID</th>
                                     <th class="val">Time</th>
                                 </tr>
                             </thead>
-                            <tbody id="recent-requests"></tbody>
+                            <tbody id="activity-requests"></tbody>
                         </table>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Activity Tab -->
-            <section id="tab-activity" class="tab-pane">
-                <div class="glass">
-                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">Live Activity Feed <span style="font-size:0.75rem;">(since page open)</span></h3>
-                    <div class="feed" id="activity-feed">
-                        <div style="text-align:center; color:var(--text-muted); padding:2rem;">Connecting...</div>
                     </div>
                 </div>
             </section>
@@ -473,7 +467,7 @@
         sseConnected: false,
         chains: [],
         selectedChain: '',  // '' = all chains (kept for API helpers)
-        sectionChains: { requests: '', tools: '', charts: '' },
+        sectionChains: { activity: '', tools: '', charts: '' },
         logLines: [],
         logInitialized: false,
     };
@@ -544,30 +538,54 @@
         setText('m-uptime', formatUptime(live.uptime ?? 0));
     }
 
-    // --- Activity Feed ---
-    let feedInitialized = false;
-    function addEvent(ev) {
-        if (!feedInitialized) {
-            document.getElementById('activity-feed').innerHTML = '';
-            feedInitialized = true;
+    // --- Activity Table ---
+    function loadActivityRequests() {
+        fetch('/api/requests?limit=50' + chainQueryAmp('activity')).then(r => r.json()).then(rows => {
+            renderActivityTable(rows);
+        });
+    }
+
+    function renderActivityTable(rows) {
+        const tbody = document.getElementById('activity-requests');
+        if (!rows.length) {
+            tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No requests yet</td></tr>';
+            return;
         }
+        tbody.innerHTML = rows.map(r => {
+            const ipfsLink = `https://gateway.autonolas.tech/ipfs/f01701220${r.request_id}`;
+            const shortId = r.request_id.substring(0, 12) + '...';
+            const promptText = r.prompt ? r.prompt.substring(0, 60) : '';
+            return `
+                <tr>
+                    <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
+                    <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
+                    <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escapeHtml(r.prompt || '')}">${escapeHtml(promptText)}</td>
+                    <td><span class="badge badge-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
+                    <td style="font-family:var(--font-mono);font-size:0.75rem"><a href="${escapeHtml(ipfsLink)}" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none" title="${escapeHtml(r.request_id)}">${escapeHtml(shortId)}</a></td>
+                    <td class="val">${r.created_at ? relativeTime(r.created_at) : '-'}</td>
+                </tr>
+            `;
+        }).join('');
+    }
+
+    function relativeTime(isoStr) {
+        const now = Date.now();
+        const then = new Date(isoStr).getTime();
+        const diffSec = Math.floor((now - then) / 1000);
+        if (diffSec < 0) return 'now';
+        if (diffSec < 60) return diffSec + 's ago';
+        const diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return diffMin + 'm ago';
+        const diffHr = Math.floor(diffMin / 60);
+        if (diffHr < 24) return diffHr + 'h ago';
+        const diffDay = Math.floor(diffHr / 24);
+        return diffDay + 'd ago';
+    }
+
+    function addEvent(ev) {
         state.events.push(ev);
-        const feed = document.getElementById('activity-feed');
-        const item = document.createElement('div');
-        item.className = 'feed-item';
-        const time = new Date(ev.timestamp * 1000).toLocaleTimeString();
-        const eventLabel = ev.event.replace(/_/g, ' ');
-        item.innerHTML = `
-            <span class="feed-time">${escapeHtml(time)}</span>
-            <span class="feed-event event-${escapeHtml(ev.event)}">${escapeHtml(eventLabel)}</span>
-            <span class="feed-id">${escapeHtml(ev.request_id.substring(0, 16))}...</span>
-            ${ev.tool ? `<span class="tool-tag">${escapeHtml(ev.tool)}</span>` : ''}
-            ${ev.execution_time ? `<span class="feed-detail">${ev.execution_time.toFixed(2)}s</span>` : ''}
-            ${ev.error ? `<span class="feed-detail" style="color:var(--error)">${escapeHtml(ev.error.substring(0, 60))}</span>` : ''}
-        `;
-        feed.insertBefore(item, feed.firstChild);
-        // Keep max 200 items
-        while (feed.children.length > 200) feed.removeChild(feed.lastChild);
+        // SSE events trigger a table refresh so data stays current
+        loadActivityRequests();
     }
 
     // --- Queue Chart ---
@@ -630,32 +648,12 @@
             },
         });
         // Load data
-        fetch('/api/metrics/channels' + chainQueryPrefix('requests')).then(r => r.json()).then(d => {
+        fetch('/api/metrics/channels').then(r => r.json()).then(d => {
             state.channelChart.data.datasets[0].data = [d.onchain || 0, d.offchain || 0];
             state.channelChart.update('none');
         });
     }
 
-    // --- Recent Requests ---
-    function loadRecentRequests() {
-        fetch('/api/requests?limit=20' + chainQueryAmp('requests')).then(r => r.json()).then(rows => {
-            const tbody = document.getElementById('recent-requests');
-            if (!rows.length) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No requests yet</td></tr>';
-                return;
-            }
-            tbody.innerHTML = rows.map(r => `
-                <tr>
-                    <td style="font-family:var(--font-mono);font-size:0.75rem">${escapeHtml(r.request_id.substring(0, 16))}...</td>
-                    <td style="font-size:0.75rem">${escapeHtml(r.chain || '-')}</td>
-                    <td><span class="badge badge-${escapeHtml(r.status)}">${escapeHtml(r.status)}</span></td>
-                    <td><span class="tool-tag">${escapeHtml(r.tool || '-')}</span></td>
-                    <td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(r.prompt)}</td>
-                    <td class="val">${r.execution_time != null ? r.execution_time.toFixed(2) + 's' : '-'}</td>
-                </tr>
-            `).join('');
-        });
-    }
 
     // --- Tool Stats ---
     function loadToolStats() {
@@ -1181,7 +1179,7 @@
         const chains = await fetch('/api/chains').then(r => r.json());
         state.chains = chains;
         // Populate all inline chain filter dropdowns
-        ['filter-requests', 'filter-tools', 'filter-charts'].forEach(id => {
+        ['filter-activity', 'filter-tools', 'filter-charts'].forEach(id => {
             const sel = document.getElementById(id);
             if (!sel) return;
             chains.forEach(c => sel.add(new Option(c, c)));
@@ -1191,9 +1189,8 @@
     function onSectionChainChange(section) {
         const sel = document.getElementById('filter-' + section);
         state.sectionChains[section] = sel ? sel.value : '';
-        if (section === 'requests') {
-            loadRecentRequests();
-            initChannelChart();
+        if (section === 'activity') {
+            loadActivityRequests();
         } else if (section === 'tools') {
             loadToolStats();
         } else if (section === 'charts') {
@@ -1336,13 +1333,13 @@
     loadChains();
     initQueueChart();
     initChannelChart();
-    loadRecentRequests();
+    loadActivityRequests();
     loadKarma();
     connectSSE();
     connectLogStream();
 
-    // Refresh recent requests every 30s, karma every 60s
-    setInterval(loadRecentRequests, 30000);
+    // Refresh activity table every 15s, karma every 60s
+    setInterval(loadActivityRequests, 15000);
     setInterval(loadKarma, 60000);
     </script>
 </body>
