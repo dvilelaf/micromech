@@ -6,9 +6,33 @@ create → activate → register → deploy → create_mech → stake → run �
 Each MechLifecycle targets a specific chain via ChainConfig.
 """
 
+import time
 from typing import Any, Callable, Optional
 
 from loguru import logger
+
+MAX_RETRIES = 3
+RETRY_DELAY = 5  # seconds
+
+
+def _with_retries(fn: Callable, label: str, retries: int = MAX_RETRIES) -> Any:
+    """Retry a lifecycle step with exponential backoff.
+
+    Handles transient errors like 'nonce too low' on Anvil forks
+    where rapid TXs can race each other.
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            return fn()
+        except Exception as e:
+            if attempt == retries:
+                raise
+            delay = RETRY_DELAY * attempt
+            logger.warning(
+                "{} failed (attempt {}/{}): {}. Retrying in {}s...",
+                label, attempt, retries, e, delay,
+            )
+            time.sleep(delay)
 
 from micromech.core.config import ChainConfig, MicromechConfig
 
@@ -90,7 +114,10 @@ class MechLifecycle:
         """Activate service registration (deposits OLAS)."""
         mgr = _get_service_manager(self.config, service_key)
         try:
-            result = mgr.activate_registration()
+            result = _with_retries(
+                mgr.activate_registration,
+                f"Activate on {self.chain_name}",
+            )
             logger.info("Service activated on {}: {}", self.chain_name, result)
             return result
         except Exception as e:
@@ -101,7 +128,10 @@ class MechLifecycle:
         """Register agent instance (deposits OLAS bond)."""
         mgr = _get_service_manager(self.config, service_key)
         try:
-            result = mgr.register_agent()
+            result = _with_retries(
+                mgr.register_agent,
+                f"Register agent on {self.chain_name}",
+            )
             logger.info("Agent registered on {}: {}", self.chain_name, result)
             return result
         except Exception as e:
@@ -115,7 +145,10 @@ class MechLifecycle:
         """
         mgr = _get_service_manager(self.config, service_key)
         try:
-            multisig = mgr.deploy()
+            multisig = _with_retries(
+                mgr.deploy,
+                f"Deploy Safe on {self.chain_name}",
+            )
             logger.info("Service deployed on {}, multisig: {}", self.chain_name, multisig)
             return multisig
         except Exception as e:
