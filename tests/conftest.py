@@ -5,8 +5,26 @@ from unittest.mock import patch
 
 import pytest
 
-from micromech.core.config import MicromechConfig
+from micromech.core.config import ChainConfig, MicromechConfig
+from micromech.core.constants import CHAIN_DEFAULTS
 from micromech.core.persistence import PersistentQueue
+
+
+def make_test_config(**kwargs) -> MicromechConfig:
+    """Create a MicromechConfig with gnosis chain for testing."""
+    gnosis = CHAIN_DEFAULTS["gnosis"]
+    defaults = {
+        "chains": {
+            "gnosis": ChainConfig(
+                chain="gnosis",
+                marketplace_address=gnosis["marketplace"],
+                factory_address=gnosis["factory"],
+                staking_address=gnosis["staking"],
+            )
+        }
+    }
+    defaults.update(kwargs)
+    return MicromechConfig(**defaults)
 
 
 @pytest.fixture(autouse=True)
@@ -35,7 +53,7 @@ def tmp_dir(tmp_path: Path) -> Path:
 @pytest.fixture
 def config(tmp_dir: Path) -> MicromechConfig:
     """Provide a test config with tmp paths."""
-    return MicromechConfig(
+    return make_test_config(
         persistence={"db_path": tmp_dir / "test.db"},
         llm={"models_dir": tmp_dir / "models"},
     )

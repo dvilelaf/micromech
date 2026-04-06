@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from micromech.core.config import IpfsConfig, MicromechConfig
+from tests.conftest import make_test_config
 from micromech.runtime.delivery import TX_RECEIPT_TIMEOUT, DeliveryManager
 from micromech.runtime.http import create_app as create_http_app
 from micromech.web.app import (
@@ -395,7 +396,7 @@ class TestDeliveryChainId:
         bridge.web3.eth.account.sign_transaction.return_value = MagicMock(raw_transaction=b"tx")
 
         queue = MagicMock()
-        config = MicromechConfig()
+        config = make_test_config()
         dm = DeliveryManager(config=config, chain_config=chain_cfg, queue=queue, bridge=bridge)
         dm._get_signer_key = MagicMock(return_value="0x" + "ff" * 32)
 
@@ -448,7 +449,7 @@ class TestCreateMechEventMatching:
             ],
         }
 
-        lc = MechLifecycle(MicromechConfig(), chain_name="gnosis")
+        lc = MechLifecycle(make_test_config(), chain_name="gnosis")
         result = lc.create_mech("svc-1")
         assert result is None
 
@@ -484,7 +485,7 @@ class TestCreateMechEventMatching:
             ],
         }
 
-        lc = MechLifecycle(MicromechConfig(), chain_name="gnosis")
+        lc = MechLifecycle(make_test_config(), chain_name="gnosis")
         result = lc.create_mech("svc-1")
         assert result is not None
         assert mech_hex in result.lower()

@@ -218,7 +218,7 @@ class MicromechConfig(BaseModel):
 
     version: str = "1"
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
-    chains: dict[str, ChainConfig] = Field(default_factory=_default_chains)
+    chains: dict[str, ChainConfig] = Field(default_factory=dict)
     ipfs: IpfsConfig = Field(default_factory=IpfsConfig)
     persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)

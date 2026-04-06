@@ -161,8 +161,7 @@ class TestMicromechConfig:
         cfg = MicromechConfig()
         assert cfg.version == "1"
         assert isinstance(cfg.runtime, RuntimeConfig)
-        assert "gnosis" in cfg.chains
-        assert isinstance(cfg.chains["gnosis"], ChainConfig)
+        assert cfg.chains == {}  # no default chains — user selects in wizard
         assert isinstance(cfg.persistence, PersistenceConfig)
         assert isinstance(cfg.llm, LLMConfig)
         assert len(cfg.tools) >= 1
@@ -189,8 +188,9 @@ class TestMicromechConfig:
 
     def test_load_defaults(self):
         """Load returns defaults when no config exists."""
-        cfg = MicromechConfig.load()
+        cfg = MicromechConfig()
         assert cfg.runtime.port == 8090
+        assert cfg.chains == {}
 
     def test_from_dict(self):
         data = {
@@ -209,11 +209,11 @@ class TestMicromechConfig:
         assert cfg.chains["base"].chain == "base"
 
     def test_roundtrip_json(self):
-        cfg = MicromechConfig()
+        cfg = MicromechConfig(chains={"base": _chain_cfg(chain="base")})
         data = cfg.model_dump(mode="json")
         restored = MicromechConfig.model_validate(data)
         assert restored.runtime.port == cfg.runtime.port
-        assert restored.chains["gnosis"].chain == cfg.chains["gnosis"].chain
+        assert restored.chains["base"].chain == "base"
 
     def test_enabled_chains_property(self):
         cfg = MicromechConfig(

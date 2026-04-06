@@ -13,8 +13,9 @@ from micromech.runtime.server import MechServer
 
 @pytest.fixture
 def server_config(tmp_path) -> MicromechConfig:
-    return MicromechConfig(
-        persistence=PersistenceConfig(db_path=tmp_path / "test.db"),
+    from tests.conftest import make_test_config
+    return make_test_config(
+        persistence={"db_path": tmp_path / "test.db"},
     )
 
 
@@ -286,8 +287,9 @@ class TestMultiChainServer:
         server.shutdown()
 
     def test_get_status_includes_chains(self, tmp_path):
-        config = MicromechConfig(
-            persistence=PersistenceConfig(db_path=tmp_path / "mc.db"),
+        from tests.conftest import make_test_config
+        config = make_test_config(
+            persistence={"db_path": tmp_path / "mc.db"},
         )
         server = MechServer(config)
         status = server.get_status()

@@ -524,4 +524,3 @@ class TestDoctorCommand:
         result = runner.invoke(app, ["doctor", "--config", str(config_path)])
         assert result.exit_code == 0
         assert "Config loaded" in result.output
-        assert "gnosis" in result.output.lower()
