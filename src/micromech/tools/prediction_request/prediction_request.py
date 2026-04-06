@@ -17,7 +17,8 @@ _MAX_CONTEXT_CHARS = 2000
 _MAX_RESULTS = 5
 
 ALLOWED_TOOLS = [
-    "prediction-offline",
+    "prediction-online",
+    "prediction-offline",  # alias for Valory compatibility
 ]
 
 # Prediction prompt template (matches Valory's format)
