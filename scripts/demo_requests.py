@@ -249,9 +249,10 @@ def poll_results(
 # ── Main ─────────────────────────────────────────────────────────────
 
 def main():
-    from micromech.core.config import MicromechConfig
+    from micromech.core.config import MicromechConfig, register_plugin
     from micromech.runtime.contracts import load_marketplace_abi
 
+    register_plugin()
     console = Console(force_terminal=True)
     cfg = MicromechConfig.load()
 
