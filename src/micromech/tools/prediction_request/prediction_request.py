@@ -18,7 +18,6 @@ _MAX_RESULTS = 5
 
 ALLOWED_TOOLS = [
     "prediction-offline",
-    "prediction-offline-local",
 ]
 
 # Prediction prompt template (matches Valory's format)
