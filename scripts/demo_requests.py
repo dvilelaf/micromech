@@ -279,7 +279,7 @@ def main():
 
     abi = load_marketplace_abi()
     marketplaces: dict[str, any] = {}
-    fund_amount = Web3.to_wei(1, "ether")
+    fund_amount = Web3.to_wei(100, "ether")
 
     console.print()
     console.print("[bold]micromech on-chain demo[/bold]")
