@@ -19,11 +19,24 @@ def _with_retries(fn: Callable, label: str, retries: int = MAX_RETRIES) -> Any:
     """Retry a lifecycle step with exponential backoff.
 
     Handles transient errors like 'nonce too low' on Anvil forks
-    where rapid TXs can race each other.
+    where rapid TXs can race each other. Also retries when fn()
+    returns a falsy value (iwa methods return False on failure
+    instead of raising).
     """
     for attempt in range(1, retries + 1):
         try:
-            return fn()
+            result = fn()
+            if result or result == 0:  # truthy, or zero (valid service_id)
+                return result
+            # Falsy return (False, None) = soft failure
+            if attempt == retries:
+                return result
+            delay = RETRY_DELAY * attempt
+            logger.warning(
+                "{} returned {} (attempt {}/{}). Retrying in {}s...",
+                label, result, attempt, retries, delay,
+            )
+            time.sleep(delay)
         except Exception as e:
             if attempt == retries:
                 raise
@@ -33,6 +46,7 @@ def _with_retries(fn: Callable, label: str, retries: int = MAX_RETRIES) -> Any:
                 label, attempt, retries, e, delay,
             )
             time.sleep(delay)
+    return None
 
 from micromech.core.config import ChainConfig, MicromechConfig
 
