@@ -29,9 +29,7 @@ from micromech.core.constants import (
     validate_eth_address,
 )
 
-import os as _os
-
-DEFAULT_CONFIG_DIR = Path(_os.environ.get("MICROMECH_DATA_DIR", Path.home() / ".micromech"))
+DEFAULT_CONFIG_DIR = Path("data")
 DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.yaml"
 
 
@@ -113,7 +111,7 @@ class ChainConfig(BaseModel):
 class PersistenceConfig(BaseModel):
     """Database settings."""
 
-    db_path: Path = Field(default=DEFAULT_CONFIG_DIR / "data" / DEFAULT_DB_NAME)
+    db_path: Path = Field(default=DEFAULT_CONFIG_DIR / DEFAULT_DB_NAME)
     cleanup_days: int = Field(default=DEFAULT_CLEANUP_DAYS, ge=1)
 
 

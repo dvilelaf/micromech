@@ -8,7 +8,6 @@ services:
       - ./data:/app/data
     environment:
       - TZ=Europe/Madrid
-      - MICROMECH_DATA_DIR=/app/data
     env_file:
       - path: ./secrets.env
         required: false

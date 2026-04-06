@@ -188,7 +188,7 @@ def init(
     typer.echo("  Default tools enabled:")
     typer.echo("    [x] echo — Test tool (default prediction)")
     typer.echo("    [x] llm — Local LLM (Qwen 0.5B, CPU)")
-    typer.echo("  (Edit ~/.micromech/config.yaml to customize later)")
+    typer.echo("  (Edit data/config.yaml to customize later)")
 
     # --- Step 5: Deploy ---
     _print_step(5, total_steps, "Deploy to OLAS Protocol")

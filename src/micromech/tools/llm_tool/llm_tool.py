@@ -47,7 +47,7 @@ def _get_llm(
         from huggingface_hub import hf_hub_download
         from llama_cpp import Llama
 
-        mdir = models_dir or (Path.home() / ".micromech" / "models")
+        mdir = models_dir or (Path("data") / "models")
         mdir.mkdir(parents=True, exist_ok=True)
         model_path = mdir / model_file
         if not model_path.exists():
