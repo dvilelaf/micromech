@@ -11,7 +11,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from micromech.bot.security import authorized_only
-from micromech.core.config import DEFAULT_CONFIG_DIR
+from micromech.core.constants import DEFAULT_CONFIG_DIR
 
 LOG_DIR = DEFAULT_CONFIG_DIR / "logs"
 LOG_FILE = LOG_DIR / "micromech.log"

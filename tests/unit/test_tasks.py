@@ -4,16 +4,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from micromech.core.config import MicromechConfig, TasksConfig
+from micromech.core.config import MicromechConfig
 from tests.conftest import make_test_config
 from micromech.tasks.notifications import NotificationService
 
 
-def _make_config(**task_overrides) -> MicromechConfig:
+def _make_config(**overrides) -> MicromechConfig:
     """Create a MicromechConfig with custom task settings."""
-    tasks = TasksConfig(**task_overrides)
-    cfg = make_test_config()
-    cfg.tasks = tasks
+    cfg = make_test_config(**overrides)
     return cfg
 
 

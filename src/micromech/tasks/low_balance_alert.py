@@ -19,11 +19,9 @@ async def low_balance_alert_task(
     config: "MicromechConfig",
 ) -> None:
     """Check and alert on low balances and eviction status."""
-    if not config.tasks.low_balance_alert_enabled:
+    if not config.low_balance_alert_enabled:
         return
     logger.debug("Running low balance alert check...")
-
-    tasks_config = config.tasks
 
     from micromech.core.bridge import check_balances
 
@@ -32,12 +30,12 @@ async def low_balance_alert_task(
             # Check balances
             native, olas = await asyncio.to_thread(check_balances, chain_name)
 
-            if native < tasks_config.fund_threshold_native:
+            if native < config.fund_threshold_native:
                 await notification_service.send(
                     "Low Balance Alert",
                     f"Chain: {chain_name}\n"
                     f"Native balance: {native:.4f}\n"
-                    f"Threshold: {tasks_config.fund_threshold_native}",
+                    f"Threshold: {config.fund_threshold_native}",
                     level="warning",
                 )
 

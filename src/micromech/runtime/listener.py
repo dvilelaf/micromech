@@ -12,6 +12,11 @@ from typing import Any, Optional
 from loguru import logger
 
 from micromech.core.config import ChainConfig, MicromechConfig
+from micromech.core.constants import (
+    DEFAULT_EVENT_LOOKBACK_BLOCKS,
+    DEFAULT_EVENT_POLL_INTERVAL,
+    IPFS_GATEWAY,
+)
 from micromech.core.models import MechRequest
 
 
@@ -63,7 +68,7 @@ class EventListener:
             current_block = self.bridge.with_retry(lambda: web3.eth.block_number)
 
             if self._last_block is None:
-                self._last_block = max(0, current_block - self.config.runtime.event_lookback_blocks)
+                self._last_block = max(0, current_block - DEFAULT_EVENT_LOOKBACK_BLOCKS)
 
             if current_block <= self._last_block:
                 return []
@@ -113,10 +118,10 @@ class EventListener:
         if not req.data or req.prompt:
             return req  # Already has prompt (raw JSON) or no data
 
-        if is_ipfs_multihash(req.data) and self.config.ipfs.enabled:
+        if is_ipfs_multihash(req.data):
             try:
                 cid = multihash_to_cid(req.data)
-                payload = await fetch_json_from_ipfs(cid, gateway=self.config.ipfs.gateway)
+                payload = await fetch_json_from_ipfs(cid, gateway=IPFS_GATEWAY)
                 return MechRequest(
                     request_id=req.request_id,
                     chain=req.chain,
@@ -274,7 +279,7 @@ class EventListener:
     async def run(self, callback: Any) -> None:
         """Run the event listener loop."""
         self._running = True
-        interval = self.config.runtime.event_poll_interval
+        interval = DEFAULT_EVENT_POLL_INTERVAL
         logger.info("Event listener started (poll every {}s)", interval)
 
         while self._running:

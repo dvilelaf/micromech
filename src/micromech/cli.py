@@ -10,7 +10,12 @@ import typer
 from loguru import logger
 
 from micromech.core.config import MicromechConfig
-from micromech.core.constants import CHAIN_DEFAULTS, MIN_NATIVE_WEI, MIN_OLAS_WHOLE
+from micromech.core.constants import (
+    CHAIN_DEFAULTS,
+    DB_PATH,
+    MIN_NATIVE_WEI,
+    MIN_OLAS_WHOLE,
+)
 
 app = typer.Typer(
     name="micromech",
@@ -290,7 +295,7 @@ def run(
         # Start Telegram bot if configured
         try:
             from micromech.secrets import secrets
-            if secrets.telegram_enabled and cfg.telegram.enabled:
+            if secrets.telegram_enabled and cfg.telegram_enabled:
                 from micromech.bot.app import create_application
                 bot_app = create_application(
                     config=cfg,
@@ -331,7 +336,7 @@ def status(
     cfg = _load_config(config_path)
     from micromech.core.persistence import PersistentQueue
 
-    queue = PersistentQueue(cfg.persistence.db_path)
+    queue = PersistentQueue(DB_PATH)
     counts = queue.count_by_status()
     by_chain = queue.count_by_chain()
     recent = queue.get_recent(limit=5)
@@ -400,7 +405,7 @@ def cleanup(
     cfg = _load_config(config_path)
     from micromech.core.persistence import PersistentQueue
 
-    queue = PersistentQueue(cfg.persistence.db_path)
+    queue = PersistentQueue(DB_PATH)
     deleted = queue.cleanup(days=days)
     queue.close()
     typer.echo(f"Cleaned up {deleted} records older than {days} days")
@@ -426,7 +431,7 @@ def web(
     from micromech.web.app import create_web_app
 
     cfg = _load_config(config_path)
-    queue = PersistentQueue(cfg.persistence.db_path)
+    queue = PersistentQueue(DB_PATH)
     reg = ToolRegistry()
     reg.load_builtins()
     mgr = RuntimeManager(cfg)
@@ -861,21 +866,11 @@ def doctor(
     except Exception as e:
         fail(f"Tool registry error: {e}")
 
-    # 6. LLM model
-    typer.echo("\nLLM Model:")
-    model_path = cfg.llm.models_dir / cfg.llm.model_file
-    if model_path.exists():
-        size_mb = model_path.stat().st_size / (1024 * 1024)
-        ok(f"Model ready: {cfg.llm.model_file} ({size_mb:.0f} MB)")
-    else:
-        warn(f"Model not downloaded: {cfg.llm.model_file}")
-        typer.echo("         Download with: micromech run (auto-downloads on first use)")
-
-    # 7. Database
+    # 6. Database
     typer.echo("\nDatabase:")
-    if cfg.persistence.db_path.exists():
-        size_kb = cfg.persistence.db_path.stat().st_size / 1024
-        ok(f"DB exists: {cfg.persistence.db_path} ({size_kb:.1f} KB)")
+    if DB_PATH.exists():
+        size_kb = DB_PATH.stat().st_size / 1024
+        ok(f"DB exists: {DB_PATH} ({size_kb:.1f} KB)")
     else:
         warn("No database yet (will be created on first run)")
 

@@ -371,13 +371,14 @@ class TestDeliveryLifecycle:
         assert delivery_no_bridge.delivered_count == 0
 
     @pytest.mark.asyncio
-    async def test_run_loop_exits_on_stop(self, queue: PersistentQueue):
+    async def test_run_loop_exits_on_stop(self, queue: PersistentQueue, monkeypatch):
         """Run loop should exit when stop() is called."""
         import asyncio
 
-        from micromech.core.config import RuntimeConfig
-
-        config = MicromechConfig(runtime=RuntimeConfig(delivery_interval=1))
+        monkeypatch.setattr(
+            "micromech.runtime.delivery.DEFAULT_DELIVERY_INTERVAL", 1,
+        )
+        config = MicromechConfig()
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=None)
 
         async def stop_soon():
@@ -496,9 +497,7 @@ class TestDeliverOneIpfs:
     @pytest.mark.asyncio
     async def test_deliver_one_returns_ipfs_cid_hex(self, queue: PersistentQueue):
         """_deliver_one returns (tx_hash, ipfs_cid_hex) when IPFS succeeds."""
-        from micromech.core.config import IpfsConfig
-
-        config = MicromechConfig(ipfs=IpfsConfig(enabled=True))
+        config = MicromechConfig()
         bridge = MagicMock(spec=["web3"])
         dm = DeliveryManager(
             config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
@@ -522,9 +521,7 @@ class TestDeliverOneIpfs:
     @pytest.mark.asyncio
     async def test_deliver_one_ipfs_failure_fallback_raw(self, queue: PersistentQueue):
         """_deliver_one returns (tx_hash, None) when IPFS fails."""
-        from micromech.core.config import IpfsConfig
-
-        config = MicromechConfig(ipfs=IpfsConfig(enabled=True))
+        config = MicromechConfig()
         bridge = MagicMock(spec=["web3"])
         dm = DeliveryManager(
             config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
@@ -551,34 +548,9 @@ class TestDeliverOneIpfs:
         assert "result" in parsed
 
     @pytest.mark.asyncio
-    async def test_deliver_one_ipfs_disabled_sends_raw(self, queue: PersistentQueue):
-        """When IPFS is disabled, delivers raw JSON payload."""
-        from micromech.core.config import IpfsConfig
-
-        config = MicromechConfig(ipfs=IpfsConfig(enabled=False))
-        bridge = MagicMock(spec=["web3"])
-        dm = DeliveryManager(
-            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
-        )
-
-        req = MechRequest(request_id="r3", prompt="p", tool="echo")
-        queue.add_request(req)
-        queue.mark_executing("r3")
-        queue.mark_executed("r3", ToolResult(output="out"))
-        record = queue.get_by_id("r3")
-
-        dm._submit_delivery = MagicMock(return_value="0xbeef")
-
-        tx_hash, ipfs_cid_hex = await dm._deliver_one(record)
-        assert tx_hash == "0xbeef"
-        assert ipfs_cid_hex is None
-
-    @pytest.mark.asyncio
     async def test_response_payload_format_valory(self, queue: PersistentQueue):
         """Response payload matches Valory format: requestId, result, prompt, tool."""
-        from micromech.core.config import IpfsConfig
-
-        config = MicromechConfig(ipfs=IpfsConfig(enabled=False))
+        config = MicromechConfig()
         bridge = MagicMock(spec=["web3"])
         dm = DeliveryManager(
             config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
@@ -592,7 +564,10 @@ class TestDeliverOneIpfs:
 
         dm._submit_delivery = MagicMock(return_value="0xaa")
 
-        await dm._deliver_one(record)
+        # Mock IPFS push to fail so raw JSON is delivered
+        mock_push = AsyncMock(side_effect=Exception("IPFS down"))
+        with patch("micromech.ipfs.client.push_to_ipfs", mock_push):
+            await dm._deliver_one(record)
 
         call_data = dm._submit_delivery.call_args[0][1]
         payload = json.loads(call_data)

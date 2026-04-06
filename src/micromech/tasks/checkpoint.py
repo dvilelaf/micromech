@@ -23,7 +23,7 @@ async def checkpoint_task(
     """Check if any staking contract needs a checkpoint call."""
     logger.debug("Running checkpoint task...")
 
-    tasks_config = config.tasks
+    from micromech.core.constants import CHECKPOINT_GRACE_PERIOD_SECONDS
 
     from iwa.plugins.olas.contracts.staking import StakingContract
 
@@ -58,7 +58,7 @@ async def checkpoint_task(
                 logger.debug(f"Epoch still active on {chain_name}, next end: {epoch_end}")
                 continue
 
-            grace = timedelta(seconds=tasks_config.checkpoint_grace_period_seconds)
+            grace = timedelta(seconds=CHECKPOINT_GRACE_PERIOD_SECONDS)
             if now < epoch_end + grace:
                 logger.debug(f"Within grace period on {chain_name}, waiting...")
                 continue
@@ -71,7 +71,7 @@ async def checkpoint_task(
 
             if success:
                 logger.info(f"Checkpoint called successfully on {chain_name}")
-                if tasks_config.checkpoint_alert_enabled:
+                if config.checkpoint_alert_enabled:
                     await notification_service.send(
                         "Checkpoint",
                         f"Checkpoint called on {chain_name}\n"

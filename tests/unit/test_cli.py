@@ -70,35 +70,36 @@ class TestConfigCommand:
         MicromechConfig().save(config_path)
         result = runner.invoke(app, ["config", "--config", str(config_path)])
         assert result.exit_code == 0
-        assert "runtime" in result.output
         assert "chains" in result.output
+        assert "log_level" in result.output
 
     def test_show_default_config(self, tmp_path: Path):
         config_path = tmp_path / "nonexistent.yaml"
         result = runner.invoke(app, ["config", "--config", str(config_path)])
         assert result.exit_code == 0
-        assert "runtime" in result.output
+        assert "log_level" in result.output
 
 
 class TestStatusCommand:
-    def test_status_empty(self, tmp_path: Path):
+    def test_status_empty(self, tmp_path: Path, monkeypatch):
+        db_path = tmp_path / "test.db"
+        monkeypatch.setattr("micromech.cli.DB_PATH", db_path)
         config_path = tmp_path / "config.yaml"
-        cfg = MicromechConfig(persistence={"db_path": tmp_path / "test.db"})
-        cfg.save(config_path)
+        MicromechConfig().save(config_path)
         result = runner.invoke(app, ["status", "--config", str(config_path)])
         assert result.exit_code == 0
         assert "pending: 0" in result.output.lower()
 
-    def test_status_with_requests(self, tmp_path: Path):
+    def test_status_with_requests(self, tmp_path: Path, monkeypatch):
         db_path = tmp_path / "test.db"
+        monkeypatch.setattr("micromech.cli.DB_PATH", db_path)
         queue = PersistentQueue(db_path)
         queue.add_request(MechRequest(request_id="r1", prompt="test", tool="echo"))
         queue.add_request(MechRequest(request_id="r2", prompt="test2", tool="llm"))
         queue.close()
 
         config_path = tmp_path / "config.yaml"
-        cfg = MicromechConfig(persistence={"db_path": db_path})
-        cfg.save(config_path)
+        MicromechConfig().save(config_path)
 
         result = runner.invoke(app, ["status", "--config", str(config_path)])
         assert result.exit_code == 0
@@ -125,12 +126,13 @@ class TestTestToolCommand:
 
 
 class TestCleanupCommand:
-    def test_cleanup_empty(self, tmp_path: Path):
+    def test_cleanup_empty(self, tmp_path: Path, monkeypatch):
+        db_path = tmp_path / "test.db"
+        monkeypatch.setattr("micromech.cli.DB_PATH", db_path)
         config_path = tmp_path / "config.yaml"
-        cfg = MicromechConfig(persistence={"db_path": tmp_path / "test.db"})
-        cfg.save(config_path)
+        MicromechConfig().save(config_path)
 
-        queue = PersistentQueue(tmp_path / "test.db")
+        queue = PersistentQueue(db_path)
         queue.close()
 
         result = runner.invoke(app, ["cleanup", "--config", str(config_path)])
@@ -140,9 +142,10 @@ class TestCleanupCommand:
 
 class TestRunCommand:
     @patch("micromech.runtime.server.MechServer")
-    def test_run_starts_server(self, mock_server_cls, tmp_path: Path):
+    def test_run_starts_server(self, mock_server_cls, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         config_path = tmp_path / "config.yaml"
-        MicromechConfig(persistence={"db_path": tmp_path / "test.db"}).save(config_path)
+        MicromechConfig().save(config_path)
 
         mock_server = MagicMock()
         mock_server_cls.return_value = mock_server
@@ -158,9 +161,10 @@ class TestRunCommand:
 
 class TestWebCommand:
     @patch("uvicorn.run")
-    def test_web_starts_dashboard(self, mock_uvicorn_run, tmp_path: Path):
+    def test_web_starts_dashboard(self, mock_uvicorn_run, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr("micromech.cli.DB_PATH", tmp_path / "test.db")
         config_path = tmp_path / "config.yaml"
-        MicromechConfig(persistence={"db_path": tmp_path / "test.db"}).save(config_path)
+        MicromechConfig().save(config_path)
 
         result = runner.invoke(app, ["web", "--config", str(config_path), "--port", "9999"])
         assert result.exit_code == 0

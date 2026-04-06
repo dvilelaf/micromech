@@ -216,8 +216,8 @@ def _parse_delivery_data(delivery_data: bytes) -> str:
         try:
             import requests as req_lib
 
-            from micromech.core.config import MicromechConfig
-            gw = MicromechConfig.load().ipfs.gateway
+            from micromech.core.constants import IPFS_GATEWAY
+            gw = IPFS_GATEWAY
             resp = req_lib.get(f"{gw}{cid}", timeout=10)
             resp.raise_for_status()
             result_data = resp.json()

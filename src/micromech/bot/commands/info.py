@@ -51,10 +51,16 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     chain_names = ", ".join(c.upper() for c in enabled)
     lines.append(f"Chains: {code(chain_names) if chain_names else 'none'}")
 
-    # Tools
-    tool_names = [t.id for t in config.tools if t.enabled]
-    if tool_names:
-        lines.append(f"Tools: {code(', '.join(tool_names))}")
+    # Tools (auto-discovered)
+    try:
+        from micromech.tools.registry import ToolRegistry
+        reg = ToolRegistry()
+        reg.load_builtins()
+        tool_names = reg.tool_ids
+        if tool_names:
+            lines.append(f"Tools: {code(', '.join(tool_names))}")
+    except Exception:
+        pass
 
     # Queue summary
     if queue:

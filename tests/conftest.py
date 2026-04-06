@@ -28,18 +28,17 @@ def make_test_config(**kwargs) -> MicromechConfig:
 
 
 @pytest.fixture(autouse=True)
-def _protect_real_wallet(tmp_path: Path):
-    """CRITICAL: Prevent ALL tests from touching the real wallet.
+def _protect_real_data(tmp_path: Path):
+    """CRITICAL: Prevent ALL tests from touching real wallet or config.
 
-    Patches iwa's WALLET_PATH to a temp directory so KeyStorage never
-    reads/writes data/wallet.json. This is autouse — applies to every test.
+    Patches iwa's WALLET_PATH and CONFIG_PATH to temp directory so tests
+    never read/write data/wallet.json or data/config.yaml.
     """
     fake_wallet = str(tmp_path / "wallet.json")
-    with patch.dict("sys.modules", {}):  # don't interfere with cached modules
-        pass
-    # Patch at the source (iwa.core.constants) and anywhere it's imported
+    fake_config = tmp_path / "config.yaml"
     with (
         patch("iwa.core.constants.WALLET_PATH", fake_wallet),
+        patch("iwa.core.constants.CONFIG_PATH", fake_config),
     ):
         yield
 
@@ -52,11 +51,8 @@ def tmp_dir(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def config(tmp_dir: Path) -> MicromechConfig:
-    """Provide a test config with tmp paths."""
-    return make_test_config(
-        persistence={"db_path": tmp_dir / "test.db"},
-        llm={"models_dir": tmp_dir / "models"},
-    )
+    """Provide a test config."""
+    return make_test_config()
 
 
 @pytest.fixture

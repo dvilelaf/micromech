@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from micromech.core.config import IpfsConfig, MicromechConfig
+from micromech.core.config import MicromechConfig
 from tests.conftest import make_test_config
 from micromech.runtime.delivery import TX_RECEIPT_TIMEOUT, DeliveryManager
 from micromech.runtime.http import create_app as create_http_app
@@ -281,37 +281,6 @@ class TestHttpAppAuthEnforcement:
     def test_web_docs_disabled(self, web_client: TestClient):
         assert web_client.get("/docs").status_code == 404
         assert web_client.get("/redoc").status_code == 404
-
-
-# ============================================================
-# IpfsConfig URL Validation
-# ============================================================
-
-
-class TestIpfsConfigValidation:
-    def test_valid_http_url(self):
-        cfg = IpfsConfig(gateway="http://localhost:8080/ipfs/")
-        assert cfg.gateway.startswith("http://")
-
-    def test_valid_https_url(self):
-        cfg = IpfsConfig(gateway="https://gateway.example.com/ipfs/")
-        assert cfg.gateway.startswith("https://")
-
-    def test_invalid_url_no_scheme(self):
-        with pytest.raises(ValidationError):
-            IpfsConfig(gateway="just-a-string")
-
-    def test_invalid_url_ftp(self):
-        with pytest.raises(ValidationError):
-            IpfsConfig(gateway="ftp://files.example.com/")
-
-    def test_api_url_validated(self):
-        with pytest.raises(ValidationError):
-            IpfsConfig(api_url="not-a-url")
-
-    def test_api_url_valid(self):
-        cfg = IpfsConfig(api_url="http://localhost:5001")
-        assert cfg.api_url == "http://localhost:5001"
 
 
 # ============================================================

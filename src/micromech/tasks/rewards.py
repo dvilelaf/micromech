@@ -22,7 +22,7 @@ async def rewards_task(
     """Check and claim rewards for each enabled chain."""
     logger.debug("Running rewards task...")
 
-    threshold = config.tasks.claim_threshold_olas
+    threshold = config.claim_threshold_olas
 
     for chain_name, lifecycle in lifecycles.items():
         chain_config = lifecycle.chain_config

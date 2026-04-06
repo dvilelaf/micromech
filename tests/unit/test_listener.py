@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from micromech.core.config import ChainConfig, MicromechConfig, RuntimeConfig
+from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.models import MechRequest
 from micromech.runtime.listener import EventListener
 
@@ -253,9 +253,16 @@ class TestAdvanceBlock:
 
 
 class TestRunLoop:
+    @pytest.fixture(autouse=True)
+    def _fast_poll(self, monkeypatch):
+        """Use 1-second poll interval for run-loop tests."""
+        monkeypatch.setattr(
+            "micromech.runtime.listener.DEFAULT_EVENT_POLL_INTERVAL", 1,
+        )
+
     @pytest.mark.asyncio
     async def test_run_stops_on_stop(self):
-        config = MicromechConfig(runtime=RuntimeConfig(event_poll_interval=1))
+        config = MicromechConfig()
         listener = EventListener(config, CHAIN_CFG, bridge=None)
 
         async def callback(req):
@@ -271,7 +278,7 @@ class TestRunLoop:
 
     @pytest.mark.asyncio
     async def test_run_with_mock_events(self):
-        config = MicromechConfig(runtime=RuntimeConfig(event_poll_interval=1))
+        config = MicromechConfig()
         listener = EventListener(config, CHAIN_CFG, bridge=None)
         received = []
 
@@ -304,7 +311,7 @@ class TestRunLoop:
     @pytest.mark.asyncio
     async def test_run_handles_callback_error(self):
         """Callback errors don't crash the loop but prevent block advance."""
-        config = MicromechConfig(runtime=RuntimeConfig(event_poll_interval=1))
+        config = MicromechConfig()
         listener = EventListener(config, CHAIN_CFG, bridge=None)
         advanced_after_error = None
 

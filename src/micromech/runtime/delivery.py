@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 from loguru import logger
 
 from micromech.core.config import ChainConfig, MicromechConfig
+from micromech.core.constants import (
+    DEFAULT_DELIVERY_BATCH_SIZE,
+    DEFAULT_DELIVERY_INTERVAL,
+    IPFS_API_URL,
+)
 from micromech.core.models import RequestRecord
 from micromech.core.persistence import PersistentQueue
 
@@ -129,7 +134,7 @@ class DeliveryManager:
             return 0
 
         records = self.queue.get_undelivered(
-            limit=self.config.runtime.delivery_batch_size, chain=self._chain_name
+            limit=DEFAULT_DELIVERY_BATCH_SIZE, chain=self._chain_name
         )
         if not records:
             return 0
@@ -205,7 +210,7 @@ class DeliveryManager:
 
         # Push to IPFS and get multihash bytes for delivery
         ipfs_cid_hex: Optional[str] = None
-        if self.config.ipfs.enabled:
+        if True:
             try:
                 from micromech.ipfs.client import (
                     cid_hex_to_multihash_bytes,
@@ -214,7 +219,7 @@ class DeliveryManager:
 
                 _, cid_hex = await push_to_ipfs(
                     response_payload,
-                    api_url=self.config.ipfs.api_url,
+                    api_url=IPFS_API_URL,
                 )
                 delivery_data = cid_hex_to_multihash_bytes(
                     cid_hex,
@@ -394,7 +399,7 @@ class DeliveryManager:
     async def run(self) -> None:
         """Run the delivery loop."""
         self._running = True
-        interval = self.config.runtime.delivery_interval
+        interval = DEFAULT_DELIVERY_INTERVAL
 
         if self.bridge is None:
             logger.info("Delivery manager: no bridge — delivery disabled")

@@ -10,6 +10,7 @@ from loguru import logger
 
 from micromech.core.bridge import IwaBridge
 from micromech.core.config import MicromechConfig
+from micromech.core.constants import HEALTH_INTERVAL_SECONDS
 from micromech.management import MechLifecycle
 from micromech.secrets import secrets
 from micromech.tasks.checkpoint import checkpoint_task
@@ -51,7 +52,7 @@ class TaskScheduler:
 
     def start(self) -> None:
         """Start the scheduler and add jobs."""
-        tasks_config = self.config.tasks
+        cfg = self.config
         misfire_grace_time = 600
         startup_delay = 5
 
@@ -60,7 +61,7 @@ class TaskScheduler:
             self.scheduler.add_job(
                 health_task,
                 "interval",
-                seconds=tasks_config.health_interval_seconds,
+                seconds=HEALTH_INTERVAL_SECONDS,
                 id="health_task",
                 replace_existing=True,
                 misfire_grace_time=misfire_grace_time,
@@ -74,8 +75,8 @@ class TaskScheduler:
         self.scheduler.add_job(
             checkpoint_task,
             "interval",
-            minutes=tasks_config.checkpoint_interval_minutes,
-            args=[self.lifecycles, self.notification_service, self.config],
+            minutes=cfg.checkpoint_interval_minutes,
+            args=[self.lifecycles, self.notification_service, cfg],
             id="checkpoint_task",
             replace_existing=True,
             misfire_grace_time=misfire_grace_time,
@@ -89,8 +90,8 @@ class TaskScheduler:
         self.scheduler.add_job(
             rewards_task,
             "interval",
-            minutes=tasks_config.claim_interval_minutes,
-            args=[self.lifecycles, self.notification_service, self.config],
+            minutes=cfg.claim_interval_minutes,
+            args=[self.lifecycles, self.notification_service, cfg],
             id="rewards_task",
             replace_existing=True,
             misfire_grace_time=misfire_grace_time,
@@ -101,12 +102,12 @@ class TaskScheduler:
         startup_delay += 20
 
         # Fund Task
-        if tasks_config.fund_enabled:
+        if cfg.fund_enabled:
             self.scheduler.add_job(
                 fund_task,
                 "interval",
-                minutes=tasks_config.fund_interval_minutes,
-                args=[self.bridges, self.notification_service, self.config],
+                minutes=cfg.fund_interval_minutes,
+                args=[self.bridges, self.notification_service, cfg],
                 id="fund_task",
                 replace_existing=True,
                 misfire_grace_time=misfire_grace_time,
@@ -117,12 +118,12 @@ class TaskScheduler:
             startup_delay += 20
 
         # Low Balance Alert Task
-        if tasks_config.low_balance_alert_enabled:
+        if cfg.low_balance_alert_enabled:
             self.scheduler.add_job(
                 low_balance_alert_task,
                 "interval",
-                hours=tasks_config.low_balance_alert_interval_hours,
-                args=[self.lifecycles, self.bridges, self.notification_service, self.config],
+                hours=cfg.low_balance_alert_interval_hours,
+                args=[self.lifecycles, self.bridges, self.notification_service, cfg],
                 id="low_balance_alert_task",
                 replace_existing=True,
                 misfire_grace_time=misfire_grace_time,
@@ -134,19 +135,19 @@ class TaskScheduler:
 
         # Update Check Task (daily at 8 AM local time)
         local_tz = ZoneInfo(os.environ.get("TZ", "Europe/Madrid"))
-        if tasks_config.update_check_enabled:
+        if cfg.update_check_enabled:
             self.scheduler.add_job(
                 update_check_task,
                 "cron",
                 hour=8,
                 timezone=local_tz,
-                args=[self.notification_service, self.config],
+                args=[self.notification_service, cfg],
                 id="update_check_task",
                 replace_existing=True,
             )
 
             # Auto-update poll
-            if tasks_config.auto_update_enabled:
+            if cfg.auto_update_enabled:
                 self.scheduler.add_job(
                     auto_update_poll_task,
                     "interval",

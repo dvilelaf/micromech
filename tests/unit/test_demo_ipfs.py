@@ -179,14 +179,11 @@ class TestParseDeliveryData:
         mock_resp.json.return_value = ipfs_response
         mock_resp.raise_for_status = MagicMock()
 
-        mock_config = MagicMock()
-        mock_config.ipfs.gateway = "https://gateway.test/ipfs/"
-
         with (
             patch("requests.get", return_value=mock_resp) as mock_get,
             patch(
-                "micromech.core.config.MicromechConfig.load",
-                return_value=mock_config,
+                "micromech.core.constants.IPFS_GATEWAY",
+                "https://gateway.test/ipfs/",
             ),
         ):
             result = _parse_delivery_data(multihash)
@@ -201,14 +198,11 @@ class TestParseDeliveryData:
         digest = hashlib.sha256(b"unreachable").digest()
         multihash = bytes([0x12, 0x20]) + digest
 
-        mock_config = MagicMock()
-        mock_config.ipfs.gateway = "https://gateway.test/ipfs/"
-
         with (
             patch("requests.get", side_effect=ConnectionError("no IPFS")),
             patch(
-                "micromech.core.config.MicromechConfig.load",
-                return_value=mock_config,
+                "micromech.core.constants.IPFS_GATEWAY",
+                "https://gateway.test/ipfs/",
             ),
         ):
             result = _parse_delivery_data(multihash)
@@ -256,14 +250,11 @@ class TestParseDeliveryData:
         mock_resp.json.return_value = ipfs_response
         mock_resp.raise_for_status = MagicMock()
 
-        mock_config = MagicMock()
-        mock_config.ipfs.gateway = "https://gateway.test/ipfs/"
-
         with (
             patch("requests.get", return_value=mock_resp),
             patch(
-                "micromech.core.config.MicromechConfig.load",
-                return_value=mock_config,
+                "micromech.core.constants.IPFS_GATEWAY",
+                "https://gateway.test/ipfs/",
             ),
         ):
             result = _parse_delivery_data(multihash)

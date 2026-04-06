@@ -12,7 +12,13 @@ from typing import Any, Optional
 from loguru import logger
 
 from micromech.core.config import MicromechConfig
-from micromech.core.constants import STATUS_PENDING
+from micromech.core.constants import (
+    DB_PATH,
+    DEFAULT_HOST,
+    DEFAULT_MAX_CONCURRENT,
+    DEFAULT_PORT,
+    STATUS_PENDING,
+)
 from micromech.core.models import MechRequest
 from micromech.core.persistence import PersistentQueue
 from micromech.runtime.delivery import DeliveryManager
@@ -42,13 +48,13 @@ class MechServer:
         self.bridges = bridges or {}
 
         # Shared components
-        self.queue = PersistentQueue(config.persistence.db_path)
+        self.queue = PersistentQueue(DB_PATH)
         self.registry = ToolRegistry()
         self.metrics = MetricsCollector()
         self.executor = ToolExecutor(
             registry=self.registry,
             queue=self.queue,
-            max_concurrent=config.runtime.max_concurrent,
+            max_concurrent=DEFAULT_MAX_CONCURRENT,
             metrics=self.metrics,
         )
 
@@ -72,15 +78,8 @@ class MechServer:
         self._queued_ids: set[str] = set()
 
     def _load_tools(self) -> None:
-        """Load tools based on config."""
+        """Load tools (auto-discovered builtins)."""
         self.registry.load_builtins()
-
-        for tool_cfg in self.config.tools:
-            if not tool_cfg.enabled:
-                continue
-            if not self.registry.has(tool_cfg.id):
-                logger.warning("Tool '{}' not found in registry", tool_cfg.id)
-
         logger.info("Loaded tools: {}", self.registry.tool_ids)
 
     async def _recover(self) -> None:
@@ -211,7 +210,7 @@ class MechServer:
             self._tasks.append(asyncio.create_task(self._run_http()))
 
         # Start task scheduler (checkpoint, rewards, fund, alerts, etc.)
-        if self.config.tasks.enabled:
+        if self.config.tasks_enabled:
             try:
                 from micromech.tasks.scheduler import TaskScheduler
                 from micromech.tasks.notifications import NotificationService
@@ -235,7 +234,7 @@ class MechServer:
             "MechServer running (chains={}, tools={}, max_concurrent={})",
             len(chains),
             len(self.registry.tool_ids),
-            self.config.runtime.max_concurrent,
+            DEFAULT_MAX_CONCURRENT,
         )
 
         try:
@@ -276,15 +275,15 @@ class MechServer:
 
         config = uvicorn.Config(
             app,
-            host=self.config.runtime.host,
-            port=self.config.runtime.port,
-            log_level=self.config.runtime.log_level.lower(),
+            host=DEFAULT_HOST,
+            port=DEFAULT_PORT,
+            log_level=self.config.log_level.lower(),
         )
         server = uvicorn.Server(config)
         logger.info(
             "HTTP server on {}:{} (dashboard at /dashboard)",
-            self.config.runtime.host,
-            self.config.runtime.port,
+            DEFAULT_HOST,
+            DEFAULT_PORT,
         )
         await server.serve()
 

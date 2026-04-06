@@ -132,8 +132,7 @@ async def update_check_task(
     global _notified_version, _pending_version, _auto_update_started_at
 
     if config is not None:
-        tasks_cfg = getattr(config, "tasks", None)
-        if tasks_cfg and not getattr(tasks_cfg, "update_check_enabled", True):
+        if not getattr(config, "update_check_enabled", True):
             return
 
     logger.debug("Checking for micromech updates...")
@@ -159,9 +158,7 @@ async def update_check_task(
     # Determine auto-update from config
     auto_update = False
     if config is not None:
-        tasks_cfg = getattr(config, "tasks", None)
-        if tasks_cfg:
-            auto_update = getattr(tasks_cfg, "auto_update_enabled", False)
+        auto_update = getattr(config, "auto_update_enabled", False)
 
     if auto_update:
         _pending_version = latest

@@ -1,6 +1,7 @@
 """Default constants for micromech."""
 
 import re
+from pathlib import Path
 from typing import Final, Optional
 
 # Ethereum address validation
@@ -36,7 +37,7 @@ except ImportError:
         },
     }
 
-# Runtime defaults
+# Runtime defaults (not user-configurable — CLI args override host/port)
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8090
 DEFAULT_MAX_CONCURRENT = 10
@@ -47,17 +48,35 @@ DEFAULT_DELIVERY_BATCH_SIZE = 10
 DEFAULT_DELIVERY_INTERVAL = 10  # seconds
 
 # Persistence
-DEFAULT_DB_NAME = "micromech.db"
-DEFAULT_CLEANUP_DAYS = 30
+DEFAULT_CONFIG_DIR = Path("data")
+DB_NAME = "micromech.db"
+DB_PATH = DEFAULT_CONFIG_DIR / DB_NAME
+CLEANUP_DAYS = 30
 
-# LLM defaults
+# IPFS (Autonolas infrastructure)
+IPFS_GATEWAY = "https://gateway.autonolas.tech/ipfs/"
+IPFS_API_URL = "https://registry.autonolas.tech"
+IPFS_TIMEOUT = 30
+
+# Tasks internals (not user-configurable)
+CHECKPOINT_GRACE_PERIOD_SECONDS = 120
+HEALTH_INTERVAL_SECONDS = 55
+TELEGRAM_RATE_LIMIT_SECONDS = 2
+
+# LLM defaults (used by the llm_tool, not global config)
 DEFAULT_LLM_MAX_TOKENS = 256
 DEFAULT_LLM_CONTEXT_SIZE = 2048
 
 # Available model presets: {preset_name: (repo_id, gguf_filename)}
 LLM_MODEL_PRESETS: dict[str, tuple[str, str]] = {
-    "qwen": ("Qwen/Qwen2.5-0.5B-Instruct-GGUF", "qwen2.5-0.5b-instruct-q4_k_m.gguf"),
-    "gemma4": ("unsloth/gemma-4-E2B-it-GGUF", "gemma-4-E2B-it-Q4_K_M.gguf"),
+    "qwen": (
+        "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    ),
+    "gemma4": (
+        "unsloth/gemma-4-E2B-it-GGUF",
+        "gemma-4-E2B-it-Q4_K_M.gguf",
+    ),
 }
 
 DEFAULT_LLM_PRESET = "qwen"
