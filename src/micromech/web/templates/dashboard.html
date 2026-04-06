@@ -420,14 +420,6 @@
                 <!-- Action result (shared) -->
                 <pre class="mgmt-result" id="mgmt-result" style="margin-top:1rem;"></pre>
 
-                <!-- Reputation -->
-                <div class="glass mgmt-section" id="karma-section" style="margin-top:1.5rem;">
-                    <h3 style="font-size:0.95rem; color:var(--text-muted);">Reputation</h3>
-                    <div id="karma-breakdown">
-                        <span style="color:var(--text-muted); font-size:0.85rem;">Loading reputation data...</span>
-                    </div>
-                </div>
-
                 <!-- Deploy on new chains -->
                 <div class="glass mgmt-section" id="deploy-new-section" style="margin-top:1.5rem;">
                     <h3 style="font-size:0.95rem; color:var(--text-muted);">Deploy on New Chains</h3>
@@ -1280,68 +1272,7 @@
     }
 
     async function loadKarma() {
-        try {
-            const r = await fetch('/api/karma');
-            const data = await r.json();
-            if (data.error) return;
-
-            let found = false;
-            const rows = [];
-
-            for (const chain in data) {
-                const d = data[chain];
-                if (d.karma === null || d.karma === undefined) continue;
-                found = true;
-                rows.push({chain, deliveries: d.deliveries || 0, timeouts: d.timeouts || 0});
-            }
-
-            // Management tab — detailed breakdown per chain
-            const breakdown = document.getElementById('karma-breakdown');
-            if (!found) {
-                breakdown.innerHTML = '<span style="color:var(--text-muted)">No reputation data yet</span>';
-                return;
-            }
-
-            let html = '';
-            for (const row of rows) {
-                const r = reputationLabel(row.deliveries, row.timeouts);
-                const pct = row.deliveries > 0 ? ((row.deliveries - row.timeouts) / row.deliveries * 100).toFixed(1) + '%' : '-';
-
-                html += `<div style="display:flex;align-items:center;gap:1rem;padding:0.75rem 0;border-bottom:1px solid rgba(255,255,255,0.05);">
-                    <div style="min-width:80px;font-size:0.85rem;color:var(--text-muted);text-transform:capitalize;">${escapeHtml(row.chain)}</div>
-                    <div style="flex:1;">
-                        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.35rem;">
-                            <span style="color:${r.color};font-weight:600;font-size:0.9rem;">${r.icon} ${r.text}</span>
-                            <span style="color:var(--text-muted);font-size:0.75rem;">${pct} reliability</span>
-                        </div>
-                        <div style="background:rgba(255,255,255,0.05);border-radius:4px;height:6px;overflow:hidden;">
-                            <div style="height:100%;border-radius:4px;background:${r.color};width:${row.deliveries > 0 ? pct : '0%'};transition:width 0.5s;"></div>
-                        </div>
-                    </div>
-                    <div style="text-align:right;min-width:100px;">
-                        <div style="font-family:var(--font-mono);font-size:0.85rem;">${row.deliveries.toLocaleString()} delivered</div>
-                        ${row.timeouts > 0 ? `<div style="font-family:var(--font-mono);font-size:0.75rem;color:var(--error);">${row.timeouts} missed</div>` : ''}
-                    </div>
-                </div>`;
-            }
-
-            if (rows.length > 1) {
-                const totalR = reputationLabel(totalDeliveries, totalTimeouts);
-                const totalPct = totalDeliveries > 0 ? ((totalDeliveries - totalTimeouts) / totalDeliveries * 100).toFixed(1) + '%' : '-';
-                html += `<div style="display:flex;align-items:center;gap:1rem;padding:0.75rem 0;font-weight:600;">
-                    <div style="min-width:80px;font-size:0.85rem;color:var(--text-muted);">Overall</div>
-                    <div style="flex:1;display:flex;align-items:center;gap:0.5rem;">
-                        <span style="color:${totalR.color};font-size:0.9rem;">${totalR.icon} ${totalR.text}</span>
-                        <span style="color:var(--text-muted);font-size:0.75rem;">${totalPct} reliability</span>
-                    </div>
-                    <div style="text-align:right;min-width:100px;">
-                        <div style="font-family:var(--font-mono);font-size:0.85rem;">${totalDeliveries.toLocaleString()} total</div>
-                    </div>
-                </div>`;
-            }
-
-            breakdown.innerHTML = html;
-        } catch (e) { /* silent */ }
+        // Karma is shown per-chain in management cards — no standalone section needed
     }
 
     // --- Logs (real service logs via /api/logs/stream) ---
