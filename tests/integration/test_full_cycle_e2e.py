@@ -24,6 +24,7 @@ import os
 import time as _time
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from web3 import Web3
@@ -304,31 +305,24 @@ def _deploy_mech_for_chain(
 # Fixtures
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def anvil_chain():
-    """Connect to the first available Anvil fork, snapshot state, revert after tests.
-
-    Uses anvil_snapshot/anvil_revert so repeated test runs don't corrupt the fork.
-    """
+    """Connect to the first available Anvil fork — fresh snapshot per test."""
     for chain_name in ("gnosis", "base"):
         w3 = _connect(chain_name)
         if w3 is not None:
-            # Snapshot the pristine fork state
-            resp = w3.provider.make_request("evm_snapshot", [])
-            snapshot_id = resp["result"]
+            snapshot_id = w3.provider.make_request("evm_snapshot", [])["result"]
             print(f"\n  Connected to {chain_name} Anvil: "
-                  f"chain_id={w3.eth.chain_id}, block={w3.eth.block_number}, "
-                  f"snapshot={snapshot_id}")
+                  f"chain_id={w3.eth.chain_id}, block={w3.eth.block_number}")
             yield chain_name, w3
-            # Revert to pristine state after all tests in this module
             w3.provider.make_request("evm_revert", [snapshot_id])
             return
     pytest.skip("No Anvil forks running on ports 18545 or 18546")
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def deployed_mech(anvil_chain: tuple[str, Web3]) -> dict[str, Any]:
-    """Deploy a fresh mech service on the Anvil fork."""
+    """Deploy a fresh mech service on the Anvil fork (per test)."""
     chain_name, w3 = anvil_chain
     result = _deploy_mech_for_chain(w3, chain_name)
     result["chain_name"] = chain_name
@@ -416,6 +410,16 @@ class TestFullMechCycle:
         )
 
         bridge = AnvilBridge(w3)
+
+        # Mock get_service_info to provide multisig_address for delivery
+        svc_info = {
+            "service_id": deployed_mech.get("service_id", 1),
+            "service_key": f"{chain_name}:{deployed_mech.get('service_id', 1)}",
+            "multisig_address": multisig,
+        }
+        svc_patch = patch("micromech.core.bridge.get_service_info", return_value=svc_info)
+        svc_patch.start()
+
         server = MechServer(config, bridges={chain_name: bridge})
 
         # Set listener start block to just before our request
@@ -546,6 +550,7 @@ class TestFullMechCycle:
             print(f"\n  FULL CYCLE TEST PASSED on {chain_name}")
 
         finally:
+            svc_patch.stop()
             server.stop()
             try:
                 await asyncio.wait_for(server_task, timeout=5.0)
@@ -631,6 +636,15 @@ class TestFullMechCycle:
         )
 
         bridge = AnvilBridge(w3)
+
+        svc_info2 = {
+            "service_id": deployed_mech.get("service_id", 1),
+            "service_key": f"{chain_name}:{deployed_mech.get('service_id', 1)}",
+            "multisig_address": multisig,
+        }
+        svc_patch2 = patch("micromech.core.bridge.get_service_info", return_value=svc_info2)
+        svc_patch2.start()
+
         server = MechServer(config, bridges={chain_name: bridge})
         server.listeners[chain_name]._last_block = block_before
 
@@ -693,6 +707,7 @@ class TestFullMechCycle:
                   f"(mapMechDeliveryCounts={on_chain_count})")
 
         finally:
+            svc_patch2.stop()
             server.stop()
             try:
                 await asyncio.wait_for(server_task, timeout=5.0)
