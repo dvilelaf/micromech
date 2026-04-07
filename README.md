@@ -1,7 +1,7 @@
 # micromech
 
 <p align="center">
-  <img width="40%" src="https://raw.githubusercontent.com/dvilelaf/micromech/main/images/micromech.png">
+  <img width="40%" src="images/micromech.png">
 </p>
 
 **A lightweight mech for the [OLAS](https://olas.network/) network.** micromech runs an autonomous AI agent (called a "mech") that listens for on-chain requests, solves them using pluggable tools, and delivers results back on-chain.
