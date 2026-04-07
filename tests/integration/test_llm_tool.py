@@ -45,7 +45,7 @@ class TestLLMTool:
 
     def test_llm_tool_simple(self, llm_available):
         """LLM tool returns a valid response for a simple prompt."""
-        from micromech.tools.llm_tool.llm_tool import run
+        from micromech.tools.local_llm.local_llm import run
 
         result, prompt, metadata, cb = run(prompt="What is 2 + 2? Answer with just the number.")
         assert result is not None
@@ -55,7 +55,7 @@ class TestLLMTool:
 
     def test_llm_tool_returns_model_info(self, llm_available):
         """LLM tool response includes model name and token count."""
-        from micromech.tools.llm_tool.llm_tool import run
+        from micromech.tools.local_llm.local_llm import run
 
         result, prompt, metadata, cb = run(prompt="Say hello.")
         parsed = json.loads(result)

@@ -160,7 +160,7 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
 
     # Use local LLM for inference
     try:
-        from micromech.tools.llm_tool.llm_tool import _get_llm, _llm_lock, _resolve_model
+        from micromech.tools.local_llm.local_llm import _get_llm, _llm_lock, _resolve_model
 
         model_repo, model_file = _resolve_model(kwargs)
         llm = _get_llm(model_repo=model_repo, model_file=model_file)

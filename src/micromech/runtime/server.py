@@ -256,10 +256,7 @@ class MechServer:
         from micromech.web.app import create_web_app
 
         def get_tools():
-            return [
-                {"id": t.metadata.id, "version": t.metadata.version}
-                for t in self.registry.list_tools()
-            ]
+            return self.registry.list_packages()
 
         web_app = create_web_app(
             get_status=self.get_status,

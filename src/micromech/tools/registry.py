@@ -19,7 +19,7 @@ _DEFAULT_TIMEOUT = 60
 # component.yaml can override this via a "timeout" field.
 _KNOWN_TIMEOUTS: dict[str, int] = {
     "echo_tool": 5,
-    "llm_tool": 120,
+    "local_llm": 120,
     "prediction_request": 120,
     "gemma4_api_tool": 60,
 }
@@ -63,6 +63,24 @@ class ToolRegistry:
                 seen.add(id(tool))
                 result.append(tool)
         return result
+
+    def list_packages(self) -> list[dict]:
+        """List tools grouped by package with their accepted tool IDs.
+
+        Returns list of dicts:
+            {"name": "local_llm", "version": "0.1.0", "tools": ["local-llm"]}
+        """
+        packages = []
+        seen: set[int] = set()
+        for tool in self._tools.values():
+            if id(tool) not in seen:
+                seen.add(id(tool))
+                packages.append({
+                    "name": tool.metadata.name,
+                    "version": tool.metadata.version,
+                    "tools": list(tool.ALLOWED_TOOLS),
+                })
+        return packages
 
     def has(self, tool_id: str) -> bool:
         """Check if a tool is registered."""

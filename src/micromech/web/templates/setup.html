@@ -771,15 +771,17 @@
                 container.innerHTML = '<p style="color:var(--text-muted);">No tools loaded.</p>';
                 return;
             }
-            tools.forEach(t => {
+            tools.forEach(pkg => {
                 const row = document.createElement('div');
                 row.className = 'balance-row';
                 const left = document.createElement('span');
-                left.textContent = t.id || 'unknown';
-                if (t.version) {
+                const toolIds = (pkg.tools || []).join(', ');
+                left.innerHTML = (pkg.name || 'unknown') +
+                    ' <span style="color:var(--text-muted);font-size:0.8rem;">(' + toolIds + ')</span>';
+                if (pkg.version) {
                     const ver = document.createElement('span');
-                    ver.style.cssText = 'color:var(--text-muted);font-size:0.75rem;';
-                    ver.textContent = ' v' + t.version;
+                    ver.style.cssText = 'color:var(--text-muted);font-size:0.75rem;margin-left:0.3rem;';
+                    ver.textContent = 'v' + pkg.version;
                     left.appendChild(ver);
                 }
                 const right = document.createElement('span');
