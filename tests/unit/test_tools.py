@@ -134,3 +134,29 @@ class TestToolRegistry:
         reg = ToolRegistry()
         reg.load_builtins()
         assert reg.has("echo")
+
+    def test_all_builtin_tool_ids_resolve(self):
+        """Every ALLOWED_TOOLS ID (including aliases) must resolve in the registry."""
+        reg = ToolRegistry()
+        reg.load_builtins()
+        # Collect all ALLOWED_TOOLS from all loaded tool packages
+        expected_ids: set[str] = set()
+        for tool in reg.list_tools():
+            for tool_id in tool.ALLOWED_TOOLS:
+                expected_ids.add(tool_id)
+        # Every ID must resolve to a Tool
+        for tool_id in expected_ids:
+            assert reg.has(tool_id), f"Tool ID '{tool_id}' not found in registry"
+            tool = reg.get(tool_id)
+            assert tool is not None
+
+    def test_list_packages(self):
+        reg = ToolRegistry()
+        reg.load_builtins()
+        packages = reg.list_packages()
+        assert len(packages) >= 1
+        for pkg in packages:
+            assert "name" in pkg
+            assert "version" in pkg
+            assert "tools" in pkg
+            assert len(pkg["tools"]) >= 1
