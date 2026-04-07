@@ -65,12 +65,14 @@ def _get_sse_semaphore() -> asyncio.Semaphore:
 _log_queues: list[stdlib_queue.Queue] = []
 _log_sink_registered = False
 
-_SENSITIVE_RE = re.compile(r'token=[^ &"\']+')
+_SENSITIVE_RE = re.compile(
+    r'token=[^ &"\']+|password=[^ &"\']+|api_key=[^ &"\']+|apikey=[^ &"\']+|/v[23]/[a-zA-Z0-9_-]{20,}'
+)
 
 
 def _redact_sensitive(msg: str) -> str:
-    """Strip auth tokens from log messages before sending to SSE clients."""
-    return _SENSITIVE_RE.sub("token=***", msg)
+    """Strip sensitive values from log messages before sending to SSE clients."""
+    return _SENSITIVE_RE.sub("***", msg)
 
 
 def _push_log_line(ts: str, level: str, msg: str) -> None:
@@ -308,8 +310,9 @@ def create_web_app(
     # --- Setup API ---
 
     @app.get("/api/setup/state")
-    async def setup_state() -> dict:
+    async def setup_state(request: Request) -> dict:
         """Get current setup state."""
+        authenticated = _check_auth(request) is None
         wallet_exists = False
         wallet_address = None
         needs_password = False
@@ -371,7 +374,7 @@ def create_web_app(
         else:
             step = "complete"
 
-        return {
+        result = {
             "wallet_exists": wallet_exists,
             "wallet_address": wallet_address,
             "needs_password": needs_password,
@@ -380,6 +383,15 @@ def create_web_app(
             "chains": chains_deployed,
             "step": step,
         }
+
+        # Strip sensitive addresses when not authenticated
+        if not authenticated:
+            result["wallet_address"] = None
+            for chain_data in result["chains"].values():
+                chain_data.pop("mech_address", None)
+                chain_data.pop("multisig_address", None)
+
+        return result
 
     @app.post("/api/setup/wallet")
     async def setup_wallet(

@@ -30,7 +30,7 @@ from micromech.bot.commands.settings import (
 from micromech.bot.commands.status import status_command
 from micromech.bot.commands.update import update_command
 from micromech.bot.commands.wallet import wallet_command
-from micromech.bot.formatting import bold, escape_html
+from micromech.bot.formatting import bold
 from micromech.bot.security import authorized_only, rate_limited
 from micromech.core.config import MicromechConfig
 from micromech.core.persistence import PersistentQueue
@@ -91,8 +91,9 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         return
     if not secrets.telegram_chat_id or update.effective_chat.id != secrets.telegram_chat_id:
         logger.warning(
-            f"Unauthorized callback attempt from chat_id={update.effective_chat.id} "
-            f"user={update.effective_user.username if update.effective_user else 'unknown'}"
+            "Unauthorized callback attempt from chat_id={} user={}",
+            update.effective_chat.id,
+            update.effective_user.username if update.effective_user else "unknown",
         )
         return
 
@@ -121,7 +122,7 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         else:
             await query.answer("Unknown action")
     except Exception as e:
-        logger.error(f"Error handling callback {data}: {e}", exc_info=True)
+        logger.opt(exception=True).error("Error handling callback {}: {}", data, e)
         try:
             await query.answer("An error occurred")
         except Exception:
@@ -161,7 +162,7 @@ def create_application(
         try:
             lifecycles[chain_name] = MechLifecycle(config, chain_name)
         except Exception as e:
-            logger.warning(f"Failed to create MechLifecycle for {chain_name}: {e}")
+            logger.warning("Failed to create MechLifecycle for {}: {}", chain_name, e)
     app.bot_data["lifecycles"] = lifecycles
 
     # Commands

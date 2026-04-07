@@ -42,11 +42,19 @@ def _collect_logs() -> list[tuple[str, bytes]]:
 
 
 def _build_zip(files: list[tuple[str, bytes]]) -> io.BytesIO:
-    """Build a zip file in memory."""
+    """Build a zip file in memory, redacting sensitive values."""
+    from micromech.web.app import _redact_sensitive
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, content in files:
             compress = zipfile.ZIP_STORED if name.endswith(".gz") else zipfile.ZIP_DEFLATED
+            # Redact plaintext log files (skip .gz which are already compressed)
+            if not name.endswith(".gz"):
+                try:
+                    content = _redact_sensitive(content.decode("utf-8", errors="replace")).encode("utf-8")
+                except Exception:
+                    pass
             zf.writestr(name, content, compress_type=compress)
     buf.seek(0)
     return buf
@@ -85,7 +93,7 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             filename=filename,
         )
     except Exception as e:
-        logger.error(f"Error collecting logs: {e}", exc_info=True)
+        logger.opt(exception=True).error("Error collecting logs: {}", e)
         await update.message.reply_text(
             "Error collecting logs. Check server logs for details.",
         )

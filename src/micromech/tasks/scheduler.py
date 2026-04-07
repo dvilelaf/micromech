@@ -48,7 +48,7 @@ class TaskScheduler:
             try:
                 self.lifecycles[chain_name] = MechLifecycle(config, chain_name)
             except Exception as e:
-                logger.warning(f"Failed to create MechLifecycle for {chain_name}: {e}")
+                logger.warning("Failed to create MechLifecycle for {}: {}", chain_name, e)
 
     def start(self) -> None:
         """Start the scheduler and add jobs."""
@@ -134,7 +134,10 @@ class TaskScheduler:
             startup_delay += 20
 
         # Update Check Task (daily at 8 AM local time)
-        local_tz = ZoneInfo(os.environ.get("TZ", "Europe/Madrid"))
+        try:
+            local_tz = ZoneInfo(os.environ.get("TZ", "Europe/Madrid"))
+        except Exception:
+            local_tz = ZoneInfo("Europe/Madrid")
         if cfg.update_check_enabled:
             self.scheduler.add_job(
                 update_check_task,

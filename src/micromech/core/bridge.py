@@ -122,6 +122,12 @@ def get_wallet() -> Any:
             TransferService,
         )
 
+        # WARNING: object.__new__(Wallet) bypasses Wallet.__init__ which
+        # normally reads the wallet file and prompts for a password.  We do
+        # this because Wallet has no factory/classmethod that accepts a
+        # pre-built KeyStorage.  ALL service attributes that Wallet.__init__
+        # would set are assigned explicitly below.  If Wallet gains new
+        # attributes in a future iwa release, they must be added here too.
         wallet = object.__new__(Wallet)
         wallet.key_storage = _cached_key_storage
         wallet.account_service = AccountService(_cached_key_storage)
@@ -234,6 +240,13 @@ _service_info_cache: dict[str, tuple[float, dict]] = {}
 _SERVICE_INFO_TTL = 30  # seconds
 
 
+def _get_attr(obj: Any, name: str, default: Any = None) -> Any:
+    """Get attribute from dict-like or object, with fallback."""
+    if hasattr(obj, "get"):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
 def get_service_info(chain_name: str) -> dict:
     """Read service data from iwa's olas plugin (cached 30s).
 
@@ -250,18 +263,14 @@ def get_service_info(chain_name: str) -> dict:
         from iwa.core.models import Config
         olas = Config().get_plugin_config("olas")
         if olas:
-            services = olas.get("services") if hasattr(olas, "get") else getattr(olas, "services", None)
+            services = _get_attr(olas, "services")
             if services:
                 items = services.values() if hasattr(services, "values") else services
                 for service in items:
-                    svc_chain = service.get("chain_name", "") if hasattr(service, "get") else getattr(service, "chain_name", "")
+                    svc_chain = _get_attr(service, "chain_name", "")
                     if svc_chain == chain_name:
-                        svc_id = service.get("service_id") if hasattr(service, "get") else getattr(service, "service_id", None)
-                        multisig = (
-                            service.get("multisig_address")
-                            if hasattr(service, "get")
-                            else getattr(service, "multisig_address", None)
-                        )
+                        svc_id = _get_attr(service, "service_id")
+                        multisig = _get_attr(service, "multisig_address")
                         result = {
                             "service_id": svc_id,
                             "service_key": f"{chain_name}:{svc_id}",

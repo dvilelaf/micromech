@@ -210,30 +210,27 @@ class DeliveryManager:
 
         # Push to IPFS and get multihash bytes for delivery
         ipfs_cid_hex: Optional[str] = None
-        if True:
-            try:
-                from micromech.ipfs.client import (
-                    cid_hex_to_multihash_bytes,
-                    push_to_ipfs,
-                )
+        try:
+            from micromech.ipfs.client import (
+                cid_hex_to_multihash_bytes,
+                push_to_ipfs,
+            )
 
-                _, cid_hex = await push_to_ipfs(
-                    response_payload,
-                    api_url=IPFS_API_URL,
+            _, cid_hex = await push_to_ipfs(
+                response_payload,
+                api_url=IPFS_API_URL,
+            )
+            delivery_data = cid_hex_to_multihash_bytes(
+                cid_hex,
+            )
+            ipfs_cid_hex = cid_hex
+        except Exception as e:
+            if not self._ipfs_warning_logged:
+                logger.warning(
+                    "IPFS unavailable, delivering raw: {}",
+                    e,
                 )
-                delivery_data = cid_hex_to_multihash_bytes(
-                    cid_hex,
-                )
-                ipfs_cid_hex = cid_hex
-            except Exception as e:
-                if not self._ipfs_warning_logged:
-                    logger.warning(
-                        "IPFS unavailable, delivering raw: {}",
-                        e,
-                    )
-                    self._ipfs_warning_logged = True
-                delivery_data = response_payload
-        else:
+                self._ipfs_warning_logged = True
             delivery_data = response_payload
 
         if record.request.is_offchain:

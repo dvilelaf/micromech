@@ -17,6 +17,8 @@ import uuid
 import warnings
 from typing import Any
 
+from micromech.core.constants import IPFS_API_URL
+
 from eth_account import Account
 from rich.console import Console
 from rich.live import Live
@@ -108,27 +110,6 @@ def fund_via_anvil(w3: Web3, address: str, amount_wei: int) -> bool:
         return True
     except Exception:
         return False
-
-
-def extract_request_id(receipt: dict, marketplace_addr: str) -> str | None:
-    """Extract the first requestId from MarketplaceRequest event logs."""
-    mp_lower = marketplace_addr.lower()
-    for log in receipt.get("logs", []):
-        log_addr = (log.get("address") or "").lower()
-        if log_addr != mp_lower:
-            continue
-        # requestIds is in the data (non-indexed), decode from ABI
-        # Simpler: topic[0] is event sig, data contains requestIds array
-        # The requestIds bytes32[] is the 4th field in data
-        topics = log.get("topics", [])
-        data = log.get("data", b"")
-        if isinstance(data, bytes) and len(data) >= 128 and len(topics) >= 1:
-            # Skip to requestIds: offset(0) + offset(32) + numRequests(64) + ...
-            # ABI decode: first 32 bytes = numRequests offset, complex.
-            # Easier: just grab from decoded event if available
-            pass
-    # Fallback: use web3 receipt processing
-    return None
 
 
 def format_response(result_data: dict | None) -> str:
@@ -452,7 +433,7 @@ def main():
     private_key = acct.key
 
     abi = load_marketplace_abi()
-    marketplaces: dict[str, any] = {}
+    marketplaces: dict[str, Any] = {}
     fund_amount = Web3.to_wei(100, "ether")
 
     console.print()
@@ -510,7 +491,7 @@ def main():
 
                 # Send on-chain request
                 try:
-                    request_data = _push_request_to_ipfs(prompt, tool, cfg.ipfs.api_url)
+                    request_data = _push_request_to_ipfs(prompt, tool, IPFS_API_URL)
                     fee = mp.functions.fee().call()
                     value = cc.delivery_rate + fee
 

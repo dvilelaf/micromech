@@ -402,7 +402,7 @@ def cleanup(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Clean up old delivered/failed requests from the database."""
-    cfg = _load_config(config_path)
+    _load_config(config_path)
     from micromech.core.persistence import PersistentQueue
 
     queue = PersistentQueue(DB_PATH)
@@ -471,6 +471,8 @@ def web(
     if has_deployed and not no_runtime:
         typer.echo("Service deployed — runtime will auto-start")
 
+        # TODO: migrate from deprecated on_event("startup") to lifespan
+        # context manager — requires restructuring the web command.
         @web_app.on_event("startup")
         async def _auto_start_runtime():
             ok = await mgr.start()
