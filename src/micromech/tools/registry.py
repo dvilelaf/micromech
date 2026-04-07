@@ -55,8 +55,14 @@ class ToolRegistry:
         return tool
 
     def list_tools(self) -> list[Tool]:
-        """List all registered tools."""
-        return list(self._tools.values())
+        """List all registered tools (deduplicated, aliases excluded)."""
+        seen: set[int] = set()
+        result: list[Tool] = []
+        for tool in self._tools.values():
+            if id(tool) not in seen:
+                seen.add(id(tool))
+                result.append(tool)
+        return result
 
     def has(self, tool_id: str) -> bool:
         """Check if a tool is registered."""
