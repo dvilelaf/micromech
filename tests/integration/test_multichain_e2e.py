@@ -238,20 +238,33 @@ def _olas_balance(w3: Web3, chain_name: str, account: str) -> int:
 
 # --- Fixtures ---
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 def available_chains() -> dict[str, Web3]:
-    """Connect to all available Anvil forks. Skip if fewer than 2."""
+    """Connect to all available Anvil forks. Requires >= 2.
+
+    Per-test fixture with snapshot/revert for isolation.
+    """
     connected: dict[str, Web3] = {}
+    snapshots: dict[str, str] = {}
     for chain_name in CHAIN_INFRA:
         w3 = _connect(chain_name)
         if w3:
+            snapshots[chain_name] = w3.provider.make_request("evm_snapshot", [])["result"]
             rich = CHAIN_INFRA[chain_name]["rich_account"]
             _fund_native(w3, rich)
             connected[chain_name] = w3
             print(f"  {chain_name}: chain_id={w3.eth.chain_id}, block={w3.eth.block_number}")
-    if len(connected) < 2:
-        pytest.skip(f"Need >=2 Anvil forks, got {len(connected)}: {list(connected)}")
-    return connected
+    assert len(connected) >= 2, (
+        f"Need >=2 Anvil forks, got {len(connected)}: {list(connected)}. "
+        f"Start with: just anvil-fork gnosis,base"
+    )
+
+    yield connected
+
+    # Revert all chains
+    for chain_name, w3 in connected.items():
+        if chain_name in snapshots:
+            w3.provider.make_request("evm_revert", [snapshots[chain_name]])
 
 
 # --- Tests: Contract verification ---
@@ -302,7 +315,8 @@ class TestContractsExist:
 # --- Tests: Listener multi-chain ---
 
 class TestListenerMultiChain:
-    def test_listener_polls_each_chain(self, available_chains: dict[str, Web3]):
+    @pytest.mark.asyncio
+    async def test_listener_polls_each_chain(self, available_chains: dict[str, Web3]):
         from micromech.runtime.listener import EventListener
         for chain_name, w3 in available_chains.items():
             addrs = CHAIN_DEFAULTS[chain_name]
@@ -317,7 +331,7 @@ class TestListenerMultiChain:
 
             config = MicromechConfig()
             listener = EventListener(config, chain_cfg, bridge=AnvilBridge(w3))
-            requests = asyncio.get_event_loop().run_until_complete(listener.poll_once())
+            requests = await listener.poll_once()
             assert isinstance(requests, list)
             print(f"  {chain_name}: polled {len(requests)} events")
 
@@ -583,9 +597,8 @@ class TestLifecycleMultiChain:
             print(f"  {chain_name:12s}: {result}")
         print(f"{'='*60}")
 
-        # At least 3 chains must pass full lifecycle
-        # (some chains may fail due to unstable public RPCs or chain-specific quirks)
-        assert passed >= 3, (
+        # All connected chains must pass full lifecycle
+        assert passed == len(available_chains), (
             f"Only {passed}/{len(available_chains)} chains passed: {results}"
         )
 
