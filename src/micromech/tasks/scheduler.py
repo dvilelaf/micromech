@@ -11,6 +11,7 @@ from loguru import logger
 from micromech.core.bridge import IwaBridge
 from micromech.core.config import MicromechConfig
 from micromech.core.constants import HEALTH_INTERVAL_SECONDS
+from micromech.core.persistence import PersistentQueue
 from micromech.management import MechLifecycle
 from micromech.secrets import secrets
 from micromech.tasks.checkpoint import checkpoint_task
@@ -18,6 +19,7 @@ from micromech.tasks.fund import fund_task
 from micromech.tasks.health import health_task
 from micromech.tasks.low_balance_alert import low_balance_alert_task
 from micromech.tasks.notifications import NotificationService
+from micromech.tasks.profitability_check import profitability_check_task
 from micromech.tasks.rewards import rewards_task
 from micromech.tasks.update_check import (
     AUTO_UPDATE_POLL_MINUTES,
@@ -35,12 +37,14 @@ class TaskScheduler:
         config: MicromechConfig,
         bridges: dict[str, IwaBridge],
         notification_service: NotificationService,
+        queue: PersistentQueue | None = None,
     ):
         """Initialize scheduler."""
         self.scheduler = AsyncIOScheduler(timezone=timezone.utc)
         self.config = config
         self.bridges = bridges
         self.notification_service = notification_service
+        self.queue = queue
 
         # Create MechLifecycle per enabled chain
         self.lifecycles: dict[str, MechLifecycle] = {}
@@ -91,7 +95,7 @@ class TaskScheduler:
             rewards_task,
             "interval",
             minutes=cfg.claim_interval_minutes,
-            args=[self.lifecycles, self.notification_service, cfg],
+            args=[self.lifecycles, self.notification_service, cfg, self.bridges],
             id="rewards_task",
             replace_existing=True,
             misfire_grace_time=misfire_grace_time,
@@ -133,11 +137,26 @@ class TaskScheduler:
             )
             startup_delay += 20
 
-        # Update Check Task (daily at 8 AM local time)
+        # Profitability Check Task (daily at noon local time)
         try:
             local_tz = ZoneInfo(os.environ.get("TZ", "Europe/Madrid"))
         except Exception:
             local_tz = ZoneInfo("Europe/Madrid")
+        if self.queue:
+            self.scheduler.add_job(
+                profitability_check_task,
+                "cron",
+                hour=12,
+                timezone=local_tz,
+                args=[
+                    self.queue, self.lifecycles, self.bridges,
+                    self.notification_service, cfg,
+                ],
+                id="profitability_check_task",
+                replace_existing=True,
+            )
+
+        # Update Check Task (daily at 8 AM local time)
         if cfg.update_check_enabled:
             self.scheduler.add_job(
                 update_check_task,

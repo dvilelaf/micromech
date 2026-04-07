@@ -21,7 +21,6 @@ class TestTaskFields:
         assert cfg.low_balance_alert_enabled is True
         assert cfg.update_check_enabled is True
         assert cfg.auto_update_enabled is False
-        assert cfg.update_channel == "release"
 
     def test_checkpoint_interval_min(self):
         with pytest.raises(ValidationError):
@@ -40,8 +39,16 @@ class TestTaskFields:
             MicromechConfig(claim_interval_minutes=1441)
 
     def test_fund_threshold_non_negative(self):
-        cfg = MicromechConfig(fund_threshold_native=0)
+        cfg = MicromechConfig(fund_threshold_native=0, fund_target_native=0)
         assert cfg.fund_threshold_native == 0
+
+    def test_fund_target_must_be_above_threshold(self):
+        with pytest.raises(ValidationError):
+            MicromechConfig(fund_threshold_native=1.0, fund_target_native=0.5)
+
+    def test_fund_target_upper_bound(self):
+        with pytest.raises(ValidationError):
+            MicromechConfig(fund_target_native=51)
 
     def test_custom_values(self):
         cfg = MicromechConfig(

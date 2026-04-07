@@ -216,7 +216,7 @@ class MechServer:
 
             notification = NotificationService()
             self._task_scheduler = TaskScheduler(
-                self.config, self.bridges, notification,
+                self.config, self.bridges, notification, queue=self.queue,
             )
             self._task_scheduler.start()
             logger.info("TaskScheduler started")
@@ -275,7 +275,7 @@ class MechServer:
             app,
             host=DEFAULT_HOST,
             port=DEFAULT_PORT,
-            log_level=self.config.log_level.lower(),
+            log_level="info",
         )
         server = uvicorn.Server(config)
         logger.info(

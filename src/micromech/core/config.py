@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from micromech.core.constants import (
     CHAIN_DEFAULTS,
@@ -62,9 +62,6 @@ class MicromechConfig(BaseModel):
     # Chains (written by setup wizard)
     chains: dict[str, ChainConfig] = Field(default_factory=dict)
 
-    # Runtime
-    log_level: str = "INFO"
-
     # Tasks
     checkpoint_interval_minutes: int = Field(default=10, ge=1, le=120)
     checkpoint_alert_enabled: bool = True
@@ -72,26 +69,24 @@ class MicromechConfig(BaseModel):
     claim_threshold_olas: float = Field(default=1.0, ge=0)
     fund_enabled: bool = True
     fund_interval_minutes: int = Field(default=360, ge=10, le=1440)
-    fund_threshold_native: float = Field(default=0.05, ge=0)
-    fund_target_native: float = Field(default=0.5, ge=0)
+    fund_threshold_native: float = Field(default=0.05, ge=0, le=50)
+    fund_target_native: float = Field(default=0.5, ge=0, le=50)
     auto_sell_enabled: bool = False
     auto_sell_min_olas: float = Field(default=1.0, ge=0)
-    auto_sell_runway_days: int = Field(default=20, ge=1, le=365)
     low_balance_alert_enabled: bool = True
     low_balance_alert_interval_hours: int = Field(default=6, ge=1, le=48)
     update_check_enabled: bool = True
     auto_update_enabled: bool = False
-    update_channel: str = "release"
 
-    @field_validator("log_level")
-    @classmethod
-    def validate_log_level(cls, v: str) -> str:
-        valid = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
-        upper = v.upper()
-        if upper not in valid:
-            msg = f"Invalid log level: {v}. Must be one of {valid}"
+    @model_validator(mode="after")
+    def validate_fund_target_above_threshold(self) -> "MicromechConfig":
+        if self.fund_target_native < self.fund_threshold_native:
+            msg = (
+                f"fund_target_native ({self.fund_target_native}) must be >= "
+                f"fund_threshold_native ({self.fund_threshold_native})"
+            )
             raise ValueError(msg)
-        return upper
+        return self
 
     @property
     def enabled_chains(self) -> dict[str, ChainConfig]:

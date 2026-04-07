@@ -236,6 +236,37 @@ def check_balances(chain_name: str) -> tuple[float, float]:
         return 0.0, 0.0
 
 
+def check_safe_balance(chain_name: str) -> Optional[float]:
+    """Check native token balance of the service's Safe multisig.
+
+    Returns native balance in whole units (e.g. xDAI), or None on failure.
+    Callers must handle None (unknown balance) differently from 0.0 (empty).
+    """
+    try:
+        if not _IWA_AVAILABLE:
+            return None
+
+        svc_info = get_service_info(chain_name)
+        multisig = svc_info.get("multisig_address")
+        if not multisig:
+            return None
+
+        global _cached_interfaces  # noqa: PLW0603
+        if _cached_interfaces is None:
+            _cached_interfaces = ChainInterfaces()
+        ci = _cached_interfaces.get(chain_name)
+        if not ci:
+            return None
+
+        native_wei = ci.with_retry(
+            lambda: ci.web3.eth.get_balance(multisig),
+        )
+        return float(ci.web3.from_wei(native_wei, "ether"))
+    except Exception:
+        logger.debug("Failed to check safe balance on {}", chain_name)
+        return None
+
+
 _service_info_cache: dict[str, tuple[float, dict]] = {}
 _SERVICE_INFO_TTL = 30  # seconds
 

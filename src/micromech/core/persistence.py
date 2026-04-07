@@ -354,6 +354,18 @@ class PersistentQueue:
         offchain = base_q.where(RequestRow.is_offchain == True).count()  # noqa: E712
         return {"onchain": onchain, "offchain": offchain}
 
+    def count_delivered_since(
+        self, hours: int = 24, chain: Optional[str] = None,
+    ) -> int:
+        """Count delivered requests in the last N hours."""
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        query = RequestRow.select().where(
+            RequestRow.status == STATUS_DELIVERED,
+            RequestRow.delivered_at >= cutoff,
+        )
+        query = _chain_filter(query, chain)
+        return query.count()
+
     def cleanup(self, days: int = 30) -> int:
         """Remove delivered/failed requests older than N days. Returns count deleted."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)

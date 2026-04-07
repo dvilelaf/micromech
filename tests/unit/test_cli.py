@@ -71,13 +71,13 @@ class TestConfigCommand:
         result = runner.invoke(app, ["config", "--config", str(config_path)])
         assert result.exit_code == 0
         assert "chains" in result.output
-        assert "log_level" in result.output
+        assert "chains" in result.output
 
     def test_show_default_config(self, tmp_path: Path):
         config_path = tmp_path / "nonexistent.yaml"
         result = runner.invoke(app, ["config", "--config", str(config_path)])
         assert result.exit_code == 0
-        assert "log_level" in result.output
+        assert "chains" in result.output
 
 
 class TestStatusCommand:

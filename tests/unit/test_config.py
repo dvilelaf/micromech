@@ -27,20 +27,6 @@ def _chain_cfg(**overrides) -> ChainConfig:
     return ChainConfig(**defaults)
 
 
-class TestLogLevel:
-    def test_default(self):
-        cfg = MicromechConfig()
-        assert cfg.log_level == "INFO"
-
-    def test_custom(self):
-        cfg = MicromechConfig(log_level="debug")
-        assert cfg.log_level == "DEBUG"
-
-    def test_invalid(self):
-        with pytest.raises(ValidationError):
-            MicromechConfig(log_level="VERBOSE")
-
-
 class TestChainConfig:
     def test_defaults(self):
         cfg = _chain_cfg()
@@ -83,7 +69,6 @@ class TestChainConfig:
 class TestMicromechConfig:
     def test_defaults(self):
         cfg = MicromechConfig()
-        assert cfg.log_level == "INFO"
         assert cfg.chains == {}
         assert cfg.checkpoint_interval_minutes == 10
 
@@ -93,7 +78,6 @@ class TestMicromechConfig:
 
         config_path = tmp_path / "micromech.yaml"
         cfg = MicromechConfig(
-            log_level="DEBUG",
             chains={"base": _chain_cfg(chain="base")},
         )
 
@@ -103,19 +87,16 @@ class TestMicromechConfig:
             assert config_path.exists()
             loaded = MicromechConfig.load(config_path)
 
-        assert loaded.log_level == "DEBUG"
         assert "base" in loaded.chains
         assert loaded.chains["base"].chain == "base"
 
     def test_load_defaults(self):
         """Load returns defaults when no config exists."""
         cfg = MicromechConfig()
-        assert cfg.log_level == "INFO"
         assert cfg.chains == {}
 
     def test_from_dict(self):
         data = {
-            "log_level": "DEBUG",
             "chains": {
                 "base": {
                     "chain": "base",
@@ -126,7 +107,6 @@ class TestMicromechConfig:
             },
         }
         cfg = MicromechConfig.model_validate(data)
-        assert cfg.log_level == "DEBUG"
         assert cfg.chains["base"].chain == "base"
 
     def test_roundtrip_json(self):
@@ -135,7 +115,6 @@ class TestMicromechConfig:
         )
         data = cfg.model_dump(mode="json")
         restored = MicromechConfig.model_validate(data)
-        assert restored.log_level == cfg.log_level
         assert restored.chains["base"].chain == "base"
 
     def test_enabled_chains_property(self):
@@ -155,10 +134,9 @@ class TestMicromechConfig:
             "version": "1",
             "runtime": {"port": 9999},
             "ipfs": {"gateway": "https://foo/"},
-            "log_level": "WARNING",
+            "log_level": "WARNING",  # old field, should be ignored
         }
         cfg = MicromechConfig.model_validate(data)
-        assert cfg.log_level == "WARNING"
 
     def test_tasks_fields_flat(self):
         cfg = MicromechConfig(
