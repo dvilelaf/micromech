@@ -20,7 +20,7 @@ from micromech.core.constants import (
     LLM_MODEL_PRESETS,
 )
 
-ALLOWED_TOOLS = ["local-llm"]
+ALLOWED_TOOLS = ["local-llm", "llm"]
 
 _llm_instances: dict[str, Any] = {}
 _init_lock = threading.Lock()   # For thread-safe model loading
