@@ -65,11 +65,7 @@ class MicromechConfig(BaseModel):
     # Runtime
     log_level: str = "INFO"
 
-    # Telegram
-    telegram_enabled: bool = False
-
     # Tasks
-    tasks_enabled: bool = True
     checkpoint_interval_minutes: int = Field(default=10, ge=1, le=120)
     checkpoint_alert_enabled: bool = True
     claim_interval_minutes: int = Field(default=240, ge=10, le=1440)

@@ -85,8 +85,6 @@ class TestMicromechConfig:
         cfg = MicromechConfig()
         assert cfg.log_level == "INFO"
         assert cfg.chains == {}
-        assert cfg.tasks_enabled is True
-        assert cfg.telegram_enabled is False
         assert cfg.checkpoint_interval_minutes == 10
 
     def test_save_and_load_fallback(self, tmp_path: Path):

@@ -34,7 +34,7 @@ class NotificationService:
         self._resolve_attempts += 1
         try:
             from micromech.secrets import secrets
-            if not secrets.telegram_enabled:
+            if not (secrets.telegram_token and secrets.telegram_chat_id):
                 self._resolve_attempts = self._max_resolve_attempts
                 return
             from micromech.bot import _application

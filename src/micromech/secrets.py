@@ -32,9 +32,5 @@ class MicromechSecrets(BaseSettings):
     # Web dashboard auth (existing MICROMECH_AUTH_TOKEN)
     micromech_auth_token: Optional[str] = None
 
-    @property
-    def telegram_enabled(self) -> bool:
-        return bool(self.telegram_token and self.telegram_chat_id)
-
 
 secrets = MicromechSecrets()

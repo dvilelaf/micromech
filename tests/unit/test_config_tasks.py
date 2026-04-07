@@ -1,4 +1,4 @@
-"""Tests for flattened task/telegram fields on MicromechConfig."""
+"""Tests for flattened task fields on MicromechConfig."""
 
 import pytest
 from pydantic import ValidationError
@@ -6,20 +6,9 @@ from pydantic import ValidationError
 from micromech.core.config import MicromechConfig
 
 
-class TestTelegramEnabled:
-    def test_default_disabled(self):
-        cfg = MicromechConfig()
-        assert cfg.telegram_enabled is False
-
-    def test_enable(self):
-        cfg = MicromechConfig(telegram_enabled=True)
-        assert cfg.telegram_enabled is True
-
-
 class TestTaskFields:
     def test_defaults(self):
         cfg = MicromechConfig()
-        assert cfg.tasks_enabled is True
         assert cfg.checkpoint_interval_minutes == 10
         assert cfg.checkpoint_alert_enabled is True
         assert cfg.claim_interval_minutes == 240

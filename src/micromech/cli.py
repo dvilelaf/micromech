@@ -295,7 +295,7 @@ def run(
         # Start Telegram bot if configured
         try:
             from micromech.secrets import secrets
-            if secrets.telegram_enabled and cfg.telegram_enabled:
+            if secrets.telegram_token and secrets.telegram_chat_id:
                 from micromech.bot.app import create_application
                 bot_app = create_application(
                     config=cfg,

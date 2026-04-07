@@ -210,25 +210,23 @@ class MechServer:
             self._tasks.append(asyncio.create_task(self._run_http()))
 
         # Start task scheduler (checkpoint, rewards, fund, alerts, etc.)
-        if self.config.tasks_enabled:
-            try:
-                from micromech.tasks.scheduler import TaskScheduler
-                from micromech.tasks.notifications import NotificationService
+        try:
+            from micromech.tasks.scheduler import TaskScheduler
+            from micromech.tasks.notifications import NotificationService
 
-                notification = NotificationService()
-                self._task_scheduler = TaskScheduler(
-                    self.config, self.bridges, notification,
-                )
-                self._task_scheduler.start()
-                logger.info("TaskScheduler started")
+            notification = NotificationService()
+            self._task_scheduler = TaskScheduler(
+                self.config, self.bridges, notification,
+            )
+            self._task_scheduler.start()
+            logger.info("TaskScheduler started")
 
-                # Start watchdog loop
-                from micromech.tasks.watchdog import watchdog_loop
-                self._tasks.append(asyncio.create_task(
-                    watchdog_loop(notification)
-                ))
-            except Exception as e:
-                logger.warning("TaskScheduler failed to start: {}", e)
+            from micromech.tasks.watchdog import watchdog_loop
+            self._tasks.append(asyncio.create_task(
+                watchdog_loop(notification)
+            ))
+        except Exception as e:
+            logger.warning("TaskScheduler failed to start: {}", e)
 
         logger.info(
             "MechServer running (chains={}, tools={}, max_concurrent={})",

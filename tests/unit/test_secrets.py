@@ -1,4 +1,4 @@
-"""Tests for micromech.secrets — MicromechSecrets loading and properties."""
+"""Tests for micromech.secrets — MicromechSecrets loading."""
 
 from unittest.mock import patch
 
@@ -17,26 +17,15 @@ class TestMicromechSecrets:
         assert s.health_url is None
         assert s.micromech_auth_token is None
 
-    def test_telegram_enabled_when_both_set(self):
+    def test_telegram_fields_loaded(self):
         with patch.dict(
             "os.environ",
             {"TELEGRAM_TOKEN": "tok123", "TELEGRAM_CHAT_ID": "42"},
             clear=True,
         ):
             s = MicromechSecrets()
-        assert s.telegram_enabled is True
         assert s.telegram_token.get_secret_value() == "tok123"
         assert s.telegram_chat_id == 42
-
-    def test_telegram_disabled_when_token_missing(self):
-        with patch.dict("os.environ", {"TELEGRAM_CHAT_ID": "42"}, clear=True):
-            s = MicromechSecrets()
-        assert s.telegram_enabled is False
-
-    def test_telegram_disabled_when_chat_id_missing(self):
-        with patch.dict("os.environ", {"TELEGRAM_TOKEN": "tok"}, clear=True):
-            s = MicromechSecrets()
-        assert s.telegram_enabled is False
 
     def test_wallet_password_is_secret(self):
         with patch.dict("os.environ", {"WALLET_PASSWORD": "hunter2"}, clear=True):
