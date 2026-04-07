@@ -456,10 +456,7 @@ def web(
         return queue.get_recent(limit, chain=chain)
 
     def get_tools():
-        return [
-            {"id": t.metadata.id, "version": t.metadata.version}
-            for t in reg.list_tools()
-        ]
+        return reg.list_packages()
 
     web_app = create_web_app(
         get_status, get_recent, get_tools, noop_on_request,
