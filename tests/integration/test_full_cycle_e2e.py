@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 from web3 import Web3
 
-from micromech.core.config import ChainConfig, MicromechConfig, PersistenceConfig, RuntimeConfig
+from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import CHAIN_DEFAULTS, STATUS_DELIVERED, STATUS_EXECUTED
 from micromech.core.models import MechRequest
 from micromech.runtime.contracts import load_marketplace_abi, load_mech_abi
@@ -413,15 +413,6 @@ class TestFullMechCycle:
 
         config = MicromechConfig(
             chains={chain_name: chain_cfg},
-            persistence=PersistenceConfig(db_path=tmp_path / "full_cycle.db"),
-            runtime=RuntimeConfig(
-                port=18980,
-                max_concurrent=5,
-                delivery_interval=2,
-                delivery_batch_size=10,
-                event_poll_interval=2,
-                event_lookback_blocks=100,
-            ),
         )
 
         bridge = AnvilBridge(w3)
@@ -637,15 +628,6 @@ class TestFullMechCycle:
 
         config = MicromechConfig(
             chains={chain_name: chain_cfg},
-            persistence=PersistenceConfig(db_path=tmp_path / "multi_cycle.db"),
-            runtime=RuntimeConfig(
-                port=18981,
-                max_concurrent=5,
-                delivery_interval=2,
-                delivery_batch_size=10,
-                event_poll_interval=2,
-                event_lookback_blocks=100,
-            ),
         )
 
         bridge = AnvilBridge(w3)

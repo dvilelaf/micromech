@@ -28,7 +28,7 @@ from typing import Any
 import pytest
 from web3 import Web3
 
-from micromech.core.config import ChainConfig, MicromechConfig, RuntimeConfig
+from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import CHAIN_DEFAULTS
 
 # --- Per-chain infrastructure addresses ---
@@ -312,7 +312,10 @@ class TestListenerMultiChain:
                 factory_address=addrs["factory"],
                 staking_address=addrs["staking"],
             )
-            config = MicromechConfig(runtime=RuntimeConfig(event_lookback_blocks=50))
+            import micromech.runtime.listener as _listener_mod
+            _listener_mod.DEFAULT_EVENT_LOOKBACK_BLOCKS = 50
+
+            config = MicromechConfig()
             listener = EventListener(config, chain_cfg, bridge=AnvilBridge(w3))
             requests = asyncio.get_event_loop().run_until_complete(listener.poll_once())
             assert isinstance(requests, list)
@@ -594,7 +597,6 @@ class TestMultiChainServer:
     def test_server_creates_per_chain_components(
         self, available_chains: dict[str, Web3], tmp_path
     ):
-        from micromech.core.config import PersistenceConfig
         from micromech.runtime.server import MechServer
 
         chains_dict = {}
@@ -609,9 +611,11 @@ class TestMultiChainServer:
             )
             bridges[chain_name] = AnvilBridge(w3)
 
+        import micromech.runtime.server as _server_mod
+        _server_mod.DB_PATH = tmp_path / "mc.db"
+
         config = MicromechConfig(
             chains=chains_dict,
-            persistence=PersistenceConfig(db_path=tmp_path / "mc.db"),
         )
         server = MechServer(config, bridges=bridges)
 

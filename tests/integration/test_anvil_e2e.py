@@ -99,19 +99,16 @@ class TestMicromechOffchainE2E:
     @pytest.mark.asyncio
     async def test_tool_execution_result_format(self, tmp_path):
         """Submit requests internally, verify result contains valid prediction JSON."""
-        from micromech.core.config import MicromechConfig, PersistenceConfig, RuntimeConfig
+        from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_EXECUTED
         from micromech.runtime.server import MechServer
 
-        config = MicromechConfig(
-            persistence=PersistenceConfig(db_path=tmp_path / "test.db"),
-            runtime=RuntimeConfig(
-                port=18999,
-                max_concurrent=5,
-                delivery_interval=1,
-                event_poll_interval=1,
-            ),
-        )
+        import micromech.runtime.server as _server_mod
+        import micromech.runtime.listener as _listener_mod
+        _server_mod.DB_PATH = tmp_path / "test.db"
+        _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
+
+        config = MicromechConfig()
 
         server = MechServer(config)
         server_task = asyncio.create_task(server.run(with_http=False))
@@ -181,19 +178,16 @@ class TestFailurePaths:
     @pytest.mark.asyncio
     async def test_unknown_tool_fails(self, tmp_path):
         """Submit request with unknown tool, verify STATUS_FAILED in DB."""
-        from micromech.core.config import MicromechConfig, PersistenceConfig, RuntimeConfig
+        from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_FAILED
         from micromech.runtime.server import MechServer
 
-        config = MicromechConfig(
-            persistence=PersistenceConfig(db_path=tmp_path / "fail.db"),
-            runtime=RuntimeConfig(
-                port=18998,
-                max_concurrent=5,
-                delivery_interval=1,
-                event_poll_interval=1,
-            ),
-        )
+        import micromech.runtime.server as _server_mod
+        import micromech.runtime.listener as _listener_mod
+        _server_mod.DB_PATH = tmp_path / "fail.db"
+        _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
+
+        config = MicromechConfig()
 
         server = MechServer(config)
         server_task = asyncio.create_task(server.run(with_http=False))
@@ -232,19 +226,16 @@ class TestFailurePaths:
     @pytest.mark.asyncio
     async def test_tool_exception_does_not_crash_server(self, tmp_path):
         """Submit request that triggers tool failure, verify server continues running."""
-        from micromech.core.config import MicromechConfig, PersistenceConfig, RuntimeConfig
+        from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_EXECUTED, STATUS_FAILED
         from micromech.runtime.server import MechServer
 
-        config = MicromechConfig(
-            persistence=PersistenceConfig(db_path=tmp_path / "crash.db"),
-            runtime=RuntimeConfig(
-                port=18997,
-                max_concurrent=5,
-                delivery_interval=1,
-                event_poll_interval=1,
-            ),
-        )
+        import micromech.runtime.server as _server_mod
+        import micromech.runtime.listener as _listener_mod
+        _server_mod.DB_PATH = tmp_path / "crash.db"
+        _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
+
+        config = MicromechConfig()
 
         server = MechServer(config)
         server_task = asyncio.create_task(server.run(with_http=False))
@@ -300,19 +291,16 @@ class TestDuplicateDetection:
     @pytest.mark.asyncio
     async def test_duplicate_request_not_processed_twice(self, tmp_path):
         """Submit same request_id twice, verify only 1 record in DB."""
-        from micromech.core.config import MicromechConfig, PersistenceConfig, RuntimeConfig
+        from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_EXECUTED
         from micromech.runtime.server import MechServer
 
-        config = MicromechConfig(
-            persistence=PersistenceConfig(db_path=tmp_path / "dedup.db"),
-            runtime=RuntimeConfig(
-                port=18996,
-                max_concurrent=5,
-                delivery_interval=1,
-                event_poll_interval=1,
-            ),
-        )
+        import micromech.runtime.server as _server_mod
+        import micromech.runtime.listener as _listener_mod
+        _server_mod.DB_PATH = tmp_path / "dedup.db"
+        _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
+
+        config = MicromechConfig()
 
         server = MechServer(config)
         server_task = asyncio.create_task(server.run(with_http=False))
@@ -355,7 +343,7 @@ class TestMicromechOnchainE2E:
 
     def test_event_listener_detects_request(self, w3):
         """Send a marketplace request and verify EventListener can detect it."""
-        from micromech.core.config import ChainConfig, MicromechConfig, RuntimeConfig
+        from micromech.core.config import ChainConfig, MicromechConfig
         from micromech.runtime.listener import EventListener
 
         marketplace = w3.eth.contract(
@@ -414,9 +402,11 @@ class TestMicromechOnchainE2E:
             factory_address=MECH_FACTORY,
             staking_address=SUPPLY_STAKING_ADDR,
         )
+        import micromech.runtime.listener as _listener_mod
+        _listener_mod.DEFAULT_EVENT_LOOKBACK_BLOCKS = 100
+
         config = MicromechConfig(
             chains={"gnosis": chain_cfg},
-            runtime=RuntimeConfig(event_lookback_blocks=100),
         )
 
         bridge = AnvilBridge(w3)
@@ -518,10 +508,7 @@ class TestFullServerCycleE2E:
         """Send request, server detects+executes+delivers, verify delivery on-chain."""
         from micromech.core.config import (
             ChainConfig,
-            IpfsConfig,
             MicromechConfig,
-            PersistenceConfig,
-            RuntimeConfig,
         )
         from micromech.core.constants import STATUS_DELIVERED, STATUS_EXECUTED, STATUS_FAILED
         from micromech.runtime.server import MechServer
@@ -588,8 +575,13 @@ class TestFullServerCycleE2E:
             def with_retry(self, fn, **kwargs):
                 return fn()
 
+        import micromech.runtime.server as _server_mod
+        import micromech.runtime.listener as _listener_mod
+        _server_mod.DB_PATH = tmp_path / "full_cycle.db"
+        _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
+        _listener_mod.DEFAULT_EVENT_LOOKBACK_BLOCKS = 100
+
         config = MicromechConfig(
-            persistence=PersistenceConfig(db_path=tmp_path / "full_cycle.db"),
             chains={"gnosis": ChainConfig(
                 chain="gnosis",
                 mech_address=MECH_ADDR,
@@ -598,13 +590,6 @@ class TestFullServerCycleE2E:
                 factory_address=MECH_FACTORY,
                 staking_address=SUPPLY_STAKING_ADDR,
             )},
-            runtime=RuntimeConfig(
-                event_poll_interval=1,
-                event_lookback_blocks=100,
-                delivery_interval=1,
-                max_concurrent=5,
-            ),
-            ipfs=IpfsConfig(enabled=False),
         )
 
         bridge = AnvilBridge(w3)
@@ -1148,10 +1133,7 @@ class TestOffchainHTTPE2E:
 
         from micromech.core.config import (
             ChainConfig,
-            IpfsConfig,
             MicromechConfig,
-            PersistenceConfig,
-            RuntimeConfig,
         )
         from micromech.core.constants import STATUS_DELIVERED, STATUS_FAILED
         from micromech.runtime.server import MechServer
@@ -1180,9 +1162,15 @@ class TestOffchainHTTPE2E:
             def with_retry(self, fn, **kwargs):
                 return fn()
 
+        import micromech.runtime.server as _server_mod
+        import micromech.runtime.listener as _listener_mod
+        _server_mod.DB_PATH = tmp_path / "http_e2e.db"
+        _server_mod.DEFAULT_PORT = 19876
+        _server_mod.DEFAULT_HOST = "127.0.0.1"
+        _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
+
         port = 19876
         config = MicromechConfig(
-            persistence=PersistenceConfig(db_path=tmp_path / "http_e2e.db"),
             chains={"gnosis": ChainConfig(
                 chain="gnosis",
                 mech_address=MECH_ADDR,
@@ -1192,14 +1180,6 @@ class TestOffchainHTTPE2E:
                 staking_address=SUPPLY_STAKING_ADDR,
                 delivery_rate=MECH_DELIVERY_RATE,
             )},
-            runtime=RuntimeConfig(
-                port=port,
-                host="127.0.0.1",
-                max_concurrent=5,
-                delivery_interval=1,
-                event_poll_interval=1,
-            ),
-            ipfs=IpfsConfig(enabled=False),
         )
 
         bridge = AnvilBridge(w3)
@@ -1308,7 +1288,7 @@ class TestListenerFiltersByMech:
         arbitrary addresses. Instead we test the filter by checking that
         a listener configured for a non-existent mech address sees nothing.
         """
-        from micromech.core.config import ChainConfig, MicromechConfig, RuntimeConfig
+        from micromech.core.config import ChainConfig, MicromechConfig
         from micromech.runtime.listener import EventListener
 
         marketplace = w3.eth.contract(
@@ -1355,6 +1335,9 @@ class TestListenerFiltersByMech:
 
         bridge = AnvilBridge(w3)
 
+        import micromech.runtime.listener as _listener_mod
+        _listener_mod.DEFAULT_EVENT_LOOKBACK_BLOCKS = 100
+
         # --- Test 1: Listener filtered to OUR mech ---
         chain_cfg = ChainConfig(
             chain="gnosis",
@@ -1365,7 +1348,6 @@ class TestListenerFiltersByMech:
         )
         config = MicromechConfig(
             chains={"gnosis": chain_cfg},
-            runtime=RuntimeConfig(event_lookback_blocks=100),
         )
         listener = EventListener(config, chain_cfg, bridge=bridge)
         listener._last_block = block_before
@@ -1387,7 +1369,6 @@ class TestListenerFiltersByMech:
         )
         config_fake = MicromechConfig(
             chains={"gnosis": chain_cfg_fake},
-            runtime=RuntimeConfig(event_lookback_blocks=100),
         )
         listener_fake = EventListener(config_fake, chain_cfg_fake, bridge=bridge)
         listener_fake._last_block = block_before
@@ -1408,7 +1389,6 @@ class TestListenerFiltersByMech:
         )
         config_all = MicromechConfig(
             chains={"gnosis": chain_cfg_all},
-            runtime=RuntimeConfig(event_lookback_blocks=100),
         )
         listener_all = EventListener(config_all, chain_cfg_all, bridge=bridge)
         listener_all._last_block = block_before
@@ -1527,20 +1507,17 @@ class TestRuntimeStartsCorrectly:
     @pytest.mark.asyncio
     async def test_runtime_starts_and_processes_offchain(self, tmp_path):
         """Start runtime without chain bridges, verify offchain processing works."""
-        from micromech.core.config import MicromechConfig, PersistenceConfig, RuntimeConfig
+        from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_EXECUTED
         from micromech.core.models import MechRequest
         from micromech.runtime.server import MechServer
 
-        config = MicromechConfig(
-            persistence=PersistenceConfig(db_path=tmp_path / "runtime.db"),
-            runtime=RuntimeConfig(
-                port=19877,
-                max_concurrent=5,
-                delivery_interval=1,
-                event_poll_interval=1,
-            ),
-        )
+        import micromech.runtime.server as _server_mod
+        import micromech.runtime.listener as _listener_mod
+        _server_mod.DB_PATH = tmp_path / "runtime.db"
+        _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
+
+        config = MicromechConfig()
 
         server = MechServer(config)
         server_task = asyncio.create_task(server.run(with_http=False, register_signals=False))
