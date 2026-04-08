@@ -35,8 +35,7 @@ class TestEchoToolBaseline:
 
         result, prompt, metadata, cb = run(prompt="hello world", tool="echo")
         parsed = json.loads(result)
-        assert parsed["p_yes"] == 0.5
-        assert parsed["p_no"] == 0.5
+        assert parsed["result"] == "hello world"
         assert prompt == "hello world"
 
 

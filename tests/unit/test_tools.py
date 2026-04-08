@@ -78,9 +78,8 @@ class TestEchoTool:
         tool = reg.get("echo")
         result = await tool.execute("hello")
         data = json.loads(result)
-        assert "p_yes" in data
-        assert "p_no" in data
-        assert data["p_yes"] + data["p_no"] == 1.0
+        assert "result" in data
+        assert data["result"] == "hello"
 
     @pytest.mark.asyncio
     async def test_execute_with_timeout(self):
@@ -89,7 +88,7 @@ class TestEchoTool:
         tool = reg.get("echo")
         result = await tool.execute_with_timeout("hello")
         data = json.loads(result)
-        assert "p_yes" in data
+        assert data["result"] == "hello"
 
 
 class TestTimeoutEnforcement:

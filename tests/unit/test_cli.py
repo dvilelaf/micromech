@@ -117,7 +117,7 @@ class TestTestToolCommand:
     def test_echo_tool(self):
         result = runner.invoke(app, ["test-tool", "echo", "hello world"])
         assert result.exit_code == 0
-        assert "p_yes" in result.output
+        assert "hello world" in result.output
 
     def test_unknown_tool(self):
         result = runner.invoke(app, ["test-tool", "nonexistent", "test"])

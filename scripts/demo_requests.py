@@ -35,7 +35,7 @@ TOOL_PROMPTS: dict[str, list[str]] = {
         "Will Ethereum merge to proof-of-stake successfully?",
         "Will it rain in London tomorrow?",
     ],
-    "llm": [
+    "local-llm": [
         "Explain quantum computing in one sentence.",
         "What is the capital of Japan?",
         "Summarize the plot of Romeo and Juliet in 20 words.",
@@ -60,7 +60,7 @@ TOOL_PROMPTS: dict[str, list[str]] = {
 
 TOOL_STYLES = {
     "echo": "blue",
-    "llm": "cyan",
+    "local-llm": "cyan",
     "prediction-offline": "magenta",
     "gemma4-api": "green",
 }
@@ -229,21 +229,25 @@ def _fetch_result_from_api(request_id: str) -> str:
         import requests as req_lib
 
         resp = req_lib.get(
-            f"http://localhost:8090/api/requests/{request_id}",
+            f"http://localhost:8090/result/{request_id}",
             timeout=5,
         )
         if resp.status_code == 200:
             data = resp.json()
-            result_str = data.get("result")
-            if result_str:
+            result_data = data.get("result")
+            if isinstance(result_data, dict):
+                formatted = format_response(result_data)
+                if formatted:
+                    return formatted
+            elif isinstance(result_data, str):
                 try:
-                    result_data = json.loads(result_str) if isinstance(result_str, str) else result_str
-                    formatted = format_response(result_data)
+                    parsed = json.loads(result_data)
+                    formatted = format_response(parsed)
                     if formatted:
                         return formatted
-                except Exception:
+                except (json.JSONDecodeError, TypeError):
                     pass
-                return str(result_str)[:120]
+                return result_data[:120]
     except Exception:
         pass
     return "[dim]delivered[/dim]"
