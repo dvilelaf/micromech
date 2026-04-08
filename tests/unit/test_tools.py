@@ -265,3 +265,39 @@ class TestCustomTools:
         origins = {p["name"]: p["origin"] for p in packages}
         assert origins.get("echo_tool") == "builtin"
         assert origins.get("custom_pkg") == "custom"
+
+    def test_custom_import_failure_graceful(self, tmp_path: Path):
+        """Custom tool with import error is skipped gracefully."""
+        tool_dir = tmp_path / "bad_tool"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text(
+            "name: bad_tool\nversion: 1.0.0\nentry_point: bad_tool.py\n"
+        )
+        (tool_dir / "bad_tool.py").write_text(
+            'import nonexistent_library_xyz\n'
+            'ALLOWED_TOOLS = ["bad"]\n'
+            'def run(**kwargs):\n'
+            '    return "", None, None, None\n'
+        )
+        (tool_dir / "__init__.py").write_text("")
+
+        reg = ToolRegistry()
+        reg.load_custom(tmp_path)
+        assert not reg.has("bad")  # skipped, not crashed
+
+    def test_custom_no_run_function(self, tmp_path: Path):
+        """Custom tool without run() is skipped gracefully."""
+        tool_dir = tmp_path / "no_run"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text(
+            "name: no_run\nversion: 1.0.0\nentry_point: no_run.py\n"
+        )
+        (tool_dir / "no_run.py").write_text(
+            'ALLOWED_TOOLS = ["no-run"]\n'
+            '# no run() function\n'
+        )
+        (tool_dir / "__init__.py").write_text("")
+
+        reg = ToolRegistry()
+        reg.load_custom(tmp_path)
+        assert not reg.has("no-run")

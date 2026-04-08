@@ -220,6 +220,7 @@ class ToolRegistry:
 
             # Re-read ALLOWED_TOOLS from loaded module (may differ from AST if dynamic)
             allowed = getattr(mod, "ALLOWED_TOOLS", allowed)
+            tool_id = allowed[0] if allowed else tool_dir.name
 
             success = self._load_tool_package(
                 tool_id, run_fn, allowed,
