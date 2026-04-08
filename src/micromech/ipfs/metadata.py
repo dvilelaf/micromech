@@ -220,10 +220,12 @@ def fingerprint_all_builtins() -> dict[str, dict[str, str]]:
 def compute_onchain_hash(metadata: dict[str, Any]) -> str:
     """Compute the on-chain hash for a metadata dict.
 
-    Returns the truncated multihash hex (0x1220...) format expected
-    by ComplementaryServiceMetadata.changeHash().
+    Returns bytes32 hex (0x + 32 bytes sha256 digest) for changeHash().
+    The multihash prefix (0x1220) is stripped — the contract expects raw bytes32.
     """
     data = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
     cid_hex = compute_cid_hex(data)
     multihash = cid_hex_to_multihash_bytes(cid_hex)
-    return "0x" + multihash.hex()
+    # Strip the 2-byte multihash prefix (0x12 = sha256, 0x20 = 32 bytes length)
+    digest = multihash[2:]  # 32 bytes
+    return "0x" + digest.hex()

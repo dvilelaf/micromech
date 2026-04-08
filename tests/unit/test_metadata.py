@@ -183,7 +183,7 @@ class TestComputeOnchainHash:
         meta = {"name": "test", "tools": []}
         h = compute_onchain_hash(meta)
         assert h.startswith("0x")
-        assert len(h) == 70  # 0x + 34 bytes * 2 hex chars
+        assert len(h) == 66  # 0x + 32 bytes * 2 hex chars (bytes32 digest)
 
     def test_deterministic(self):
         meta = {"name": "test", "tools": ["echo"]}

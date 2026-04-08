@@ -93,6 +93,26 @@ class TestMetadataManager:
         assert status.computed_hash is not None
         assert status.computed_hash.startswith("0x")
 
+    def test_computed_hash_is_bytes32(self):
+        """compute_onchain_hash must return 32 bytes (not 34 multihash)."""
+        from micromech.ipfs.metadata import (
+            build_metadata,
+            compute_onchain_hash,
+            scan_tool_packages,
+        )
+        from pathlib import Path
+
+        tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools"
+        tools = scan_tool_packages(tools_dir)
+        metadata = build_metadata(tools)
+        h = compute_onchain_hash(metadata)
+
+        assert h.startswith("0x")
+        raw = bytes.fromhex(h[2:])
+        assert len(raw) == 32, f"Expected 32 bytes (bytes32), got {len(raw)}"
+        # Must NOT start with 0x1220 (that's the multihash prefix)
+        assert not h.startswith("0x1220"), "Hash should be raw digest, not multihash"
+
     def test_get_status_up_to_date(self):
         """When stored hash matches current, needs_update is False."""
         from micromech.metadata_manager import MetadataManager
