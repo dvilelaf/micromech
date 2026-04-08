@@ -432,7 +432,6 @@ class MechLifecycle:
         # Step 7: Publish tool metadata
         _progress(7, "Publishing tool metadata...")
         try:
-            from micromech.ipfs.client import push_json_to_ipfs
             from micromech.ipfs.metadata import (
                 build_metadata,
                 compute_onchain_hash,
@@ -449,15 +448,30 @@ class MechLifecycle:
             onchain_hash = compute_onchain_hash(metadata)
 
             _progress(7, "Pushing to IPFS...")
-            import asyncio
+            import json as _json
+
+            import requests as req_lib
+
+            from micromech.core.constants import IPFS_API_URL
+            from micromech.ipfs.client import compute_cid, compute_cid_hex
+
+            metadata_bytes = _json.dumps(
+                metadata, separators=(",", ":"),
+            ).encode("utf-8")
+
+            # Sync IPFS push (no asyncio needed)
             try:
-                loop = asyncio.get_running_loop()
-                future = asyncio.run_coroutine_threadsafe(
-                    push_json_to_ipfs(metadata), loop,
+                resp = req_lib.post(
+                    f"{IPFS_API_URL}/api/v0/add",
+                    files={"file": ("metadata.json", metadata_bytes, "application/octet-stream")},
+                    params={"pin": "true", "cid-version": "1"},
+                    timeout=30,
                 )
-                cid, _ = future.result(timeout=60)
-            except RuntimeError:
-                cid, _ = asyncio.run(push_json_to_ipfs(metadata))
+                resp.raise_for_status()
+            except Exception as ipfs_err:
+                logger.warning("IPFS push failed (non-fatal): {}", ipfs_err)
+
+            cid = compute_cid(metadata_bytes)
 
             _progress(7, "Updating on-chain hash...")
             service_key = result.get("service_key", "")
@@ -465,6 +479,8 @@ class MechLifecycle:
                 tx = self.update_metadata_onchain(service_key, onchain_hash)
                 if tx:
                     _progress(7, f"On-chain: tx {tx[:18]}...")
+                else:
+                    _progress(7, f"On-chain update skipped (not available on {self.chain_name})")
 
             # Persist state
             fingerprints = {

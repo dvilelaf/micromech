@@ -215,9 +215,15 @@ def _parse_delivery_data(delivery_data: bytes) -> str:
             pass
         return f"[dim]IPFS: {cid[:20]}...[/dim]"
 
-    # Fallback: try raw JSON
+    # Fallback: try raw JSON (delivery wrapper or direct result)
     try:
         result_data = json.loads(delivery_data)
+        # Unwrap delivery envelope: {"requestId":..., "result": "<json>", ...}
+        if isinstance(result_data.get("result"), str):
+            try:
+                result_data = json.loads(result_data["result"])
+            except (json.JSONDecodeError, TypeError):
+                pass
         return format_response(result_data)
     except Exception:
         return f"Delivered ({len(delivery_data)} bytes)"
