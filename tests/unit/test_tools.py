@@ -1,6 +1,7 @@
 """Tests for the tool system."""
 
 import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -159,3 +160,108 @@ class TestToolRegistry:
             assert "version" in pkg
             assert "tools" in pkg
             assert len(pkg["tools"]) >= 1
+            assert pkg["origin"] == "builtin"
+
+    def test_builtins_have_origin_builtin(self):
+        reg = ToolRegistry()
+        reg.load_builtins()
+        for tool in reg.list_tools():
+            assert tool.metadata.origin == "builtin"
+
+
+class TestCustomTools:
+    """Test custom tool loading from external directory."""
+
+    def test_load_custom_empty_dir(self, tmp_path: Path):
+        """Loading from empty directory does nothing."""
+        reg = ToolRegistry()
+        reg.load_custom(tmp_path)
+        assert len(reg.list_tools()) == 0
+
+    def test_load_custom_nonexistent_dir(self, tmp_path: Path):
+        """Loading from nonexistent directory does nothing."""
+        reg = ToolRegistry()
+        reg.load_custom(tmp_path / "nonexistent")
+        assert len(reg.list_tools()) == 0
+
+    def test_load_custom_tool(self, tmp_path: Path):
+        """Load a custom tool from a directory with component.yaml + .py."""
+        tool_dir = tmp_path / "my_tool"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text(
+            "name: my_tool\nversion: 1.0.0\nentry_point: my_tool.py\n"
+        )
+        (tool_dir / "my_tool.py").write_text(
+            'ALLOWED_TOOLS = ["my-custom"]\n'
+            'def run(**kwargs):\n'
+            '    return kwargs.get("prompt", ""), None, None, None\n'
+        )
+        (tool_dir / "__init__.py").write_text("")
+
+        reg = ToolRegistry()
+        reg.load_custom(tmp_path)
+        assert reg.has("my-custom")
+        tool = reg.get("my-custom")
+        assert tool.metadata.origin == "custom"
+        assert tool.metadata.name == "my_tool"
+
+    def test_custom_cannot_override_builtin(self, tmp_path: Path):
+        """Custom tool with same ID as builtin is rejected."""
+        tool_dir = tmp_path / "echo_clone"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text(
+            "name: echo_clone\nversion: 1.0.0\nentry_point: echo_clone.py\n"
+        )
+        (tool_dir / "echo_clone.py").write_text(
+            'ALLOWED_TOOLS = ["echo"]\n'
+            'def run(**kwargs):\n'
+            '    return "custom", None, None, None\n'
+        )
+        (tool_dir / "__init__.py").write_text("")
+
+        reg = ToolRegistry()
+        reg.load_builtins()
+        builtin_echo = reg.get("echo")
+        reg.load_custom(tmp_path)
+        # Builtin should win
+        assert reg.get("echo") is builtin_echo
+
+    def test_custom_disabled(self, tmp_path: Path):
+        """Disabled custom tools are skipped."""
+        tool_dir = tmp_path / "skipped_tool"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text(
+            "name: skipped_tool\nversion: 1.0.0\nentry_point: skipped_tool.py\n"
+        )
+        (tool_dir / "skipped_tool.py").write_text(
+            'ALLOWED_TOOLS = ["skip-me"]\n'
+            'def run(**kwargs):\n'
+            '    return "", None, None, None\n'
+        )
+        (tool_dir / "__init__.py").write_text("")
+
+        reg = ToolRegistry()
+        reg.load_custom(tmp_path, disabled={"skipped_tool"})
+        assert not reg.has("skip-me")
+
+    def test_list_packages_shows_origin(self, tmp_path: Path):
+        """list_packages includes origin field for both builtin and custom."""
+        tool_dir = tmp_path / "custom_pkg"
+        tool_dir.mkdir()
+        (tool_dir / "component.yaml").write_text(
+            "name: custom_pkg\nversion: 0.2.0\nentry_point: custom_pkg.py\n"
+        )
+        (tool_dir / "custom_pkg.py").write_text(
+            'ALLOWED_TOOLS = ["custom-id"]\n'
+            'def run(**kwargs):\n'
+            '    return "", None, None, None\n'
+        )
+        (tool_dir / "__init__.py").write_text("")
+
+        reg = ToolRegistry()
+        reg.load_builtins()
+        reg.load_custom(tmp_path)
+        packages = reg.list_packages()
+        origins = {p["name"]: p["origin"] for p in packages}
+        assert origins.get("echo_tool") == "builtin"
+        assert origins.get("custom_pkg") == "custom"

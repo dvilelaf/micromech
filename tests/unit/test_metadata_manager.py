@@ -127,11 +127,13 @@ class TestMetadataManager:
         mm = MetadataManager(config)
 
         # Simulate a previous publish
-        tools_dir = mm.tools_dir
-        tools = scan_tool_packages(tools_dir)
+        tools = mm._scan_all()
         metadata = build_metadata(tools)
         config.metadata_onchain_hash = compute_onchain_hash(metadata)
-        config.metadata_fingerprints = compute_tools_fingerprint(tools_dir)
+        config.metadata_fingerprints = {
+            t["name"]: t["package_cid"]
+            for t in tools if t.get("package_cid")
+        }
 
         status = mm.get_status()
         assert status.needs_update is False

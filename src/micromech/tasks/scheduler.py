@@ -158,8 +158,9 @@ class TaskScheduler:
             )
 
         # Metadata Staleness Check (every 6 hours)
-        from micromech.metadata_manager import MetadataManager
-        mm = MetadataManager(cfg)
+        from micromech.core.constants import CUSTOM_TOOLS_DIR
+        from micromech.metadata_manager import MetadataManager, _BUILTIN_TOOLS_DIR
+        mm = MetadataManager(cfg, tools_dirs=[_BUILTIN_TOOLS_DIR, CUSTOM_TOOLS_DIR])
         self.scheduler.add_job(
             metadata_check_task,
             "interval",

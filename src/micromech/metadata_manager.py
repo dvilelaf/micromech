@@ -51,21 +51,27 @@ class MetadataManager:
     def __init__(
         self,
         config: MicromechConfig,
-        tools_dir: Path | None = None,
+        tools_dirs: list[Path] | None = None,
     ):
         self.config = config
-        self.tools_dir = tools_dir or _BUILTIN_TOOLS_DIR
+        self.tools_dirs = tools_dirs or [_BUILTIN_TOOLS_DIR]
+
+    def _scan_all(self) -> list[dict]:
+        """Scan all tools directories (builtin + custom), merged."""
+        from micromech.ipfs.metadata import scan_tool_packages
+
+        tools: list[dict] = []
+        for d in self.tools_dirs:
+            source = "builtin" if d == _BUILTIN_TOOLS_DIR else "custom"
+            tools.extend(scan_tool_packages(d, source=source))
+        return tools
 
     def get_status(self) -> MetadataStatus:
         """Get current metadata state: fingerprints, staleness, tools list."""
-        from micromech.ipfs.metadata import (
-            build_metadata,
-            compute_onchain_hash,
-            scan_tool_packages,
-        )
+        from micromech.ipfs.metadata import build_metadata, compute_onchain_hash
 
         # Single scan — extract fingerprints directly (no triple scan)
-        tools = scan_tool_packages(self.tools_dir)
+        tools = self._scan_all()
         current_fps = {
             t["name"]: t["package_cid"]
             for t in tools if t.get("package_cid")
@@ -100,6 +106,7 @@ class MetadataManager:
                     "version": t["version"],
                     "tools": t["allowed_tools"],
                     "package_cid": t["package_cid"],
+                    "source": t.get("source", "builtin"),
                 }
                 for t in tools
             ],
@@ -117,12 +124,7 @@ class MetadataManager:
             on_progress: Optional callback(step, message) for progress reporting.
         """
         from micromech.ipfs.client import push_json_to_ipfs
-        from micromech.ipfs.metadata import (
-            build_metadata,
-            compute_onchain_hash,
-            compute_tools_fingerprint,
-            scan_tool_packages,
-        )
+        from micromech.ipfs.metadata import build_metadata, compute_onchain_hash
 
         result = MetadataResult()
 
@@ -134,7 +136,7 @@ class MetadataManager:
         try:
             # Step 1: Scan and build
             _progress("scan", "Scanning tool packages...")
-            tools = scan_tool_packages(self.tools_dir)
+            tools = self._scan_all()
             metadata = build_metadata(tools)
             result.metadata = metadata
             _progress("scan", f"Found {len(tools)} packages, {len(metadata['tools'])} tool IDs")
@@ -212,11 +214,7 @@ class MetadataManager:
 
         from micromech.core.constants import IPFS_API_URL
         from micromech.ipfs.client import compute_cid
-        from micromech.ipfs.metadata import (
-            build_metadata,
-            compute_onchain_hash,
-            scan_tool_packages,
-        )
+        from micromech.ipfs.metadata import build_metadata, compute_onchain_hash
 
         result = MetadataResult()
 
@@ -227,7 +225,7 @@ class MetadataManager:
 
         try:
             _progress("scan", "Scanning tool packages...")
-            tools = scan_tool_packages(self.tools_dir)
+            tools = self._scan_all()
             metadata = build_metadata(tools)
             result.metadata = metadata
 

@@ -1441,8 +1441,8 @@
                 container.textContent = 'No tools loaded.';
             } else {
                 const grid = document.createElement('div');
-                grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr auto 1fr;gap:0.5rem 1rem;font-size:0.85rem;';
-                ['Package', 'Tool IDs', 'Version', 'Package CID'].forEach(h => {
+                grid.style.cssText = 'display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:0.5rem 1rem;font-size:0.85rem;';
+                ['Package', 'Type', 'Tool IDs', 'Version', 'Package CID'].forEach(h => {
                     const s = document.createElement('span');
                     s.style.cssText = 'color:var(--text-muted);font-weight:600;';
                     s.textContent = h;
@@ -1451,6 +1451,11 @@
                 data.tools.forEach(t => {
                     const name = document.createElement('span');
                     name.textContent = t.name || '-';
+                    const src = document.createElement('span');
+                    const isCustom = t.source === 'custom';
+                    src.style.cssText = 'font-size:0.65rem;padding:1px 6px;border-radius:4px;font-weight:500;' +
+                        (isCustom ? 'background:rgba(155,89,182,0.15);color:#c39bd3;' : 'background:rgba(255,255,255,0.08);color:var(--text-muted);');
+                    src.textContent = isCustom ? 'CUSTOM' : 'BUILTIN';
                     const ids = document.createElement('span');
                     ids.style.color = 'var(--text-muted)';
                     ids.textContent = (t.tools || []).join(', ');
@@ -1462,6 +1467,7 @@
                     cid.textContent = t.package_cid ? t.package_cid.slice(0, 16) + '...' : '-';
                     cid.title = t.package_cid || '';
                     grid.appendChild(name);
+                    grid.appendChild(src);
                     grid.appendChild(ids);
                     grid.appendChild(ver);
                     grid.appendChild(cid);

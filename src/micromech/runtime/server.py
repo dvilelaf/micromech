@@ -78,9 +78,12 @@ class MechServer:
         self._queued_ids: set[str] = set()
 
     def _load_tools(self) -> None:
-        """Load tools (auto-discovered builtins, respecting disabled list)."""
+        """Load tools (builtins + custom from data/tools/, respecting disabled list)."""
+        from micromech.core.constants import CUSTOM_TOOLS_DIR
+
         disabled = set(self.config.disabled_tools) if self.config.disabled_tools else None
         self.registry.load_builtins(disabled=disabled)
+        self.registry.load_custom(CUSTOM_TOOLS_DIR, disabled=disabled)
         logger.info("Loaded tools: {}", self.registry.tool_ids)
 
     async def _recover(self) -> None:
@@ -259,8 +262,9 @@ class MechServer:
         def get_tools():
             return self.registry.list_packages()
 
-        from micromech.metadata_manager import MetadataManager
-        mm = MetadataManager(self.config)
+        from micromech.core.constants import CUSTOM_TOOLS_DIR
+        from micromech.metadata_manager import MetadataManager, _BUILTIN_TOOLS_DIR
+        mm = MetadataManager(self.config, tools_dirs=[_BUILTIN_TOOLS_DIR, CUSTOM_TOOLS_DIR])
 
         web_app = create_web_app(
             get_status=self.get_status,

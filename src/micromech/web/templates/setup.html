@@ -154,6 +154,14 @@
         .toggle input:checked + .slider { background: var(--success); }
         .toggle input:checked + .slider::before { transform: translateX(18px); }
 
+        /* Source badges */
+        .badge-source {
+            font-size: 0.65rem; padding: 1px 6px; border-radius: 4px;
+            margin-left: 0.4rem; vertical-align: middle; font-weight: 500;
+        }
+        .badge-builtin { background: rgba(255,255,255,0.08); color: var(--text-muted); }
+        .badge-custom { background: rgba(155,89,182,0.15); color: #c39bd3; }
+
         /* Chain selector */
         .chain-grid {
             display: grid;
@@ -797,8 +805,12 @@
                 const left = document.createElement('span');
                 const toolIds = (pkg.tools || []).join(', ');
                 left.textContent = (pkg.name || 'unknown') + ' ';
+                const badge = document.createElement('span');
+                badge.className = 'badge-source ' + (pkg.source === 'custom' ? 'badge-custom' : 'badge-builtin');
+                badge.textContent = pkg.source === 'custom' ? 'CUSTOM' : 'BUILTIN';
+                left.appendChild(badge);
                 const ids = document.createElement('span');
-                ids.style.cssText = 'color:var(--text-muted);font-size:0.8rem;';
+                ids.style.cssText = 'color:var(--text-muted);font-size:0.8rem;margin-left:0.3rem;';
                 ids.textContent = '(' + toolIds + ')';
                 left.appendChild(ids);
                 if (pkg.version) {

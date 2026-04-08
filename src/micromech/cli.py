@@ -432,9 +432,12 @@ def web(
 
     cfg = _load_config(config_path)
     queue = PersistentQueue(DB_PATH)
+    from micromech.core.constants import CUSTOM_TOOLS_DIR
+
     reg = ToolRegistry()
     disabled = set(cfg.disabled_tools) if cfg.disabled_tools else None
     reg.load_builtins(disabled=disabled)
+    reg.load_custom(CUSTOM_TOOLS_DIR, disabled=disabled)
     mgr = RuntimeManager(cfg)
 
     async def noop_on_request(req):
@@ -459,8 +462,8 @@ def web(
     def get_tools():
         return reg.list_packages()
 
-    from micromech.metadata_manager import MetadataManager
-    mm = MetadataManager(cfg)
+    from micromech.metadata_manager import MetadataManager, _BUILTIN_TOOLS_DIR
+    mm = MetadataManager(cfg, tools_dirs=[_BUILTIN_TOOLS_DIR, CUSTOM_TOOLS_DIR])
 
     web_app = create_web_app(
         get_status, get_recent, get_tools, noop_on_request,
@@ -558,11 +561,12 @@ def metadata_publish(
 ) -> None:
     """Publish tool metadata: scan → IPFS → on-chain (all-in-one)."""
     from micromech.core.config import MicromechConfig, register_plugin
-    from micromech.metadata_manager import MetadataManager
+    from micromech.core.constants import CUSTOM_TOOLS_DIR
+    from micromech.metadata_manager import MetadataManager, _BUILTIN_TOOLS_DIR
 
     register_plugin()
     config = MicromechConfig.load()
-    mm = MetadataManager(config)
+    mm = MetadataManager(config, tools_dirs=[_BUILTIN_TOOLS_DIR, CUSTOM_TOOLS_DIR])
 
     def on_progress(step: str, msg: str) -> None:
         typer.echo(f"  [{step}] {msg}")

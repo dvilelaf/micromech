@@ -646,10 +646,12 @@ def create_web_app(
 
     @app.get("/api/setup/tools")
     async def api_setup_tools() -> list[dict]:
-        """All available tool packages with enabled/disabled status."""
+        """All available tool packages (builtin + custom) with enabled/disabled status."""
+        from micromech.core.constants import CUSTOM_TOOLS_DIR
         from micromech.ipfs.metadata import scan_tool_packages
-        tools_dir = Path(__file__).parent.parent / "tools"
-        all_tools = scan_tool_packages(tools_dir)
+        builtin_dir = Path(__file__).parent.parent / "tools"
+        all_tools = scan_tool_packages(builtin_dir, source="builtin")
+        all_tools.extend(scan_tool_packages(CUSTOM_TOOLS_DIR, source="custom"))
         cfg = MicromechConfig.load()
         disabled = set(cfg.disabled_tools)
         return [
@@ -659,6 +661,7 @@ def create_web_app(
                 "version": t["version"],
                 "tools": t["allowed_tools"],
                 "enabled": t["name"] not in disabled,
+                "source": t.get("source", "builtin"),
             }
             for t in all_tools
         ]

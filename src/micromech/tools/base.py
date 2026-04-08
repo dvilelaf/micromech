@@ -27,6 +27,7 @@ class ToolMetadata(BaseModel):
     description: str = ""
     version: str = "0.1.0"
     timeout: int = Field(default=60, ge=1, le=3600)
+    origin: str = "builtin"  # "builtin" or "custom"
 
     @field_validator("id")
     @classmethod

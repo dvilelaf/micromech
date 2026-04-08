@@ -49,7 +49,9 @@ def compute_tools_fingerprint(tools_dir: Path) -> dict[str, str]:
     return {t["name"]: t["package_cid"] for t in tools if t.get("package_cid")}
 
 
-def scan_tool_packages(tools_dir: Path) -> list[dict[str, Any]]:
+def scan_tool_packages(
+    tools_dir: Path, source: str = "builtin",
+) -> list[dict[str, Any]]:
     """Scan tool package directories and extract metadata.
 
     Returns list of dicts with: name, description, version, allowed_tools, package_cid.
@@ -103,6 +105,7 @@ def scan_tool_packages(tools_dir: Path) -> list[dict[str, Any]]:
                 "allowed_tools": allowed_tools,
                 "package_cid": package_cid,
                 "path": str(tool_dir),
+                "source": source,
             }
         )
 
