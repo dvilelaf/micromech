@@ -677,11 +677,17 @@ def create_web_app(
         disabled = body.get("disabled_tools", [])
         if not isinstance(disabled, list):
             return JSONResponse({"error": "disabled_tools must be a list"}, 400)
+        # Validate: only strings allowed
+        disabled = [str(d) for d in disabled if isinstance(d, str)]
 
         cfg = MicromechConfig.load()
         cfg.disabled_tools = disabled
         cfg.save()
-        return {"status": "saved", "disabled_tools": disabled}
+        return {
+            "status": "saved",
+            "disabled_tools": disabled,
+            "restart_required": True,
+        }
 
     # --- Metadata API ---
 

@@ -432,68 +432,19 @@ class MechLifecycle:
         # Step 7: Publish tool metadata
         _progress(7, "Publishing tool metadata...")
         try:
-            from micromech.ipfs.metadata import (
-                build_metadata,
-                compute_onchain_hash,
-                scan_tool_packages,
-            )
             from micromech.metadata_manager import MetadataManager
 
             mm = MetadataManager(self.config)
-            tools_dir = mm.tools_dir
-
-            _progress(7, "Scanning tools...")
-            tools = scan_tool_packages(tools_dir)
-            metadata = build_metadata(tools)
-            onchain_hash = compute_onchain_hash(metadata)
-
-            _progress(7, "Pushing to IPFS...")
-            import json as _json
-
-            import requests as req_lib
-
-            from micromech.core.constants import IPFS_API_URL
-            from micromech.ipfs.client import compute_cid, compute_cid_hex
-
-            metadata_bytes = _json.dumps(
-                metadata, separators=(",", ":"),
-            ).encode("utf-8")
-
-            # Sync IPFS push (no asyncio needed)
-            try:
-                resp = req_lib.post(
-                    f"{IPFS_API_URL}/api/v0/add",
-                    files={"file": ("metadata.json", metadata_bytes, "application/octet-stream")},
-                    params={"pin": "true", "cid-version": "1"},
-                    timeout=30,
-                )
-                resp.raise_for_status()
-            except Exception as ipfs_err:
-                logger.warning("IPFS push failed (non-fatal): {}", ipfs_err)
-
-            cid = compute_cid(metadata_bytes)
-
-            _progress(7, "Updating on-chain hash...")
-            service_key = result.get("service_key", "")
-            if service_key:
-                tx = self.update_metadata_onchain(service_key, onchain_hash)
-                if tx:
-                    _progress(7, f"On-chain: tx {tx[:18]}...")
-                else:
-                    _progress(7, f"On-chain update skipped (not available on {self.chain_name})")
-
-            # Persist state
-            fingerprints = {
-                t["name"]: t["package_cid"]
-                for t in tools if t.get("package_cid")
-            }
-            self.config.metadata_ipfs_cid = cid
-            self.config.metadata_onchain_hash = onchain_hash
-            self.config.metadata_fingerprints = fingerprints
-            self.config.save()
-
-            result["metadata_cid"] = cid
-            _progress(7, f"Metadata published: {cid[:24]}...")
+            publish_result = mm.publish_sync(
+                service_key=result.get("service_key", ""),
+                chain_name=self.chain_name,
+                on_progress=lambda step, msg: _progress(7, msg),
+            )
+            if publish_result.success:
+                result["metadata_cid"] = publish_result.ipfs_cid
+                _progress(7, f"Metadata published: {publish_result.ipfs_cid[:24]}...")
+            else:
+                _progress(7, f"Metadata: {publish_result.error}", False)
         except Exception as e:
             _progress(7, f"Metadata publish failed (non-fatal): {e}", False)
 

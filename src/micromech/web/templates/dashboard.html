@@ -1423,28 +1423,50 @@
             document.getElementById('local-hash').textContent = data.computed_hash ? data.computed_hash.slice(0, 24) + '...' : '-';
             const cidEl = document.getElementById('ipfs-cid');
             if (data.ipfs_cid) {
-                cidEl.innerHTML = '<a href="https://gateway.autonolas.tech/ipfs/' + data.ipfs_cid + '" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none">' + data.ipfs_cid.slice(0, 24) + '...</a>';
+                cidEl.textContent = '';
+                const a = document.createElement('a');
+                a.href = 'https://gateway.autonolas.tech/ipfs/' + encodeURIComponent(data.ipfs_cid);
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.style.cssText = 'color:var(--accent-color);text-decoration:none;';
+                a.textContent = data.ipfs_cid.slice(0, 24) + '...';
+                cidEl.appendChild(a);
             } else {
                 cidEl.textContent = '-';
             }
             // Tools table
             const container = document.getElementById('tools-table');
+            container.innerHTML = '';
             if (!data.tools || data.tools.length === 0) {
-                container.innerHTML = '<p style="color:var(--text-muted)">No tools loaded.</p>';
+                container.textContent = 'No tools loaded.';
             } else {
-                let html = '<div style="display:grid;grid-template-columns:1fr 1fr auto 1fr;gap:0.5rem 1rem;font-size:0.85rem;">';
-                html += '<span style="color:var(--text-muted);font-weight:600;">Package</span>';
-                html += '<span style="color:var(--text-muted);font-weight:600;">Tool IDs</span>';
-                html += '<span style="color:var(--text-muted);font-weight:600;">Version</span>';
-                html += '<span style="color:var(--text-muted);font-weight:600;">Package CID</span>';
-                data.tools.forEach(t => {
-                    html += '<span>' + (t.name || '-') + '</span>';
-                    html += '<span style="color:var(--text-muted)">' + (t.tools || []).join(', ') + '</span>';
-                    html += '<span style="font-family:var(--font-mono);font-size:0.75rem;">' + (t.version || '-') + '</span>';
-                    html += '<span style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted)" title="' + (t.package_cid || '') + '">' + (t.package_cid ? t.package_cid.slice(0, 16) + '...' : '-') + '</span>';
+                const grid = document.createElement('div');
+                grid.style.cssText = 'display:grid;grid-template-columns:1fr 1fr auto 1fr;gap:0.5rem 1rem;font-size:0.85rem;';
+                ['Package', 'Tool IDs', 'Version', 'Package CID'].forEach(h => {
+                    const s = document.createElement('span');
+                    s.style.cssText = 'color:var(--text-muted);font-weight:600;';
+                    s.textContent = h;
+                    grid.appendChild(s);
                 });
-                html += '</div>';
-                container.innerHTML = html;
+                data.tools.forEach(t => {
+                    const name = document.createElement('span');
+                    name.textContent = t.name || '-';
+                    const ids = document.createElement('span');
+                    ids.style.color = 'var(--text-muted)';
+                    ids.textContent = (t.tools || []).join(', ');
+                    const ver = document.createElement('span');
+                    ver.style.cssText = 'font-family:var(--font-mono);font-size:0.75rem;';
+                    ver.textContent = t.version || '-';
+                    const cid = document.createElement('span');
+                    cid.style.cssText = 'font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted);';
+                    cid.textContent = t.package_cid ? t.package_cid.slice(0, 16) + '...' : '-';
+                    cid.title = t.package_cid || '';
+                    grid.appendChild(name);
+                    grid.appendChild(ids);
+                    grid.appendChild(ver);
+                    grid.appendChild(cid);
+                });
+                container.appendChild(grid);
             }
         } catch (e) {
             document.getElementById('metadata-status-badge').textContent = 'Error';
@@ -1476,7 +1498,8 @@
                 buf = lines.pop();
                 for (const line of lines) {
                     if (!line.startsWith('data: ')) continue;
-                    const evt = JSON.parse(line.slice(6));
+                    let evt;
+                    try { evt = JSON.parse(line.slice(6)); } catch { continue; }
                     if (evt.step === 'done') {
                         result.style.display = 'block';
                         result.style.color = evt.success ? 'var(--success)' : 'var(--error)';

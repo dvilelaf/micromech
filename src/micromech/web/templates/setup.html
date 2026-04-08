@@ -796,8 +796,11 @@
 
                 const left = document.createElement('span');
                 const toolIds = (pkg.tools || []).join(', ');
-                left.innerHTML = (pkg.name || 'unknown') +
-                    ' <span style="color:var(--text-muted);font-size:0.8rem;">(' + toolIds + ')</span>';
+                left.textContent = (pkg.name || 'unknown') + ' ';
+                const ids = document.createElement('span');
+                ids.style.cssText = 'color:var(--text-muted);font-size:0.8rem;';
+                ids.textContent = '(' + toolIds + ')';
+                left.appendChild(ids);
                 if (pkg.version) {
                     const ver = document.createElement('span');
                     ver.style.cssText = 'color:var(--text-muted);font-size:0.75rem;margin-left:0.3rem;';
@@ -811,6 +814,7 @@
                 input.type = 'checkbox';
                 input.checked = pkg.enabled;
                 input.dataset.tool = pkg.name;
+                input.setAttribute('aria-label', 'Toggle ' + pkg.name);
                 input.onchange = () => toggleTool(pkg.name);
                 const slider = document.createElement('span');
                 slider.className = 'slider';
@@ -838,13 +842,18 @@
             .filter(([_, enabled]) => !enabled)
             .map(([name]) => name);
         try {
-            await fetch('/api/setup/tools', {
+            const resp = await fetch('/api/setup/tools', {
                 method: 'POST',
                 headers: authHeaders({'X-Micromech-Action': 'setup'}),
                 body: JSON.stringify({ disabled_tools: disabled }),
             });
+            if (!resp.ok) {
+                alert('Failed to save tool configuration. Please try again.');
+                return;
+            }
         } catch (e) {
-            console.error('Failed to save tool config:', e);
+            alert('Failed to save tool configuration: ' + e.message);
+            return;
         }
         startDeploy();
     }
@@ -864,7 +873,7 @@
         title.style.cssText = 'font-weight:500; margin-bottom:0.5rem; font-size:0.9rem;';
         title.textContent = chain.charAt(0).toUpperCase() + chain.slice(1);
         panel.appendChild(title);
-        for (let i = 0; i < 6; i++) {
+        for (let i = 0; i < DEPLOY_STEPS.length; i++) {
             const row = document.createElement('div');
             row.className = 'deploy-step';
             row.id = `ds-${chain}-${i + 1}`;
@@ -945,7 +954,7 @@
                     try {
                         const evt = JSON.parse(line.slice(6));
                         if (evt.step === 'done') {
-                            for (let i = 1; i <= 6; i++) setStepState(prefix, i, 'done');
+                            for (let i = 1; i <= DEPLOY_STEPS.length; i++) setStepState(prefix, i, 'done');
                             ok = true;
                         } else if (evt.step === 'error') {
                             setStepState(prefix, findRunning(prefix) || 6, 'error', evt.message);
@@ -956,7 +965,7 @@
                                 setStepState(prefix, evt.step, 'error', evt.message);
                             } else {
                                 setStepState(prefix, evt.step, 'done', evt.message);
-                                if (evt.step < 6) setStepState(prefix, evt.step + 1, 'running');
+                                if (evt.step < DEPLOY_STEPS.length) setStepState(prefix, evt.step + 1, 'running');
                             }
                         }
                     } catch (e) { /* skip */ }
@@ -984,7 +993,7 @@
     }
 
     function findRunning(prefix) {
-        for (let i = 1; i <= 6; i++) {
+        for (let i = 1; i <= DEPLOY_STEPS.length; i++) {
             const el = document.querySelector(`#${prefix}${i} .deploy-icon`);
             if (el && el.classList.contains('running')) return i;
         }

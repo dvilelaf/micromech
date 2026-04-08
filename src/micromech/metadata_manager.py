@@ -194,3 +194,88 @@ class MetadataManager:
             result.error = str(e)
 
         return result
+
+    def publish_sync(
+        self,
+        service_key: str = "",
+        chain_name: str = "",
+        on_progress: Callable[[str, str], None] | None = None,
+    ) -> MetadataResult:
+        """Synchronous publish — for use inside threads (e.g. full_deploy).
+
+        Uses requests.post for IPFS (no asyncio) to avoid event loop conflicts.
+        Only updates on-chain for the specified chain (not all enabled chains).
+        """
+        import json as _json
+
+        import requests as req_lib
+
+        from micromech.core.constants import IPFS_API_URL
+        from micromech.ipfs.client import compute_cid
+        from micromech.ipfs.metadata import (
+            build_metadata,
+            compute_onchain_hash,
+            scan_tool_packages,
+        )
+
+        result = MetadataResult()
+
+        def _progress(step: str, msg: str) -> None:
+            logger.info("[metadata-sync] {}: {}", step, msg)
+            if on_progress:
+                on_progress(step, msg)
+
+        try:
+            _progress("scan", "Scanning tool packages...")
+            tools = scan_tool_packages(self.tools_dir)
+            metadata = build_metadata(tools)
+            result.metadata = metadata
+
+            _progress("ipfs", "Pushing metadata to IPFS...")
+            metadata_bytes = _json.dumps(
+                metadata, separators=(",", ":"),
+            ).encode("utf-8")
+            try:
+                resp = req_lib.post(
+                    f"{IPFS_API_URL}/api/v0/add",
+                    files={"file": ("metadata.json", metadata_bytes, "application/octet-stream")},
+                    params={"pin": "true", "cid-version": "1"},
+                    timeout=30,
+                )
+                resp.raise_for_status()
+            except Exception as ipfs_err:
+                _progress("ipfs", f"IPFS push failed (non-fatal): {ipfs_err}")
+
+            cid = compute_cid(metadata_bytes)
+            result.ipfs_cid = cid
+            _progress("ipfs", f"CID: {cid}")
+
+            onchain_hash = compute_onchain_hash(metadata)
+            result.onchain_hash = onchain_hash
+
+            if service_key and chain_name:
+                _progress("onchain", f"Updating on-chain hash on {chain_name}...")
+                from micromech.management import MechLifecycle
+                lc = MechLifecycle(self.config, chain_name)
+                tx = lc.update_metadata_onchain(service_key, onchain_hash)
+                if tx:
+                    result.chain_txs[chain_name] = tx
+                    _progress("onchain", f"tx {tx[:18]}...")
+                else:
+                    _progress("onchain", f"Skipped (not available on {chain_name})")
+
+            fingerprints = {
+                t["name"]: t["package_cid"]
+                for t in tools if t.get("package_cid")
+            }
+            self.config.metadata_ipfs_cid = cid
+            self.config.metadata_onchain_hash = onchain_hash
+            self.config.metadata_fingerprints = fingerprints
+            self.config.save()
+            _progress("done", "Metadata published")
+
+        except Exception as e:
+            logger.error("Metadata sync publish failed: {}", e)
+            result.error = str(e)
+
+        return result
