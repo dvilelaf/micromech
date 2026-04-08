@@ -432,20 +432,52 @@ class MechLifecycle:
         # Step 7: Publish tool metadata
         _progress(7, "Publishing tool metadata...")
         try:
-            import asyncio
-
+            from micromech.ipfs.client import push_json_to_ipfs
+            from micromech.ipfs.metadata import (
+                build_metadata,
+                compute_onchain_hash,
+                scan_tool_packages,
+            )
             from micromech.metadata_manager import MetadataManager
 
             mm = MetadataManager(self.config)
-            publish_result = asyncio.run(mm.publish(
-                update_onchain=True,
-                on_progress=lambda step, msg: _progress(7, msg),
-            ))
-            if publish_result.success:
-                result["metadata_cid"] = publish_result.ipfs_cid
-                _progress(7, f"Metadata published: {publish_result.ipfs_cid[:24]}...")
-            else:
-                _progress(7, f"Metadata publish failed: {publish_result.error}", False)
+            tools_dir = mm.tools_dir
+
+            _progress(7, "Scanning tools...")
+            tools = scan_tool_packages(tools_dir)
+            metadata = build_metadata(tools)
+            onchain_hash = compute_onchain_hash(metadata)
+
+            _progress(7, "Pushing to IPFS...")
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                future = asyncio.run_coroutine_threadsafe(
+                    push_json_to_ipfs(metadata), loop,
+                )
+                cid, _ = future.result(timeout=60)
+            except RuntimeError:
+                cid, _ = asyncio.run(push_json_to_ipfs(metadata))
+
+            _progress(7, "Updating on-chain hash...")
+            service_key = result.get("service_key", "")
+            if service_key:
+                tx = self.update_metadata_onchain(service_key, onchain_hash)
+                if tx:
+                    _progress(7, f"On-chain: tx {tx[:18]}...")
+
+            # Persist state
+            fingerprints = {
+                t["name"]: t["package_cid"]
+                for t in tools if t.get("package_cid")
+            }
+            self.config.metadata_ipfs_cid = cid
+            self.config.metadata_onchain_hash = onchain_hash
+            self.config.metadata_fingerprints = fingerprints
+            self.config.save()
+
+            result["metadata_cid"] = cid
+            _progress(7, f"Metadata published: {cid[:24]}...")
         except Exception as e:
             _progress(7, f"Metadata publish failed (non-fatal): {e}", False)
 

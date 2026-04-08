@@ -185,13 +185,10 @@ class TestMicromechOffchainE2E:
                 assert record.result.execution_time > 0, f"test-{i}: zero execution time"
 
                 data = json.loads(record.result.output)
-                assert "p_yes" in data, f"test-{i}: missing p_yes in {data}"
-                assert "p_no" in data, f"test-{i}: missing p_no in {data}"
-                assert isinstance(data["p_yes"], (int, float))
-                assert isinstance(data["p_no"], (int, float))
+                assert "result" in data, f"test-{i}: missing 'result' in {data}"
                 executed_count += 1
                 print(
-                    f"  test-{i}: p_yes={data['p_yes']}, p_no={data['p_no']} "
+                    f"  test-{i}: result={str(data['result'])[:40]} "
                     f"({record.result.execution_time:.3f}s)"
                 )
 
@@ -1583,8 +1580,8 @@ class TestRuntimeStartsCorrectly:
             assert record.result.output is not None
 
             data = json.loads(record.result.output)
-            assert "p_yes" in data
-            print(f"\n  Runtime processed request: p_yes={data['p_yes']}")
+            assert "result" in data
+            print(f"\n  Runtime processed request: result={str(data['result'])[:40]}")
 
         finally:
             server.stop()

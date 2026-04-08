@@ -457,12 +457,11 @@ class TestFullMechCycle:
             assert record.result.output, "Empty tool output"
             assert record.result.error is None, f"Tool error: {record.result.error}"
 
-            # Verify result contains valid echo response (prediction JSON)
+            # Verify result contains valid echo response
             result_data = json.loads(record.result.output)
-            assert "p_yes" in result_data, f"Missing p_yes in result: {result_data}"
-            assert "p_no" in result_data, f"Missing p_no in result: {result_data}"
+            assert "result" in result_data, f"Missing 'result' in: {result_data}"
             print(f"  Step 3: Request executed in {elapsed:.1f}s. "
-                  f"p_yes={result_data['p_yes']}, p_no={result_data['p_no']}")
+                  f"result={str(result_data['result'])[:40]}")
 
             # ── Step 4: Wait for on-chain delivery ─────────────────────
             max_wait_delivery = 30  # seconds

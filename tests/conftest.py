@@ -28,6 +28,25 @@ def make_test_config(**kwargs) -> MicromechConfig:
 
 
 @pytest.fixture(autouse=True)
+def _reset_global_sessions():
+    """Reset iwa's cached aiohttp session before each test.
+
+    Prevents 'Event loop is closed' errors when tests share process.
+    """
+    try:
+        import iwa.core.ipfs as ipfs_mod
+        ipfs_mod._ASYNC_SESSION = None
+    except (ImportError, AttributeError):
+        pass
+    yield
+    try:
+        import iwa.core.ipfs as ipfs_mod
+        ipfs_mod._ASYNC_SESSION = None
+    except (ImportError, AttributeError):
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _protect_real_data(tmp_path: Path):
     """CRITICAL: Prevent ALL tests from touching real wallet or config.
 
