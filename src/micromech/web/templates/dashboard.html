@@ -267,6 +267,7 @@
         <nav class="tabs" role="tablist">
             <button class="tab-btn active" data-tab="overview" role="tab" aria-selected="true">Overview</button>
             <button class="tab-btn" data-tab="activity" role="tab" aria-selected="false">Live Activity</button>
+            <button class="tab-btn" data-tab="tools" role="tab" aria-selected="false">Tools</button>
             <button class="tab-btn" data-tab="management" role="tab" aria-selected="false">Management</button>
             <button class="tab-btn" data-tab="logs" role="tab" aria-selected="false">Logs</button>
         </nav>
@@ -388,6 +389,36 @@
                         <button class="btn btn-sm btn-secondary" id="history-prev" onclick="historyPrevPage()" disabled>Previous</button>
                         <span style="font-size:0.8rem;color:var(--text-muted);" id="history-page-info">Page 1 of 1</span>
                         <button class="btn btn-sm btn-secondary" id="history-next" onclick="historyNextPage()" disabled>Next</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Tools Tab -->
+            <section id="tab-tools" class="tab-pane">
+                <div class="glass" style="margin-bottom:1.5rem;">
+                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">On-chain Metadata</h3>
+                    <div class="chain-card-row">
+                        <span class="label">Status</span>
+                        <span class="staking-badge staking-unknown" id="metadata-status-badge">Loading...</span>
+                    </div>
+                    <div class="chain-card-row">
+                        <span class="label">Local hash</span>
+                        <span id="local-hash" style="font-family:var(--font-mono);font-size:0.78rem;color:var(--text-muted);">-</span>
+                    </div>
+                    <div class="chain-card-row">
+                        <span class="label">IPFS CID</span>
+                        <span id="ipfs-cid" style="font-family:var(--font-mono);font-size:0.78rem;">-</span>
+                    </div>
+                    <div id="metadata-progress" style="display:none; margin-top:1rem; font-family:var(--font-mono); font-size:0.8rem; max-height:150px; overflow-y:auto;"></div>
+                    <pre class="mgmt-result" id="metadata-result" style="display:none;"></pre>
+                    <div style="margin-top:1rem;">
+                        <button class="btn btn-primary" id="btn-update-metadata" onclick="startMetadataUpdate()" style="display:none;">Update metadata</button>
+                    </div>
+                </div>
+                <div class="glass">
+                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">Registered Tools</h3>
+                    <div id="tools-table">
+                        <p style="color:var(--text-muted);">Loading...</p>
                     </div>
                 </div>
             </section>
@@ -1363,10 +1394,117 @@
         state.logInitialized = false;
     }
 
+    // --- Tools tab ---
+    async function loadToolsTab() {
+        try {
+            const res = await fetch('/api/metadata');
+            const data = await res.json();
+            if (data.error) {
+                document.getElementById('metadata-status-badge').textContent = 'Error';
+                return;
+            }
+            const badge = document.getElementById('metadata-status-badge');
+            const btn = document.getElementById('btn-update-metadata');
+            if (data.status === 'up_to_date') {
+                badge.className = 'staking-badge staking-staked';
+                badge.textContent = 'Up to date';
+                btn.style.display = 'none';
+            } else if (data.status === 'stale') {
+                badge.className = 'staking-badge staking-not_staked';
+                badge.textContent = 'Stale — local tools changed';
+                btn.style.display = '';
+                btn.textContent = 'Update metadata';
+            } else {
+                badge.className = 'staking-badge staking-unknown';
+                badge.textContent = 'Not registered';
+                btn.style.display = '';
+                btn.textContent = 'Register metadata';
+            }
+            document.getElementById('local-hash').textContent = data.computed_hash ? data.computed_hash.slice(0, 24) + '...' : '-';
+            const cidEl = document.getElementById('ipfs-cid');
+            if (data.ipfs_cid) {
+                cidEl.innerHTML = '<a href="https://gateway.autonolas.tech/ipfs/' + data.ipfs_cid + '" target="_blank" rel="noopener" style="color:var(--accent-color);text-decoration:none">' + data.ipfs_cid.slice(0, 24) + '...</a>';
+            } else {
+                cidEl.textContent = '-';
+            }
+            // Tools table
+            const container = document.getElementById('tools-table');
+            if (!data.tools || data.tools.length === 0) {
+                container.innerHTML = '<p style="color:var(--text-muted)">No tools loaded.</p>';
+            } else {
+                let html = '<div style="display:grid;grid-template-columns:1fr 1fr auto 1fr;gap:0.5rem 1rem;font-size:0.85rem;">';
+                html += '<span style="color:var(--text-muted);font-weight:600;">Package</span>';
+                html += '<span style="color:var(--text-muted);font-weight:600;">Tool IDs</span>';
+                html += '<span style="color:var(--text-muted);font-weight:600;">Version</span>';
+                html += '<span style="color:var(--text-muted);font-weight:600;">Package CID</span>';
+                data.tools.forEach(t => {
+                    html += '<span>' + (t.name || '-') + '</span>';
+                    html += '<span style="color:var(--text-muted)">' + (t.tools || []).join(', ') + '</span>';
+                    html += '<span style="font-family:var(--font-mono);font-size:0.75rem;">' + (t.version || '-') + '</span>';
+                    html += '<span style="font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted)" title="' + (t.package_cid || '') + '">' + (t.package_cid ? t.package_cid.slice(0, 16) + '...' : '-') + '</span>';
+                });
+                html += '</div>';
+                container.innerHTML = html;
+            }
+        } catch (e) {
+            document.getElementById('metadata-status-badge').textContent = 'Error';
+        }
+    }
+
+    async function startMetadataUpdate() {
+        const btn = document.getElementById('btn-update-metadata');
+        const progress = document.getElementById('metadata-progress');
+        const result = document.getElementById('metadata-result');
+        btn.disabled = true;
+        btn.textContent = 'Updating...';
+        progress.style.display = 'block';
+        progress.innerHTML = '';
+        result.style.display = 'none';
+        try {
+            const res = await fetch('/api/metadata/publish', {
+                method: 'POST',
+                headers: { 'X-Auth-Token': AUTH_TOKEN, 'X-Micromech-Action': 'metadata' },
+            });
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buf = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                const lines = buf.split('\n');
+                buf = lines.pop();
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const evt = JSON.parse(line.slice(6));
+                    if (evt.step === 'done') {
+                        result.style.display = 'block';
+                        result.style.color = evt.success ? 'var(--success)' : 'var(--error)';
+                        result.textContent = evt.success ? 'Metadata published.' : ('Failed: ' + evt.error);
+                    } else {
+                        const p = document.createElement('div');
+                        p.style.color = 'var(--text-muted)';
+                        p.textContent = evt.message || evt.step;
+                        progress.appendChild(p);
+                    }
+                }
+            }
+            setTimeout(loadToolsTab, 1000);
+        } catch (e) {
+            result.style.display = 'block';
+            result.style.color = 'var(--error)';
+            result.textContent = 'Connection lost: ' + e.message;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Update metadata';
+        }
+    }
+
     // Start log stream when Logs tab is first shown
     const origSwitchTab = switchTab;
     switchTab = function(tabName) {
         origSwitchTab(tabName);
+        if (tabName === 'tools') loadToolsTab();
         connectLogStream();  // Always keep log stream connected
     };
 

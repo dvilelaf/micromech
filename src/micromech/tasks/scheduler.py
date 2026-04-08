@@ -16,6 +16,7 @@ from micromech.management import MechLifecycle
 from micromech.secrets import secrets
 from micromech.tasks.checkpoint import checkpoint_task
 from micromech.tasks.fund import fund_task
+from micromech.tasks.metadata_check import metadata_check_task
 from micromech.tasks.health import health_task
 from micromech.tasks.low_balance_alert import low_balance_alert_task
 from micromech.tasks.notifications import NotificationService
@@ -155,6 +156,23 @@ class TaskScheduler:
                 id="profitability_check_task",
                 replace_existing=True,
             )
+
+        # Metadata Staleness Check (every 6 hours)
+        from micromech.metadata_manager import MetadataManager
+        mm = MetadataManager(cfg)
+        self.scheduler.add_job(
+            metadata_check_task,
+            "interval",
+            hours=6,
+            args=[mm, self.notification_service],
+            id="metadata_check_task",
+            replace_existing=True,
+            misfire_grace_time=misfire_grace_time,
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(tz=timezone.utc) + timedelta(seconds=startup_delay),
+        )
+        startup_delay += 20
 
         # Update Check Task (daily at 8 AM local time)
         if cfg.update_check_enabled:

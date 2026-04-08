@@ -44,6 +44,7 @@ _RATE_LIMITS: dict[str, tuple[int, int]] = {
     # endpoint_key: (max_requests, window_seconds)
     "/api/setup/wallet": (10, 60),  # 10 attempts per minute (brute-force protection)
     "/request": (60, 60),  # 60 requests per minute
+    "/api/metadata/publish": (3, 60),  # 3 per minute (each costs gas)
 }
 _MAX_TRACKED_IPS = 1000
 _rate_counters: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
@@ -222,6 +223,7 @@ def create_web_app(
     queue: "PersistentQueue | None" = None,
     metrics: "MetricsCollector | None" = None,
     runtime_manager: "Any | None" = None,
+    metadata_manager: "Any | None" = None,
 ) -> FastAPI:
     """Create the web UI FastAPI app.
 
@@ -641,6 +643,99 @@ def create_web_app(
     @app.get("/api/tools")
     async def api_tools() -> list[dict]:
         return get_tools()
+
+    # --- Metadata API ---
+
+    @app.get("/api/metadata")
+    async def api_metadata_status() -> dict:
+        """Current tool metadata state: staleness, hashes, tools list."""
+        if not metadata_manager:
+            return {"error": "Metadata manager not configured"}
+        try:
+            status = metadata_manager.get_status()
+            state = "not_registered" if status.ipfs_cid is None else (
+                "stale" if status.needs_update else "up_to_date"
+            )
+            return {
+                "status": state,
+                "computed_hash": status.computed_hash,
+                "stored_hash": status.stored_hash,
+                "ipfs_cid": status.ipfs_cid,
+                "needs_update": status.needs_update,
+                "changed_packages": status.changed_packages,
+                "tools": status.tools,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    _metadata_publish_lock = asyncio.Lock()
+
+    @app.post("/api/metadata/publish")
+    async def api_metadata_publish(request: Request):
+        """Publish tool metadata to IPFS + update on-chain hash (SSE stream)."""
+        if not metadata_manager:
+            return JSONResponse({"error": "Metadata manager not configured"}, 501)
+
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
+
+        csrf = request.headers.get(CSRF_HEADER)
+        if not csrf:
+            return JSONResponse(
+                {"error": f"Missing {CSRF_HEADER} header"}, 403,
+            )
+
+        if _rate_limited("/api/metadata/publish", _get_client_ip(request)):
+            return JSONResponse({"error": "Rate limit exceeded"}, 429)
+
+        if _metadata_publish_lock.locked():
+            return JSONResponse({"error": "Publish already in progress"}, 409)
+
+        import asyncio
+        import queue as stdlib_queue
+
+        progress_q: stdlib_queue.Queue[dict] = stdlib_queue.Queue()
+
+        async def publish_stream():
+            async with _metadata_publish_lock:
+                def on_progress(step: str, msg: str) -> None:
+                    progress_q.put({"step": step, "message": msg})
+
+                task = asyncio.create_task(
+                    metadata_manager.publish(on_progress=on_progress),
+                )
+
+                try:
+                    while not task.done():
+                        await asyncio.sleep(0.3)
+                        while not progress_q.empty():
+                            evt = progress_q.get_nowait()
+                            yield f"data: {json.dumps(evt)}\n\n"
+
+                    # Drain remaining events
+                    while not progress_q.empty():
+                        evt = progress_q.get_nowait()
+                        yield f"data: {json.dumps(evt)}\n\n"
+
+                    result = task.result()
+                    done_evt = {
+                        "step": "done",
+                        "success": result.success,
+                        "ipfs_cid": result.ipfs_cid,
+                        "onchain_hash": result.onchain_hash,
+                        "error": result.error,
+                    }
+                    yield f"data: {json.dumps(done_evt)}\n\n"
+
+                except (Exception, asyncio.CancelledError) as e:
+                    yield f"data: {json.dumps({'step': 'error', 'message': str(e)})}\n\n"
+
+        from starlette.responses import StreamingResponse
+        return StreamingResponse(
+            publish_stream(),
+            media_type="text/event-stream",
+        )
 
     _REQUEST_ID_RE = re.compile(r"^(http-|0x)?[a-f0-9-]{1,66}$", re.IGNORECASE)
 

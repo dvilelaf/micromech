@@ -458,9 +458,12 @@ def web(
     def get_tools():
         return reg.list_packages()
 
+    from micromech.metadata_manager import MetadataManager
+    mm = MetadataManager(cfg)
+
     web_app = create_web_app(
         get_status, get_recent, get_tools, noop_on_request,
-        queue=queue, runtime_manager=mgr,
+        queue=queue, runtime_manager=mgr, metadata_manager=mm,
     )
 
     # Auto-start runtime if service is deployed and not --no-runtime
@@ -545,6 +548,38 @@ def metadata_push(
     except Exception as e:
         typer.echo(f"IPFS push failed: {e}")
         typer.echo("Use the on-chain hash above to update manually.")
+
+
+@app.command(name="metadata-publish")
+def metadata_publish(
+    chain: Optional[str] = typer.Option(None, "--chain", help="Chain to update (default: all)"),
+    skip_onchain: bool = typer.Option(False, "--skip-onchain", help="Push IPFS only"),
+) -> None:
+    """Publish tool metadata: scan → IPFS → on-chain (all-in-one)."""
+    from micromech.core.config import MicromechConfig, register_plugin
+    from micromech.metadata_manager import MetadataManager
+
+    register_plugin()
+    config = MicromechConfig.load()
+    mm = MetadataManager(config)
+
+    def on_progress(step: str, msg: str) -> None:
+        typer.echo(f"  [{step}] {msg}")
+
+    typer.echo("Publishing tool metadata...")
+    result = asyncio.run(mm.publish(
+        update_onchain=not skip_onchain,
+        on_progress=on_progress,
+    ))
+
+    if result.success:
+        typer.echo(f"\nIPFS CID: {result.ipfs_cid}")
+        typer.echo(f"On-chain hash: {result.onchain_hash}")
+        for ch, tx in result.chain_txs.items():
+            typer.echo(f"  {ch}: tx {tx}")
+    else:
+        typer.echo(f"\nFailed: {result.error}")
+        raise typer.Exit(1)
 
 
 @app.command(name="create-service")

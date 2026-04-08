@@ -258,6 +258,9 @@ class MechServer:
         def get_tools():
             return self.registry.list_packages()
 
+        from micromech.metadata_manager import MetadataManager
+        mm = MetadataManager(self.config)
+
         web_app = create_web_app(
             get_status=self.get_status,
             get_recent=self.queue.get_recent,
@@ -265,6 +268,7 @@ class MechServer:
             on_request=self._on_new_request,
             queue=self.queue,
             metrics=self.metrics,
+            metadata_manager=mm,
         )
         app.mount("/dashboard", web_app)
 

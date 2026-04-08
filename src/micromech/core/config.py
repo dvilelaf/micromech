@@ -78,6 +78,11 @@ class MicromechConfig(BaseModel):
     update_check_enabled: bool = True
     auto_update_enabled: bool = False
 
+    # Metadata state (set by MetadataManager after publish)
+    metadata_ipfs_cid: Optional[str] = None
+    metadata_onchain_hash: Optional[str] = None
+    metadata_fingerprints: Optional[dict[str, str]] = None
+
     @model_validator(mode="after")
     def validate_fund_target_above_threshold(self) -> "MicromechConfig":
         if self.fund_target_native < self.fund_threshold_native:

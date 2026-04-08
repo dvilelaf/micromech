@@ -329,7 +329,7 @@ class MechLifecycle:
         Raises RuntimeError on any step failure.
         """
         result: dict[str, Any] = {}
-        total = 6
+        total = 7
 
         def _progress(step: int, msg: str, success: bool = True) -> None:
             if on_progress:
@@ -428,6 +428,26 @@ class MechLifecycle:
             _progress(6, "Service staked successfully")
         else:
             _progress(6, "Staking failed (non-fatal)", False)
+
+        # Step 7: Publish tool metadata
+        _progress(7, "Publishing tool metadata...")
+        try:
+            import asyncio
+
+            from micromech.metadata_manager import MetadataManager
+
+            mm = MetadataManager(self.config)
+            publish_result = asyncio.run(mm.publish(
+                update_onchain=True,
+                on_progress=lambda step, msg: _progress(7, msg),
+            ))
+            if publish_result.success:
+                result["metadata_cid"] = publish_result.ipfs_cid
+                _progress(7, f"Metadata published: {publish_result.ipfs_cid[:24]}...")
+            else:
+                _progress(7, f"Metadata publish failed: {publish_result.error}", False)
+        except Exception as e:
+            _progress(7, f"Metadata publish failed (non-fatal): {e}", False)
 
         return result
 

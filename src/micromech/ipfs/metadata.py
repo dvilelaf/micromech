@@ -4,7 +4,7 @@ Generates the on-chain metadata document that describes the mech's available too
 This metadata is pushed to IPFS and its hash stored on-chain via changeHash().
 """
 
-import importlib
+import ast
 import json
 from pathlib import Path
 from typing import Any
@@ -13,6 +13,40 @@ import yaml
 from loguru import logger
 
 from micromech.ipfs.client import cid_hex_to_multihash_bytes, compute_cid, compute_cid_hex
+
+
+def _parse_allowed_tools(module_path: Path) -> list[str]:
+    """Extract ALLOWED_TOOLS from a Python file using AST (no code execution).
+
+    Parses the file as an AST and looks for a top-level assignment:
+        ALLOWED_TOOLS = ["tool-a", "tool-b"]
+    """
+    tree = ast.parse(module_path.read_text())
+    for node in ast.iter_child_nodes(tree):
+        # Handle: ALLOWED_TOOLS = ["a", "b"]
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "ALLOWED_TOOLS":
+                    value = ast.literal_eval(node.value)
+                    if isinstance(value, list):
+                        return [str(v) for v in value]
+        # Handle: ALLOWED_TOOLS: list[str] = ["a", "b"]
+        if isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.target.id == "ALLOWED_TOOLS":
+                if node.value:
+                    value = ast.literal_eval(node.value)
+                    if isinstance(value, list):
+                        return [str(v) for v in value]
+    return []
+
+
+def compute_tools_fingerprint(tools_dir: Path) -> dict[str, str]:
+    """Compute a composite fingerprint per tool package.
+
+    Returns {package_name: package_cid} for change detection.
+    """
+    tools = scan_tool_packages(tools_dir)
+    return {t["name"]: t["package_cid"] for t in tools if t.get("package_cid")}
 
 
 def scan_tool_packages(tools_dir: Path) -> list[dict[str, Any]]:
@@ -44,24 +78,21 @@ def scan_tool_packages(tools_dir: Path) -> list[dict[str, Any]]:
         version = spec.get("version", "0.1.0")
         entry_point = spec.get("entry_point", f"{name}.py")
 
-        # Extract ALLOWED_TOOLS from the Python module
+        # Extract ALLOWED_TOOLS via AST (no code execution)
         allowed_tools = []
         module_path = tool_dir / entry_point
         if module_path.exists():
             try:
-                mod_spec = importlib.util.spec_from_file_location(f"_scan_{name}", module_path)
-                if mod_spec and mod_spec.loader:
-                    mod = importlib.util.module_from_spec(mod_spec)
-                    mod_spec.loader.exec_module(mod)
-                    allowed_tools = getattr(mod, "ALLOWED_TOOLS", [])
+                allowed_tools = _parse_allowed_tools(module_path)
             except Exception as e:
-                logger.warning("Failed to import {} for ALLOWED_TOOLS: {}", name, e)
+                logger.warning("Failed to parse ALLOWED_TOOLS from {}: {}", name, e)
 
-        # Compute package CID from all files
+        # Compute package CID from all files (with path delimiters to prevent collisions)
         package_data = b""
         for f in sorted(tool_dir.rglob("*")):
             if f.is_file() and "__pycache__" not in str(f):
-                package_data += f.read_bytes()
+                rel = str(f.relative_to(tool_dir))
+                package_data += f"{rel}\x00".encode() + f.read_bytes() + b"\x00"
         package_cid = compute_cid(package_data) if package_data else ""
 
         tools.append(

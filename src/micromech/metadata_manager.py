@@ -1,0 +1,196 @@
+"""Metadata manager — orchestrates tool metadata lifecycle.
+
+Handles: scan tools → build metadata → push IPFS → update on-chain hash.
+Tracks state to detect when tools change and metadata needs republishing.
+"""
+
+import asyncio
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+from loguru import logger
+
+from micromech.core.config import MicromechConfig
+
+# Default tools directory (built-in tools inside the package)
+_BUILTIN_TOOLS_DIR = Path(__file__).parent / "tools"
+
+
+@dataclass
+class MetadataResult:
+    """Result of a metadata publish operation."""
+
+    metadata: dict = field(default_factory=dict)
+    ipfs_cid: str = ""
+    onchain_hash: str = ""
+    chain_txs: dict[str, str] = field(default_factory=dict)  # chain → tx_hash
+    error: Optional[str] = None
+
+    @property
+    def success(self) -> bool:
+        return self.error is None
+
+
+@dataclass
+class MetadataStatus:
+    """Current metadata state for display."""
+
+    tools_fingerprint: dict[str, str] = field(default_factory=dict)
+    needs_update: bool = False
+    changed_packages: list[str] = field(default_factory=list)
+    ipfs_cid: Optional[str] = None
+    computed_hash: Optional[str] = None
+    stored_hash: Optional[str] = None
+    tools: list[dict[str, Any]] = field(default_factory=list)
+
+
+class MetadataManager:
+    """Orchestrates tool metadata publication and change detection."""
+
+    def __init__(
+        self,
+        config: MicromechConfig,
+        tools_dir: Path | None = None,
+    ):
+        self.config = config
+        self.tools_dir = tools_dir or _BUILTIN_TOOLS_DIR
+
+    def get_status(self) -> MetadataStatus:
+        """Get current metadata state: fingerprints, staleness, tools list."""
+        from micromech.ipfs.metadata import (
+            build_metadata,
+            compute_onchain_hash,
+            scan_tool_packages,
+        )
+
+        # Single scan — extract fingerprints directly (no triple scan)
+        tools = scan_tool_packages(self.tools_dir)
+        current_fps = {
+            t["name"]: t["package_cid"]
+            for t in tools if t.get("package_cid")
+        }
+        metadata = build_metadata(tools)
+        current_hash = compute_onchain_hash(metadata)
+
+        # Compare against stored hash
+        stored_hash = self.config.metadata_onchain_hash
+        needs_update = stored_hash is None or stored_hash != current_hash
+
+        changed = []
+        if stored_hash and needs_update:
+            stored_fps = self.config.metadata_fingerprints or {}
+            for name, cid in current_fps.items():
+                if name not in stored_fps or stored_fps[name] != cid:
+                    changed.append(name)
+            for name in stored_fps:
+                if name not in current_fps:
+                    changed.append(name)
+
+        return MetadataStatus(
+            tools_fingerprint=current_fps,
+            needs_update=needs_update,
+            changed_packages=changed,
+            ipfs_cid=self.config.metadata_ipfs_cid,
+            computed_hash=current_hash,
+            stored_hash=stored_hash,
+            tools=[
+                {
+                    "name": t["name"],
+                    "version": t["version"],
+                    "tools": t["allowed_tools"],
+                    "package_cid": t["package_cid"],
+                }
+                for t in tools
+            ],
+        )
+
+    async def publish(
+        self,
+        update_onchain: bool = True,
+        on_progress: Callable[[str, str], None] | None = None,
+    ) -> MetadataResult:
+        """Full publish pipeline: scan → build → push IPFS → update on-chain.
+
+        Args:
+            update_onchain: If True, call changeHash() on all enabled chains.
+            on_progress: Optional callback(step, message) for progress reporting.
+        """
+        from micromech.ipfs.client import push_json_to_ipfs
+        from micromech.ipfs.metadata import (
+            build_metadata,
+            compute_onchain_hash,
+            compute_tools_fingerprint,
+            scan_tool_packages,
+        )
+
+        result = MetadataResult()
+
+        def _progress(step: str, msg: str) -> None:
+            logger.info("[metadata] {}: {}", step, msg)
+            if on_progress:
+                on_progress(step, msg)
+
+        try:
+            # Step 1: Scan and build
+            _progress("scan", "Scanning tool packages...")
+            tools = scan_tool_packages(self.tools_dir)
+            metadata = build_metadata(tools)
+            result.metadata = metadata
+            _progress("scan", f"Found {len(tools)} packages, {len(metadata['tools'])} tool IDs")
+
+            # Step 2: Push to IPFS
+            _progress("ipfs", "Pushing metadata to IPFS...")
+            cid, cid_hex = await push_json_to_ipfs(metadata)
+            result.ipfs_cid = cid
+            _progress("ipfs", f"Pushed: {cid}")
+
+            # Step 3: Compute on-chain hash
+            onchain_hash = compute_onchain_hash(metadata)
+            result.onchain_hash = onchain_hash
+
+            # Step 4: Update on-chain (per chain)
+            if update_onchain:
+                for chain_name in self.config.enabled_chains:
+                    chain_cfg = self.config.chains[chain_name]
+                    if not chain_cfg.setup_complete:
+                        continue
+
+                    # Skip if hash unchanged on this chain
+                    _progress("onchain", f"Updating on-chain hash on {chain_name}...")
+
+                    from micromech.core.bridge import get_service_info
+                    from micromech.management import MechLifecycle
+
+                    svc_info = get_service_info(chain_name)
+                    svc_key = svc_info.get("service_key")
+                    if not svc_key:
+                        _progress("onchain", f"No service key for {chain_name}, skipping")
+                        continue
+
+                    lc = MechLifecycle(self.config, chain_name)
+                    tx = await asyncio.to_thread(
+                        lc.update_metadata_onchain, svc_key, onchain_hash,
+                    )
+                    if tx:
+                        result.chain_txs[chain_name] = tx
+                        _progress("onchain", f"{chain_name}: tx {tx[:18]}...")
+                    else:
+                        _progress("onchain", f"{chain_name}: update failed (non-fatal)")
+
+            # Step 5: Persist state in config
+            fingerprints = {
+                t["name"]: t["package_cid"]
+                for t in tools if t.get("package_cid")
+            }
+            self.config.metadata_ipfs_cid = cid
+            self.config.metadata_onchain_hash = onchain_hash
+            self.config.metadata_fingerprints = fingerprints
+            self.config.save()
+            _progress("done", "Metadata published successfully")
+
+        except Exception as e:
+            logger.error("Metadata publish failed: {}", e)
+            result.error = str(e)
+
+        return result
