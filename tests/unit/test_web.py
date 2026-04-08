@@ -458,6 +458,31 @@ class TestSetupAPI:
         assert chains[0]["name"] == "gnosis"
 
 
+class TestHostBinding:
+    """Verify the server only binds to localhost (security)."""
+
+    def test_default_host_is_localhost(self):
+        from micromech.core.constants import DEFAULT_HOST
+        assert DEFAULT_HOST == "127.0.0.1", (
+            f"DEFAULT_HOST must be 127.0.0.1, got {DEFAULT_HOST}"
+        )
+
+    def test_default_host_is_not_all_interfaces(self):
+        from micromech.core.constants import DEFAULT_HOST
+        assert DEFAULT_HOST != "0.0.0.0", (
+            "DEFAULT_HOST must NOT be 0.0.0.0 — web UI must only be accessible from localhost"
+        )
+
+    def test_cli_web_default_host(self):
+        """CLI web command defaults to 127.0.0.1."""
+        import inspect
+        from micromech.cli import web
+        sig = inspect.signature(web)
+        host_param = sig.parameters.get("host")
+        assert host_param is not None
+        assert host_param.default.default == "127.0.0.1"
+
+
 class TestHealthAPI:
     def test_health_check(self, web_client: TestClient):
         resp = web_client.get("/api/health")
