@@ -78,6 +78,9 @@ class MicromechConfig(BaseModel):
     update_check_enabled: bool = True
     auto_update_enabled: bool = False
 
+    # Tools
+    disabled_tools: list[str] = Field(default_factory=list)
+
     # Metadata state (set by MetadataManager after publish)
     metadata_ipfs_cid: Optional[str] = None
     metadata_onchain_hash: Optional[str] = None

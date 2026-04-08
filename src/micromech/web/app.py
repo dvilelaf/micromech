@@ -644,6 +644,45 @@ def create_web_app(
     async def api_tools() -> list[dict]:
         return get_tools()
 
+    @app.get("/api/setup/tools")
+    async def api_setup_tools() -> list[dict]:
+        """All available tool packages with enabled/disabled status."""
+        from micromech.ipfs.metadata import scan_tool_packages
+        tools_dir = Path(__file__).parent.parent / "tools"
+        all_tools = scan_tool_packages(tools_dir)
+        cfg = MicromechConfig.load()
+        disabled = set(cfg.disabled_tools)
+        return [
+            {
+                "name": t["name"],
+                "description": t["description"],
+                "version": t["version"],
+                "tools": t["allowed_tools"],
+                "enabled": t["name"] not in disabled,
+            }
+            for t in all_tools
+        ]
+
+    @app.post("/api/setup/tools")
+    async def api_setup_tools_save(request: Request):
+        """Save which tools are enabled/disabled."""
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
+        csrf = request.headers.get(CSRF_HEADER)
+        if not csrf:
+            return JSONResponse({"error": f"Missing {CSRF_HEADER} header"}, 403)
+
+        body = await request.json()
+        disabled = body.get("disabled_tools", [])
+        if not isinstance(disabled, list):
+            return JSONResponse({"error": "disabled_tools must be a list"}, 400)
+
+        cfg = MicromechConfig.load()
+        cfg.disabled_tools = disabled
+        cfg.save()
+        return {"status": "saved", "disabled_tools": disabled}
+
     # --- Metadata API ---
 
     @app.get("/api/metadata")

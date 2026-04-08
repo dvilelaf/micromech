@@ -433,7 +433,8 @@ def web(
     cfg = _load_config(config_path)
     queue = PersistentQueue(DB_PATH)
     reg = ToolRegistry()
-    reg.load_builtins()
+    disabled = set(cfg.disabled_tools) if cfg.disabled_tools else None
+    reg.load_builtins(disabled=disabled)
     mgr = RuntimeManager(cfg)
 
     async def noop_on_request(req):

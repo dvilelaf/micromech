@@ -109,7 +109,10 @@ class ToolRegistry:
         except Exception as e:
             logger.error("Failed to load tool {}: {}", tool_id, e)
 
-    def _discover_directory(self, tools_dir: Path, module_prefix: str) -> int:
+    def _discover_directory(
+        self, tools_dir: Path, module_prefix: str,
+        skip_packages: set[str] | None = None,
+    ) -> int:
         """Auto-discover and load all tool packages in a directory.
 
         Each subdirectory with a component.yaml is treated as a tool package.
@@ -137,6 +140,9 @@ class ToolRegistry:
                 continue
 
             name = spec.get("name", tool_dir.name)
+            if skip_packages and name in skip_packages:
+                logger.info("Skipping disabled tool package: {}", name)
+                continue
             entry_point = spec.get("entry_point", f"{name}.py")
             entry_module = entry_point.removesuffix(".py")
             description = spec.get("description", "")
@@ -168,9 +174,11 @@ class ToolRegistry:
 
         return loaded
 
-    def load_builtins(self) -> None:
+    def load_builtins(self, disabled: set[str] | None = None) -> None:
         """Auto-discover and load all built-in tools from the tools directory."""
-        loaded = self._discover_directory(_BUILTINS_DIR, "micromech.tools")
+        loaded = self._discover_directory(
+            _BUILTINS_DIR, "micromech.tools", skip_packages=disabled,
+        )
         logger.info("Auto-discovered {} built-in tool package(s)", loaded)
 
     def load_custom(self, custom_dir: Path) -> None:

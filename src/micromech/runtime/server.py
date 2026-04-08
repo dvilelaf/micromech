@@ -78,8 +78,9 @@ class MechServer:
         self._queued_ids: set[str] = set()
 
     def _load_tools(self) -> None:
-        """Load tools (auto-discovered builtins)."""
-        self.registry.load_builtins()
+        """Load tools (auto-discovered builtins, respecting disabled list)."""
+        disabled = set(self.config.disabled_tools) if self.config.disabled_tools else None
+        self.registry.load_builtins(disabled=disabled)
         logger.info("Loaded tools: {}", self.registry.tool_ids)
 
     async def _recover(self) -> None:

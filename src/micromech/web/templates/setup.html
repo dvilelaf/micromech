@@ -360,11 +360,11 @@
             <!-- Step 4: Tools -->
             <div class="step" id="step-4">
                 <h2>Tools</h2>
-                <p>Your mech will use these tools to respond to on-chain requests.</p>
+                <p>Choose which tools your mech will use to respond to on-chain requests.</p>
                 <div id="tools-list" style="margin-bottom: 1rem;"></div>
                 <div class="btn-row">
                     <button class="btn btn-primary" onclick="goStep(3)">Back</button>
-                    <button class="btn btn-accent" id="btn-deploy" onclick="startDeploy()">Deploy</button>
+                    <button class="btn btn-accent" id="btn-deploy" onclick="saveToolsAndDeploy()">Deploy</button>
                 </div>
             </div>
 
@@ -761,19 +761,26 @@
     }
 
     // --- Step 4: Tools (dynamic) ---
+    const toolToggles = {};  // name -> enabled (bool)
+
     async function loadTools() {
         const container = document.getElementById('tools-list');
         try {
-            const res = await fetch('/api/tools');
+            const res = await fetch('/api/setup/tools');
             const tools = await res.json();
             container.innerHTML = '';
             if (tools.length === 0) {
-                container.innerHTML = '<p style="color:var(--text-muted);">No tools loaded.</p>';
+                container.innerHTML = '<p style="color:var(--text-muted);">No tools available.</p>';
                 return;
             }
             tools.forEach(pkg => {
+                toolToggles[pkg.name] = pkg.enabled;
                 const row = document.createElement('div');
                 row.className = 'balance-row';
+                row.style.cursor = 'pointer';
+                row.dataset.tool = pkg.name;
+                row.onclick = () => toggleTool(pkg.name);
+
                 const left = document.createElement('span');
                 const toolIds = (pkg.tools || []).join(', ');
                 left.innerHTML = (pkg.name || 'unknown') +
@@ -784,9 +791,12 @@
                     ver.textContent = 'v' + pkg.version;
                     left.appendChild(ver);
                 }
+
                 const right = document.createElement('span');
-                right.style.color = 'var(--success)';
-                right.textContent = 'enabled';
+                right.className = 'tool-status';
+                right.style.color = pkg.enabled ? 'var(--success)' : 'var(--text-muted)';
+                right.textContent = pkg.enabled ? 'enabled' : 'disabled';
+
                 row.appendChild(left);
                 row.appendChild(right);
                 container.appendChild(row);
@@ -794,6 +804,35 @@
         } catch (e) {
             container.innerHTML = '<p style="color:var(--text-muted);">Failed to load tools.</p>';
         }
+    }
+
+    function toggleTool(name) {
+        toolToggles[name] = !toolToggles[name];
+        const row = document.querySelector(`[data-tool="${name}"]`);
+        if (row) {
+            const status = row.querySelector('.tool-status');
+            status.style.color = toolToggles[name] ? 'var(--success)' : 'var(--text-muted)';
+            status.textContent = toolToggles[name] ? 'enabled' : 'disabled';
+        }
+        // Must have at least 1 tool enabled
+        const anyEnabled = Object.values(toolToggles).some(v => v);
+        document.getElementById('btn-deploy').disabled = !anyEnabled;
+    }
+
+    async function saveToolsAndDeploy() {
+        const disabled = Object.entries(toolToggles)
+            .filter(([_, enabled]) => !enabled)
+            .map(([name]) => name);
+        try {
+            await fetch('/api/setup/tools', {
+                method: 'POST',
+                headers: authHeaders({'X-Micromech-Action': 'setup'}),
+                body: JSON.stringify({ disabled_tools: disabled }),
+            });
+        } catch (e) {
+            console.error('Failed to save tool config:', e);
+        }
+        startDeploy();
     }
 
     // --- Step 5: Parallel Deploy ---
