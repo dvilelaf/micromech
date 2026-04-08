@@ -277,10 +277,16 @@ class EventListener:
         return prompt, tool, extra
 
     async def run(self, callback: Any) -> None:
-        """Run the event listener loop."""
+        """Run the event listener loop with adaptive polling.
+
+        Starts at DEFAULT_EVENT_POLL_INTERVAL (15s). When idle (no new
+        requests), backs off up to 60s. Snaps back to 15s on activity.
+        Reduces RPC usage by ~75% during quiet periods.
+        """
         self._running = True
         interval = DEFAULT_EVENT_POLL_INTERVAL
-        logger.info("Event listener started (poll every {}s)", interval)
+        max_interval = 60
+        logger.info("Event listener started (poll {}s, max {}s)", interval, max_interval)
 
         while self._running:
             requests = await self.poll_once()
@@ -294,6 +300,12 @@ class EventListener:
 
             if all_ok:
                 self.advance_block()
+
+            # Adaptive polling: back off when idle, snap back on activity
+            if requests:
+                interval = DEFAULT_EVENT_POLL_INTERVAL
+            else:
+                interval = min(interval * 1.5, max_interval)
 
             await asyncio.sleep(interval)
 

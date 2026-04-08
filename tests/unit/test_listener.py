@@ -499,3 +499,72 @@ class TestParseMarketplaceEventEdgeCases:
         assert len(reqs) == 2
         assert reqs[0].prompt == "q1"
         assert reqs[1].prompt == ""  # Missing data -> empty
+
+
+class TestAdaptivePolling:
+    """Test adaptive polling interval in EventListener.run()."""
+
+    @pytest.mark.asyncio
+    async def test_interval_increases_when_idle(self):
+        """Interval backs off when no requests found."""
+        from micromech.core.constants import DEFAULT_EVENT_POLL_INTERVAL
+
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH)
+        calls = []
+
+        async def mock_poll_once():
+            return []  # no requests
+
+        listener.poll_once = mock_poll_once
+
+        original_sleep = asyncio.sleep
+        async def tracked_sleep(t):
+            calls.append(t)
+            if len(calls) >= 4:
+                listener.stop()
+            await original_sleep(0)  # don't actually wait
+
+        with patch("asyncio.sleep", tracked_sleep):
+            await listener.run(callback=AsyncMock())
+
+        # Each idle poll increases interval (15 → 22.5 → 33.75 → ...)
+        assert calls[0] >= DEFAULT_EVENT_POLL_INTERVAL
+        assert calls[1] > calls[0]
+        assert calls[2] > calls[1]
+        # Should not exceed 60s
+        assert all(t <= 60 for t in calls)
+
+    @pytest.mark.asyncio
+    async def test_interval_resets_on_activity(self):
+        """Interval snaps back to default when requests arrive."""
+        from micromech.core.constants import DEFAULT_EVENT_POLL_INTERVAL
+
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH)
+        call_count = 0
+        calls = []
+
+        async def mock_poll_once():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 3:
+                # Simulate activity on 3rd poll
+                return [MechRequest(request_id="test", prompt="hi", tool="echo")]
+            return []
+
+        listener.poll_once = mock_poll_once
+        listener.advance_block = lambda: None
+
+        original_sleep = asyncio.sleep
+        async def tracked_sleep(t):
+            calls.append(t)
+            if len(calls) >= 4:
+                listener.stop()
+            await original_sleep(0)
+
+        with patch("asyncio.sleep", tracked_sleep):
+            await listener.run(callback=AsyncMock())
+
+        # calls[0], calls[1]: idle → increasing
+        assert calls[1] > calls[0]
+        # calls[2]: after activity → snapped back to default
+        assert calls[2] == DEFAULT_EVENT_POLL_INTERVAL
