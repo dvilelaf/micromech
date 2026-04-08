@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from micromech.core.config import MicromechConfig
 from micromech.ipfs.metadata import _parse_allowed_tools, compute_tools_fingerprint
 from tests.conftest import make_test_config
 
@@ -35,12 +34,7 @@ class TestParseAllowedTools:
 
     def test_multiline_list(self, tmp_path: Path):
         module = tmp_path / "tool.py"
-        module.write_text(
-            'ALLOWED_TOOLS = [\n'
-            '    "tool-a",\n'
-            '    "tool-b",\n'
-            ']\n'
-        )
+        module.write_text('ALLOWED_TOOLS = [\n    "tool-a",\n    "tool-b",\n]\n')
         assert _parse_allowed_tools(module) == ["tool-a", "tool-b"]
 
     def test_annotated_assignment(self, tmp_path: Path):
@@ -52,10 +46,7 @@ class TestParseAllowedTools:
         """Verify dangerous code is NOT executed during parsing."""
         module = tmp_path / "tool.py"
         marker = tmp_path / "executed.txt"
-        module.write_text(
-            f'open("{marker}", "w").write("pwned")\n'
-            'ALLOWED_TOOLS = ["safe"]\n'
-        )
+        module.write_text(f'open("{marker}", "w").write("pwned")\nALLOWED_TOOLS = ["safe"]\n')
         result = _parse_allowed_tools(module)
         assert result == ["safe"]
         assert not marker.exists(), "Code was executed during AST parse!"
@@ -64,6 +55,7 @@ class TestParseAllowedTools:
 class TestComputeToolsFingerprint:
     def test_returns_dict(self):
         from micromech.ipfs.metadata import compute_tools_fingerprint
+
         tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools"
         fps = compute_tools_fingerprint(tools_dir)
         assert isinstance(fps, dict)
@@ -95,12 +87,13 @@ class TestMetadataManager:
 
     def test_computed_hash_is_bytes32(self):
         """compute_onchain_hash must return 32 bytes (not 34 multihash)."""
+        from pathlib import Path
+
         from micromech.ipfs.metadata import (
             build_metadata,
             compute_onchain_hash,
             scan_tool_packages,
         )
-        from pathlib import Path
 
         tools_dir = Path(__file__).parent.parent.parent / "src" / "micromech" / "tools"
         tools = scan_tool_packages(tools_dir)
@@ -115,13 +108,11 @@ class TestMetadataManager:
 
     def test_get_status_up_to_date(self):
         """When stored hash matches current, needs_update is False."""
-        from micromech.metadata_manager import MetadataManager
         from micromech.ipfs.metadata import (
             build_metadata,
             compute_onchain_hash,
-            compute_tools_fingerprint,
-            scan_tool_packages,
         )
+        from micromech.metadata_manager import MetadataManager
 
         config = make_test_config()
         mm = MetadataManager(config)
@@ -131,8 +122,7 @@ class TestMetadataManager:
         metadata = build_metadata(tools)
         config.metadata_onchain_hash = compute_onchain_hash(metadata)
         config.metadata_fingerprints = {
-            t["name"]: t["package_cid"]
-            for t in tools if t.get("package_cid")
+            t["name"]: t["package_cid"] for t in tools if t.get("package_cid")
         }
 
         status = mm.get_status()

@@ -5,9 +5,9 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from micromech.core.config import MicromechConfig
-from tests.conftest import make_test_config
 from micromech.core.constants import CHAIN_DEFAULTS
 from micromech.management import MechLifecycle
+from tests.conftest import make_test_config
 
 CHAIN_NAME = "gnosis"
 MARKETPLACE = CHAIN_DEFAULTS["gnosis"]["marketplace"]
@@ -421,13 +421,18 @@ class TestFullDeploy:
         mock_get_mgr.return_value = mock_mgr
 
         from micromech.core.config import ChainConfig
-        cfg = MicromechConfig(chains={"gnosis": ChainConfig(
-            chain="gnosis",
-            mech_address="0x" + "dd" * 20,
-            marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
-            factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
-            staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
-        )})
+
+        cfg = MicromechConfig(
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    mech_address="0x" + "dd" * 20,
+                    marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+                    factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+                    staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+                )
+            }
+        )
         lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
         result = lc.full_deploy()
 

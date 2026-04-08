@@ -34,7 +34,11 @@ def _with_retries(fn: Callable, label: str, retries: int = MAX_RETRIES) -> Any:
             delay = RETRY_DELAY * attempt
             logger.warning(
                 "{} returned {} (attempt {}/{}). Retrying in {}s...",
-                label, result, attempt, retries, delay,
+                label,
+                result,
+                attempt,
+                retries,
+                delay,
             )
             time.sleep(delay)
         except Exception as e:
@@ -43,9 +47,14 @@ def _with_retries(fn: Callable, label: str, retries: int = MAX_RETRIES) -> Any:
             delay = RETRY_DELAY * attempt
             logger.warning(
                 "{} failed (attempt {}/{}): {}. Retrying in {}s...",
-                label, attempt, retries, e, delay,
+                label,
+                attempt,
+                retries,
+                e,
+                delay,
             )
             time.sleep(delay)
+
 
 from micromech.core.config import ChainConfig, MicromechConfig
 
@@ -76,8 +85,7 @@ def _get_service_manager(
         return mgr
     except ImportError as e:
         msg = (
-            "iwa is required for management operations. "
-            "Install with: pip install micromech[chain]"
+            "iwa is required for management operations. Install with: pip install micromech[chain]"
         )
         raise ImportError(msg) from e
 
@@ -201,6 +209,7 @@ class MechLifecycle:
 
             # Third arg is bytes: ABI-encode the delivery rate
             from eth_abi import encode
+
             payload = encode(["uint256"], [rate])
 
             tx = marketplace.functions.create(
@@ -210,7 +219,8 @@ class MechLifecycle:
             ).transact({"from": EthereumAddress(owner), "gas": 10_000_000})
 
             receipt = web3.eth.wait_for_transaction_receipt(
-                tx, timeout=120,
+                tx,
+                timeout=120,
             )
             if receipt["status"] != 1:
                 logger.error("Mech creation TX reverted")
@@ -227,6 +237,7 @@ class MechLifecycle:
                 if log_addr == mkt and len(topics) >= 2:
                     raw = topics[1].hex() if isinstance(topics[1], bytes) else str(topics[1])
                     from web3 import Web3
+
                     mech_addr = Web3.to_checksum_address("0x" + raw[-40:])
                     logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
                     return mech_addr
@@ -243,6 +254,7 @@ class MechLifecycle:
     def _get_staking_contract(self, address: Optional[str] = None) -> Any:
         """Create a StakingContract instance from address string."""
         from iwa.plugins.olas.contracts.staking import StakingContract
+
         addr = address or self.chain_config.staking_address
         return StakingContract(addr, chain_name=self.chain_name)
 
@@ -337,6 +349,7 @@ class MechLifecycle:
 
         # Check if already complete (mech_address set)
         from micromech.core.bridge import get_service_info
+
         svc_info = get_service_info(self.chain_name)
 
         if self.chain_config.mech_address:
@@ -368,7 +381,8 @@ class MechLifecycle:
         else:
             _progress(1, "Creating service...")
             service_id = self.create_service(
-                agent_id=agent_id, bond_olas=bond_olas,
+                agent_id=agent_id,
+                bond_olas=bond_olas,
             )
             if not service_id:
                 _progress(1, "Failed to create service", False)

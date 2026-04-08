@@ -74,6 +74,7 @@ async def fund_task(
 
             # Check master has enough funds
             from micromech.core.bridge import check_balances
+
             master_native, _ = await asyncio.to_thread(check_balances, chain_name)
             if master_native < amount:
                 logger.warning(
@@ -101,15 +102,10 @@ async def fund_task(
                 )
 
                 if tx_hash:
-                    logger.info(
-                        f"Funded Safe on {chain_name}: {amount:.4f} native "
-                        f"(tx: {tx_hash})"
-                    )
+                    logger.info(f"Funded Safe on {chain_name}: {amount:.4f} native (tx: {tx_hash})")
                     await notification_service.send(
                         "Auto-Fund Safe",
-                        f"Chain: {chain_name}\n"
-                        f"Amount: {amount:.4f} native\n"
-                        f"Tx: {tx_hash}",
+                        f"Chain: {chain_name}\nAmount: {amount:.4f} native\nTx: {tx_hash}",
                     )
                 else:
                     logger.error(f"Fund transfer returned no tx hash on {chain_name}")
@@ -125,9 +121,7 @@ async def fund_task(
                 logger.error(f"Fund transfer failed on {chain_name}: {e}")
                 await notification_service.send(
                     "Auto-Fund Failed",
-                    f"Chain: {chain_name}\n"
-                    f"Safe balance: {native:.4f} native\n"
-                    f"Error: {e}",
+                    f"Chain: {chain_name}\nSafe balance: {native:.4f} native\nError: {e}",
                     level="warning",
                 )
 

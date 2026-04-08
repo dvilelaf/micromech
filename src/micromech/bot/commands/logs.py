@@ -52,7 +52,9 @@ def _build_zip(files: list[tuple[str, bytes]]) -> io.BytesIO:
             # Redact plaintext log files (skip .gz which are already compressed)
             if not name.endswith(".gz"):
                 try:
-                    content = _redact_sensitive(content.decode("utf-8", errors="replace")).encode("utf-8")
+                    content = _redact_sensitive(content.decode("utf-8", errors="replace")).encode(
+                        "utf-8"
+                    )
                 except Exception:
                     pass
             zf.writestr(name, content, compress_type=compress)

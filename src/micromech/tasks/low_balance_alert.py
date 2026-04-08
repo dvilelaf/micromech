@@ -40,14 +40,12 @@ async def low_balance_alert_task(
                 )
 
             # Check staking state for eviction
-            chain_config = lifecycle.chain_config
             from micromech.core.bridge import get_service_info
+
             svc_info = get_service_info(chain_name)
             svc_key = svc_info.get("service_key")
             if svc_key:
-                status = await asyncio.to_thread(
-                    lifecycle.get_status, svc_key
-                )
+                status = await asyncio.to_thread(lifecycle.get_status, svc_key)
                 if status and status.get("staking_state") == "EVICTED":
                     await notification_service.send(
                         "Eviction Alert",

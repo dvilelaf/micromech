@@ -288,4 +288,3 @@ class TestCidCompatibilityWithIwa:
         digest = hashlib.sha256(payload).digest()
         expected = "f" + bytes([0x01, 0x55, 0x12, 0x20]).hex() + digest.hex()
         assert compute_cid_hex(payload) == expected
-

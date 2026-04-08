@@ -18,7 +18,6 @@ Or manually:
   uv run pytest tests/integration/test_multichain_e2e.py -v -s
 """
 
-import asyncio
 import json
 import os
 import time as _time
@@ -145,26 +144,30 @@ N_LIFECYCLE_REQUESTS = 3
 
 # --- ABI loading ---
 
+
 def _load_abi(name: str) -> list:
     """Load ABI from iwa package."""
     try:
         from importlib.resources import files
+
         abi_dir = files("iwa.plugins.olas.contracts.abis")
         return json.loads(abi_dir.joinpath(name).read_text())
     except Exception:
         abi_file = (
-            Path("/media/david/DATA/repos/iwa/src/iwa")
-            / "plugins/olas/contracts/abis" / name
+            Path("/media/david/DATA/repos/iwa/src/iwa") / "plugins/olas/contracts/abis" / name
         )
         return json.loads(abi_file.read_text())
 
 
 # --- Helpers ---
 
+
 class AnvilBridge:
     """Minimal bridge for testing."""
+
     def __init__(self, web3: Any):
         self.web3 = web3
+
     def with_retry(self, fn: Any, **kwargs: Any) -> Any:
         return fn()
 
@@ -185,10 +188,12 @@ def _connect(chain_name: str) -> Web3 | None:
         # Inject PoA middleware for chains that need it (Polygon, etc.)
         try:
             from web3.middleware import ExtraDataToPOAMiddleware
+
             w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
         except ImportError:
             try:
                 from web3.middleware import ExtraDataLengthMiddleware
+
                 w3.middleware_onion.inject(ExtraDataLengthMiddleware, layer=0)
             except ImportError:
                 pass
@@ -221,7 +226,18 @@ def _mint_olas(w3: Web3, chain_name: str, to: str, amount_wei: int) -> None:
 
 def _approve_olas(w3: Web3, chain_name: str, owner: str, spender: str, amount: int) -> None:
     infra = CHAIN_INFRA[chain_name]
-    abi = [{"inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"type": "bool"}], "stateMutability": "nonpayable", "type": "function"}]  # noqa: E501
+    abi = [
+        {
+            "inputs": [
+                {"name": "spender", "type": "address"},
+                {"name": "amount", "type": "uint256"},
+            ],
+            "name": "approve",
+            "outputs": [{"type": "bool"}],
+            "stateMutability": "nonpayable",
+            "type": "function",
+        }
+    ]  # noqa: E501
     olas = w3.eth.contract(address=Web3.to_checksum_address(infra["olas_token"]), abi=abi)
     tx = olas.functions.approve(Web3.to_checksum_address(spender), amount).transact(
         {"from": owner, "gas": 100_000}
@@ -231,12 +247,21 @@ def _approve_olas(w3: Web3, chain_name: str, owner: str, spender: str, amount: i
 
 def _olas_balance(w3: Web3, chain_name: str, account: str) -> int:
     infra = CHAIN_INFRA[chain_name]
-    abi = [{"inputs": [{"name": "account", "type": "address"}], "name": "balanceOf", "outputs": [{"type": "uint256"}], "stateMutability": "view", "type": "function"}]  # noqa: E501
+    abi = [
+        {
+            "inputs": [{"name": "account", "type": "address"}],
+            "name": "balanceOf",
+            "outputs": [{"type": "uint256"}],
+            "stateMutability": "view",
+            "type": "function",
+        }
+    ]  # noqa: E501
     olas = w3.eth.contract(address=Web3.to_checksum_address(infra["olas_token"]), abi=abi)
     return olas.functions.balanceOf(Web3.to_checksum_address(account)).call()
 
 
 # --- Fixtures ---
+
 
 @pytest.fixture
 def available_chains(_anvil_forks) -> dict[str, Web3]:
@@ -270,6 +295,7 @@ def available_chains(_anvil_forks) -> dict[str, Web3]:
 
 
 # --- Tests: Contract verification ---
+
 
 class TestContractsExist:
     """Verify all critical contracts are deployed on each chain."""
@@ -316,10 +342,12 @@ class TestContractsExist:
 
 # --- Tests: Listener multi-chain ---
 
+
 class TestListenerMultiChain:
     @pytest.mark.asyncio
     async def test_listener_polls_each_chain(self, available_chains: dict[str, Web3]):
         from micromech.runtime.listener import EventListener
+
         for chain_name, w3 in available_chains.items():
             addrs = CHAIN_DEFAULTS[chain_name]
             chain_cfg = ChainConfig(
@@ -329,6 +357,7 @@ class TestListenerMultiChain:
                 staking_address=addrs["staking"],
             )
             import micromech.runtime.listener as _listener_mod
+
             _listener_mod.DEFAULT_EVENT_LOOKBACK_BLOCKS = 50
 
             config = MicromechConfig()
@@ -339,6 +368,7 @@ class TestListenerMultiChain:
 
 
 # --- Tests: Full lifecycle per chain ---
+
 
 class TestLifecycleMultiChain:
     """Full lifecycle on each available chain:
@@ -359,9 +389,9 @@ class TestLifecycleMultiChain:
         results = {}
 
         for chain_name, w3 in available_chains.items():
-            print(f"\n{'='*60}")
+            print(f"\n{'=' * 60}")
             print(f"  LIFECYCLE TEST: {chain_name.upper()} (chain_id={w3.eth.chain_id})")
-            print(f"{'='*60}")
+            print(f"{'=' * 60}")
 
             infra = CHAIN_INFRA[chain_name]
             addrs = CHAIN_DEFAULTS[chain_name]
@@ -379,7 +409,15 @@ class TestLifecycleMultiChain:
                 abi=registry_abi,
             )
             # Auto-discover the authorized ServiceManager from the registry
-            mgr_abi = [{"inputs": [], "name": "manager", "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"}]  # noqa: E501
+            mgr_abi = [
+                {
+                    "inputs": [],
+                    "name": "manager",
+                    "outputs": [{"type": "address"}],
+                    "stateMutability": "view",
+                    "type": "function",
+                }
+            ]  # noqa: E501
             mgr_lookup = w3.eth.contract(
                 address=Web3.to_checksum_address(infra["service_registry"]), abi=mgr_abi
             )
@@ -392,9 +430,7 @@ class TestLifecycleMultiChain:
 
             try:
                 # --- Step 1: Setup owner ---
-                owner = w3.to_checksum_address(
-                    "0xF325115Ee8b084fFC52E5d5b674C0229D00b4594"
-                )
+                owner = w3.to_checksum_address("0xF325115Ee8b084fFC52E5d5b674C0229D00b4594")
                 bond_wei = 5000 * 10**18
                 agent_id = 1  # agentId 1 exists on all chains
 
@@ -450,9 +486,8 @@ class TestLifecycleMultiChain:
 
                 # --- Step 5: Deploy Safe ---
                 deploy_data = bytes.fromhex(
-                    DEFAULT_DEPLOY_PAYLOAD.format(
-                        fallback_handler=infra["safe_fallback"][2:]
-                    )[2:] + int(_time.time()).to_bytes(32, "big").hex()
+                    DEFAULT_DEPLOY_PAYLOAD.format(fallback_handler=infra["safe_fallback"][2:])[2:]
+                    + int(_time.time()).to_bytes(32, "big").hex()
                 )
                 tx = svc_manager.functions.deploy(
                     svc_id,
@@ -484,17 +519,13 @@ class TestLifecycleMultiChain:
                 print(f"  Step 6: Mech created at {mech_addr[:16]}...")
 
                 # --- Step 7: Stake ---
-                _approve_olas(
-                    w3, chain_name, owner, addrs["staking"], bond_wei * 2
-                )
+                _approve_olas(w3, chain_name, owner, addrs["staking"], bond_wei * 2)
                 tx = registry.functions.approve(
                     Web3.to_checksum_address(addrs["staking"]), svc_id
                 ).transact({"from": owner, "gas": 100_000})
                 w3.eth.wait_for_transaction_receipt(tx)
 
-                tx = staking.functions.stake(svc_id).transact(
-                    {"from": owner, "gas": 1_000_000}
-                )
+                tx = staking.functions.stake(svc_id).transact({"from": owner, "gas": 1_000_000})
                 receipt = w3.eth.wait_for_transaction_receipt(tx)
                 assert receipt["status"] == 1, f"{chain_name}: stake failed"
 
@@ -560,13 +591,11 @@ class TestLifecycleMultiChain:
                 delta = max(epoch_end - current + 120, 86400 + 120)
                 w3.provider.make_request("evm_increaseTime", [delta])
                 w3.provider.make_request("evm_mine", [])
-                print(f"  Step 10: Advanced {delta}s ({delta/3600:.1f}h)")
+                print(f"  Step 10: Advanced {delta}s ({delta / 3600:.1f}h)")
 
                 # --- Step 11: Checkpoint ---
                 caller = w3.eth.accounts[0]
-                tx = staking.functions.checkpoint().transact(
-                    {"from": caller, "gas": 3_000_000}
-                )
+                tx = staking.functions.checkpoint().transact({"from": caller, "gas": 3_000_000})
                 receipt = w3.eth.wait_for_transaction_receipt(tx)
                 assert receipt["status"] == 1, f"{chain_name}: checkpoint failed"
                 print("  Step 11: Checkpoint done")
@@ -588,16 +617,16 @@ class TestLifecycleMultiChain:
                 # Don't stop — continue with next chain
 
         # Summary
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("  MULTI-CHAIN LIFECYCLE RESULTS")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         passed = 0
         for chain_name, result in results.items():
             status = "PASS" if result.startswith("OK") else "FAIL"
             if status == "PASS":
                 passed += 1
             print(f"  {chain_name:12s}: {result}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # All connected chains must pass full lifecycle
         assert passed == len(available_chains), (
@@ -607,11 +636,9 @@ class TestLifecycleMultiChain:
 
 # --- Tests: Multi-chain server ---
 
-class TestMultiChainServer:
 
-    def test_server_creates_per_chain_components(
-        self, available_chains: dict[str, Web3], tmp_path
-    ):
+class TestMultiChainServer:
+    def test_server_creates_per_chain_components(self, available_chains: dict[str, Web3], tmp_path):
         from micromech.runtime.server import MechServer
 
         chains_dict = {}
@@ -627,6 +654,7 @@ class TestMultiChainServer:
             bridges[chain_name] = AnvilBridge(w3)
 
         import micromech.runtime.server as _server_mod
+
         _server_mod.DB_PATH = tmp_path / "mc.db"
 
         config = MicromechConfig(

@@ -18,8 +18,7 @@ try:
     from fastapi.responses import JSONResponse
 except ImportError as e:
     raise ImportError(
-        "HTTP server requires fastapi. "
-        "Install with: pip install micromech[web]"
+        "HTTP server requires fastapi. Install with: pip install micromech[web]"
     ) from e
 
 from micromech.core.constants import validate_eth_address
@@ -88,7 +87,8 @@ def create_app(
 
     @app.post("/request")
     async def submit_request(
-        request: Request, payload: RequestPayload,
+        request: Request,
+        payload: RequestPayload,
     ) -> JSONResponse:
         """Submit an off-chain request."""
         from micromech.web.app import _check_auth, _get_client_ip, _rate_limited
@@ -99,9 +99,7 @@ def create_app(
 
         csrf = request.headers.get("X-Micromech-Action")
         if not csrf:
-            return JSONResponse(
-                {"error": "Missing X-Micromech-Action header"}, status_code=403
-            )
+            return JSONResponse({"error": "Missing X-Micromech-Action header"}, status_code=403)
 
         if _rate_limited("/request", _get_client_ip(request)):
             return JSONResponse({"error": "Rate limit exceeded"}, status_code=429)

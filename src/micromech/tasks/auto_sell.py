@@ -69,9 +69,7 @@ async def auto_sell_task(
             # (balance snapshot failed — don't risk selling pre-existing OLAS)
             floors = olas_floor_wei or {}
             if olas_floor_wei is not None and chain_name not in floors:
-                logger.warning(
-                    f"No OLAS floor for {chain_name}, skipping auto-sell"
-                )
+                logger.warning(f"No OLAS floor for {chain_name}, skipping auto-sell")
                 continue
             chain_floor_wei = floors.get(chain_name, 0)
             olas_floor = float(Decimal(str(chain_floor_wei)) / Decimal(10**18))
@@ -87,9 +85,7 @@ async def auto_sell_task(
             sell_wei = int(Decimal(str(sellable)) * Decimal(10**18))
             buy_token = WRAPPED_NATIVE.get(chain_name, "wxdai")
 
-            logger.info(
-                f"Auto-sell on {chain_name}: selling {sellable:.4f} OLAS → {buy_token}"
-            )
+            logger.info(f"Auto-sell on {chain_name}: selling {sellable:.4f} OLAS → {buy_token}")
 
             success = await bridge.wallet.swap(
                 account_address_or_tag="master",
@@ -103,16 +99,13 @@ async def auto_sell_task(
                 logger.info(f"Auto-sell completed on {chain_name}: {sellable:.4f} OLAS")
                 await notification_service.send(
                     "Auto-Sell",
-                    f"Chain: {chain_name}\n"
-                    f"Sold: {sellable:.4f} OLAS → {buy_token}",
+                    f"Chain: {chain_name}\nSold: {sellable:.4f} OLAS → {buy_token}",
                 )
             else:
                 logger.warning(f"Auto-sell swap returned False on {chain_name}")
                 await notification_service.send(
                     "Auto-Sell Failed",
-                    f"Chain: {chain_name}\n"
-                    f"Amount: {sellable:.4f} OLAS\n"
-                    f"Swap order was not filled.",
+                    f"Chain: {chain_name}\nAmount: {sellable:.4f} OLAS\nSwap order was not filled.",
                     level="warning",
                 )
 

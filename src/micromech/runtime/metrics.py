@@ -132,8 +132,12 @@ class MetricsCollector:
         )
 
     def record_execution_failed(
-        self, request_id: str, tool: str, error: str,
-        execution_time: float = 0.0, chain: str = "",
+        self,
+        request_id: str,
+        tool: str,
+        error: str,
+        execution_time: float = 0.0,
+        chain: str = "",
     ) -> None:
         self.executions_failed += 1
         if execution_time:

@@ -39,9 +39,7 @@ async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             if result.startswith("updated:"):
                 parts = result.split(":")
-                await wait_msg.edit_text(
-                    f"Updating v{parts[1]} -> v{parts[2]}! Restarting..."
-                )
+                await wait_msg.edit_text(f"Updating v{parts[1]} -> v{parts[2]}! Restarting...")
                 return
             elif result.startswith("current:"):
                 version = result.split(":")[1]

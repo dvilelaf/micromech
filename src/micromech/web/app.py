@@ -1,8 +1,8 @@
 """Web UI application — dashboard, metrics API, and SSE stream."""
 
 import asyncio
-import logging
 import json
+import logging
 import os
 import queue as stdlib_queue
 import re
@@ -96,7 +96,9 @@ def _log_sink(message: Any) -> None:
     location = f"{module}:{func}:{line_no}" if module else ""
     ts = record["time"].strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     msg_text = record["message"]
-    full_msg = f"{ts} | {record['level'].name:<8} | {location} - {msg_text}" if location else msg_text
+    full_msg = (
+        f"{ts} | {record['level'].name:<8} | {location} - {msg_text}" if location else msg_text
+    )
     _push_log_line(
         ts=record["time"].strftime("%H:%M:%S.%f")[:-3],
         level=record["level"].name,
@@ -110,8 +112,11 @@ class _StdlibLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             import datetime
+
             ts = datetime.datetime.fromtimestamp(record.created).strftime("%H:%M:%S.%f")[:-3]
-            _push_log_line(ts=ts, level=record.levelname, msg=_redact_sensitive(self.format(record)))
+            _push_log_line(
+                ts=ts, level=record.levelname, msg=_redact_sensitive(self.format(record))
+            )
         except Exception:
             pass
 
@@ -131,9 +136,7 @@ def _rate_limited(endpoint: str, client_ip: str) -> bool:
         )
         del bucket[oldest_ip]
     # Prune old entries for this IP
-    bucket[client_ip] = [
-        t for t in bucket.get(client_ip, []) if now - t < window
-    ]
+    bucket[client_ip] = [t for t in bucket.get(client_ip, []) if now - t < window]
     if len(bucket[client_ip]) >= max_req:
         return True
     bucket[client_ip].append(now)
@@ -165,6 +168,7 @@ def _check_auth(request: Request) -> Optional[JSONResponse]:
 def get_auth_token() -> str:
     """Return the current auth token (for CLI to display)."""
     return _AUTH_TOKEN
+
 
 _setup_needed: Optional[bool] = None
 
@@ -212,6 +216,7 @@ def _clear_setup_cache() -> None:
 def _valid_chain(chain_name: str) -> bool:
     """Check if chain_name is a known chain."""
     from micromech.core.constants import CHAIN_DEFAULTS
+
     return chain_name in CHAIN_DEFAULTS
 
 
@@ -244,9 +249,7 @@ def create_web_app(
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = (
-            "camera=(), microphone=(), geolocation=()"
-        )
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/chart.js@4/; "
@@ -271,7 +274,7 @@ def create_web_app(
             url = f"/setup?token={token}" if token else "/setup"
             return RedirectResponse(url=url, status_code=302)
         # Auth: token can be passed as ?token= for initial access
-        token = request.query_params.get("token")
+        token = request.query_params.get("token", "")
         if not (token and secrets.compare_digest(token, _AUTH_TOKEN)):
             if _check_auth(request) is not None:
                 return HTMLResponse(
@@ -283,7 +286,8 @@ def create_web_app(
                     status_code=401,
                 )
         return templates.TemplateResponse(
-            request=request, name="dashboard.html",
+            request=request,
+            name="dashboard.html",
             context={"auth_token": _AUTH_TOKEN},
         )
 
@@ -305,7 +309,8 @@ def create_web_app(
                 status_code=401,
             )
         return templates.TemplateResponse(
-            request=request, name="setup.html",
+            request=request,
+            name="setup.html",
             context={"auth_token": _AUTH_TOKEN},
         )
 
@@ -327,9 +332,7 @@ def create_web_app(
             # through POST /api/setup/wallet first.
             if _bridge._cached_key_storage is not None:
                 wallet_exists = True
-                wallet_address = str(
-                    _bridge._cached_key_storage.get_address_by_tag("master")
-                )
+                wallet_address = str(_bridge._cached_key_storage.get_address_by_tag("master"))
             elif _bridge._cached_wallet is not None:
                 wallet_exists = True
                 wallet_address = _bridge._cached_wallet.master_account.address
@@ -344,6 +347,7 @@ def create_web_app(
             from pathlib import Path
 
             from iwa.core.constants import WALLET_PATH
+
             wallet_file_exists = Path(WALLET_PATH).exists()
         except Exception:
             pass
@@ -354,6 +358,7 @@ def create_web_app(
             cfg = MicromechConfig.load()
             for name, chain_cfg in cfg.chains.items():
                 from micromech.core.bridge import get_service_info
+
                 svc = get_service_info(name)
                 chains_deployed[name] = {
                     "state": chain_cfg.detect_setup_state(),
@@ -409,18 +414,14 @@ def create_web_app(
         if auth_err:
             return auth_err
         if not x_micromech_action:
-            return JSONResponse(
-                {"error": "Missing X-Micromech-Action header"}, 403
-            )
+            return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
         if _rate_limited("/api/setup/wallet", _get_client_ip(request)):
             return JSONResponse({"error": "Too many attempts. Try again later."}, 429)
 
         body = await request.json()
         password = body.get("password", "")
         if not password or len(password) < 8:
-            return JSONResponse(
-                {"error": "Password too short (min 8 characters)."}, 400
-            )
+            return JSONResponse({"error": "Password too short (min 8 characters)."}, 400)
 
         def _create_or_unlock():
             from pathlib import Path
@@ -520,9 +521,7 @@ def create_web_app(
         if auth_err:
             return auth_err
         if not x_micromech_action:
-            return JSONResponse(
-                {"error": "Missing X-Micromech-Action header"}, 403
-            )
+            return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
 
         body = await request.json() if request.headers.get("content-type") else {}
         chain_name = body.get("chain", "gnosis")
@@ -532,9 +531,7 @@ def create_web_app(
 
         chain_lock = _get_deploy_lock(chain_name)
         if chain_lock.locked():
-            return JSONResponse(
-                {"error": f"Deploy already in progress for {chain_name}"}, 409
-            )
+            return JSONResponse({"error": f"Deploy already in progress for {chain_name}"}, 409)
 
         progress_q: stdlib_queue.Queue[dict] = stdlib_queue.Queue()
 
@@ -559,10 +556,14 @@ def create_web_app(
                 cfg.save()
 
             def on_progress(step, total, msg, success=True):
-                progress_q.put({
-                    "step": step, "total": total,
-                    "message": msg, "success": success,
-                })
+                progress_q.put(
+                    {
+                        "step": step,
+                        "total": total,
+                        "message": msg,
+                        "success": success,
+                    }
+                )
 
             lc = MechLifecycle(cfg, chain_name=chain_name)
             result = lc.full_deploy(on_progress=on_progress)
@@ -600,7 +601,8 @@ def create_web_app(
                         runtime_started = await runtime_manager.start()
 
                     done_evt = {
-                        "step": "done", "result": result,
+                        "step": "done",
+                        "result": result,
                         "runtime_started": runtime_started,
                     }
                     yield f"data: {json.dumps(done_evt)}\n\n"
@@ -619,9 +621,9 @@ def create_web_app(
     async def setup_chains() -> list[dict]:
         """Available chains for setup."""
         from micromech.core.constants import CHAIN_DEFAULTS
+
         return [
-            {"name": name, "contracts": contracts}
-            for name, contracts in CHAIN_DEFAULTS.items()
+            {"name": name, "contracts": contracts} for name, contracts in CHAIN_DEFAULTS.items()
         ]
 
     # --- Status API ---
@@ -649,6 +651,7 @@ def create_web_app(
         """All available tool packages (builtin + custom) with enabled/disabled status."""
         from micromech.core.constants import CUSTOM_TOOLS_DIR
         from micromech.ipfs.metadata import scan_tool_packages
+
         builtin_dir = Path(__file__).parent.parent / "tools"
         all_tools = scan_tool_packages(builtin_dir, source="builtin")
         all_tools.extend(scan_tool_packages(CUSTOM_TOOLS_DIR, source="custom"))
@@ -701,8 +704,10 @@ def create_web_app(
             return {"error": "Metadata manager not configured"}
         try:
             status = metadata_manager.get_status()
-            state = "not_registered" if status.ipfs_cid is None else (
-                "stale" if status.needs_update else "up_to_date"
+            state = (
+                "not_registered"
+                if status.ipfs_cid is None
+                else ("stale" if status.needs_update else "up_to_date")
             )
             return {
                 "status": state,
@@ -731,7 +736,8 @@ def create_web_app(
         csrf = request.headers.get(CSRF_HEADER)
         if not csrf:
             return JSONResponse(
-                {"error": f"Missing {CSRF_HEADER} header"}, 403,
+                {"error": f"Missing {CSRF_HEADER} header"},
+                403,
             )
 
         if _rate_limited("/api/metadata/publish", _get_client_ip(request)):
@@ -747,6 +753,7 @@ def create_web_app(
 
         async def publish_stream():
             async with _metadata_publish_lock:
+
                 def on_progress(step: str, msg: str) -> None:
                     progress_q.put({"step": step, "message": msg})
 
@@ -780,6 +787,7 @@ def create_web_app(
                     yield f"data: {json.dumps({'step': 'error', 'message': str(e)})}\n\n"
 
         from starlette.responses import StreamingResponse
+
         return StreamingResponse(
             publish_stream(),
             media_type="text/event-stream",
@@ -896,9 +904,7 @@ def create_web_app(
                         payload["runtime_state"] = runtime_manager.state
 
                     # Use passed metrics, or get from runtime manager
-                    _mc = metrics or (
-                        runtime_manager.metrics if runtime_manager else None
-                    )
+                    _mc = metrics or (runtime_manager.metrics if runtime_manager else None)
                     if _mc:
                         payload["live"] = _mc.get_live_snapshot()
                         new_events = _mc.get_events_since(last_event_ts)
@@ -911,7 +917,8 @@ def create_web_app(
                         status = get_status()
                         payload["queue"] = status.get("queue", {})
                         payload["delivered_total"] = status.get(
-                            "delivered_total", 0,
+                            "delivered_total",
+                            0,
                         )
                         # Populate live from status if no metrics collector
                         if not metrics and "metrics" in status:
@@ -936,6 +943,7 @@ def create_web_app(
     @app.get("/api/staking/status")
     async def staking_status(chain: Optional[str] = None) -> dict:
         """Get staking status for all configured chains (or one)."""
+
         def _get_staking() -> dict:
             from micromech.management import MechLifecycle
 
@@ -947,6 +955,7 @@ def create_web_app(
                 else config.enabled_chains
             )
             from micromech.core.bridge import get_service_info
+
             for name, cfg in chains_to_check.items():
                 svc = get_service_info(name)
                 svc_key = svc.get("service_key")
@@ -970,6 +979,7 @@ def create_web_app(
     @app.get("/api/karma")
     async def karma_status(chain: Optional[str] = None) -> dict:
         """Get mech karma and delivery counts for configured chains."""
+
         def _get_karma() -> dict:
             from micromech.core.bridge import IwaBridge
             from micromech.runtime.contracts import (
@@ -999,22 +1009,20 @@ def create_web_app(
                     )
 
                     # Get karma contract address and query mech karma
-                    karma_addr = bridge.with_retry(
-                        lambda: marketplace.functions.karma().call()
-                    )
+                    karma_addr = bridge.with_retry(lambda: marketplace.functions.karma().call())
                     karma_contract = w3.eth.contract(
-                        address=karma_addr, abi=KARMA_ABI,
+                        address=karma_addr,
+                        abi=KARMA_ABI,
                     )
                     mech_addr = cs(cfg.mech_address)
                     mech_karma = bridge.with_retry(
-                        lambda _ma=mech_addr: karma_contract.functions.mapMechKarma(
-                            _ma
-                        ).call()
+                        lambda _ma=mech_addr: karma_contract.functions.mapMechKarma(_ma).call()
                     )
 
                     # Get delivery count (uses multisig address)
                     deliveries = 0
                     from micromech.core.bridge import get_service_info
+
                     _svc = get_service_info(name)
                     _multisig = _svc.get("multisig_address")
                     if _multisig:
@@ -1030,7 +1038,7 @@ def create_web_app(
 
                     results[name] = {
                         "karma": mech_karma,
-                        "deliveries": deliveries,
+                        "deliveries": deliveries,  # type: ignore[dict-item]
                         "timeouts": timeouts,
                     }
                 except Exception as e:
@@ -1088,9 +1096,7 @@ def create_web_app(
         if auth_err:
             return auth_err
         if not x_micromech_action:
-            return JSONResponse(
-                {"error": "Missing X-Micromech-Action header"}, 403
-            )
+            return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
         if action not in _RUNTIME_ACTIONS:
             return JSONResponse({"error": "Unknown action"}, 404)
         if not runtime_manager:
@@ -1137,6 +1143,7 @@ def create_web_app(
             service_key = body.get("service_key", "") or ""
             if not service_key:
                 from micromech.core.bridge import get_service_info
+
                 svc = get_service_info(chain)
                 service_key = svc.get("service_key", "")
 
@@ -1229,6 +1236,7 @@ def _record_to_dict(record: Any) -> dict:
     if r.data and len(r.data) == 34 and r.data[:2] == b"\x12\x20":
         try:
             from micromech.ipfs.client import multihash_to_cid
+
             request_ipfs_cid = multihash_to_cid(r.data)
         except Exception:
             pass

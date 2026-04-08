@@ -22,14 +22,14 @@ def _build_chain_keyboard(chains: dict) -> InlineKeyboardMarkup:
         )
     for chain_name in chains:
         buttons.append(
-            [InlineKeyboardButton(
-                chain_name.upper(),
-                callback_data=f"{ACTION_CHECKPOINT}:{chain_name}",
-            )]
+            [
+                InlineKeyboardButton(
+                    chain_name.upper(),
+                    callback_data=f"{ACTION_CHECKPOINT}:{chain_name}",
+                )
+            ]
         )
-    buttons.append(
-        [InlineKeyboardButton("Cancel", callback_data=f"{ACTION_CHECKPOINT}:cancel")]
-    )
+    buttons.append([InlineKeyboardButton("Cancel", callback_data=f"{ACTION_CHECKPOINT}:cancel")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -42,10 +42,8 @@ async def checkpoint_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     config: MicromechConfig = context.bot_data["config"]
     enabled = config.enabled_chains
     from micromech.core.bridge import get_service_info
-    staked = {
-        k: v for k, v in enabled.items()
-        if get_service_info(k).get("service_key")
-    }
+
+    staked = {k: v for k, v in enabled.items() if get_service_info(k).get("service_key")}
 
     if not staked:
         await update.message.reply_text("No staked services.")
@@ -86,6 +84,7 @@ async def handle_checkpoint_callback(
         called = []
         skipped = []
         from micromech.core.bridge import get_service_info
+
         for chain_name, chain_config in enabled.items():
             svc_key = get_service_info(chain_name).get("service_key")
             if not svc_key:
@@ -95,9 +94,7 @@ async def handle_checkpoint_callback(
                 skipped.append(chain_name.upper())
                 continue
             try:
-                success = await asyncio.to_thread(
-                    lifecycle.checkpoint, svc_key
-                )
+                success = await asyncio.to_thread(lifecycle.checkpoint, svc_key)
                 if success:
                     called.append(chain_name.upper())
                 else:
@@ -118,6 +115,7 @@ async def handle_checkpoint_callback(
     # Single chain
     chain_name = payload
     from micromech.core.bridge import get_service_info
+
     svc_key = get_service_info(chain_name).get("service_key")
     if chain_name not in enabled or not svc_key:
         await query.answer("Chain not found or not staked")
@@ -132,9 +130,7 @@ async def handle_checkpoint_callback(
         await query.edit_message_text("Lifecycle not available for this chain.")
         return
     try:
-        success = await asyncio.to_thread(
-            lifecycle.checkpoint, svc_key
-        )
+        success = await asyncio.to_thread(lifecycle.checkpoint, svc_key)
         if success:
             await query.edit_message_text(
                 f"Checkpoint called for {bold(chain_name.upper())}", parse_mode="HTML"
@@ -158,7 +154,7 @@ async def _checkpoint_chain(
         return
     config: MicromechConfig = context.bot_data["config"]
     lifecycles = context.bot_data.get("lifecycles", {})
-    chain_config = config.enabled_chains[chain_name]
+    config.enabled_chains[chain_name]
 
     status_msg = await update.message.reply_text(
         f"Calling checkpoint for {bold(chain_name.upper())}...", parse_mode="HTML"
@@ -169,6 +165,7 @@ async def _checkpoint_chain(
         return
     try:
         from micromech.core.bridge import get_service_info
+
         svc_key = get_service_info(chain_name).get("service_key", "")
         success = await asyncio.to_thread(lifecycle.checkpoint, svc_key)
         if success:
@@ -181,6 +178,4 @@ async def _checkpoint_chain(
             )
     except Exception as e:
         logger.error(f"Checkpoint error for {chain_name}: {e}")
-        await status_msg.edit_text(
-            f"Checkpoint failed: {escape_html(str(e))}", parse_mode="HTML"
-        )
+        await status_msg.edit_text(f"Checkpoint failed: {escape_html(str(e))}", parse_mode="HTML")

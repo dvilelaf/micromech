@@ -23,8 +23,8 @@ from micromech.core.constants import (
 ALLOWED_TOOLS = ["local-llm"]
 
 _llm_instances: dict[str, Any] = {}
-_init_lock = threading.Lock()   # For thread-safe model loading
-_llm_lock = threading.Lock()    # For serializing inference (llama-cpp not thread-safe)
+_init_lock = threading.Lock()  # For thread-safe model loading
+_llm_lock = threading.Lock()  # For serializing inference (llama-cpp not thread-safe)
 
 
 def _get_llm(

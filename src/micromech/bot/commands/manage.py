@@ -6,7 +6,7 @@ from loguru import logger
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
-from micromech.bot.formatting import bold, code, escape_html
+from micromech.bot.formatting import bold, code
 from micromech.bot.security import authorized_only
 from micromech.core.config import MicromechConfig
 
@@ -19,10 +19,12 @@ def _build_chain_keyboard(chains: dict) -> InlineKeyboardMarkup:
     buttons = []
     for chain_name in chains:
         buttons.append(
-            [InlineKeyboardButton(
-                chain_name.upper(),
-                callback_data=f"{ACTION_MANAGE}:{chain_name}",
-            )]
+            [
+                InlineKeyboardButton(
+                    chain_name.upper(),
+                    callback_data=f"{ACTION_MANAGE}:{chain_name}",
+                )
+            ]
         )
     buttons.append([InlineKeyboardButton("Cancel", callback_data=f"{ACTION_MANAGE}:cancel")])
     return InlineKeyboardMarkup(buttons)
@@ -36,26 +38,18 @@ def _build_actions_keyboard(chain_name: str, status: dict) -> InlineKeyboardMark
 
     if is_staked and state == "STAKED":
         buttons.append(
-            [InlineKeyboardButton(
-                "Unstake", callback_data=f"{ACTION_MANAGE}:{chain_name}:unstake"
-            )]
+            [InlineKeyboardButton("Unstake", callback_data=f"{ACTION_MANAGE}:{chain_name}:unstake")]
         )
     elif state == "EVICTED":
         buttons.append(
-            [InlineKeyboardButton(
-                "Restake", callback_data=f"{ACTION_MANAGE}:{chain_name}:restake"
-            )]
+            [InlineKeyboardButton("Restake", callback_data=f"{ACTION_MANAGE}:{chain_name}:restake")]
         )
     elif state in ("NOT_STAKED", "not_staked"):
         buttons.append(
-            [InlineKeyboardButton(
-                "Stake", callback_data=f"{ACTION_MANAGE}:{chain_name}:stake"
-            )]
+            [InlineKeyboardButton("Stake", callback_data=f"{ACTION_MANAGE}:{chain_name}:stake")]
         )
 
-    buttons.append(
-        [InlineKeyboardButton("Back", callback_data=f"{ACTION_MANAGE}:back")]
-    )
+    buttons.append([InlineKeyboardButton("Back", callback_data=f"{ACTION_MANAGE}:back")])
     return InlineKeyboardMarkup(buttons)
 
 
@@ -114,16 +108,18 @@ async def handle_manage_callback(
                 if context.user_data is not None:
                     context.user_data["manage_chain"] = chain_name
                     context.user_data["manage_action"] = action
-                keyboard = InlineKeyboardMarkup([
+                keyboard = InlineKeyboardMarkup(
                     [
-                        InlineKeyboardButton(
-                            "Confirm", callback_data=f"{ACTION_MANAGE_CONFIRM}:yes"
-                        ),
-                        InlineKeyboardButton(
-                            "Cancel", callback_data=f"{ACTION_MANAGE_CONFIRM}:no"
-                        ),
+                        [
+                            InlineKeyboardButton(
+                                "Confirm", callback_data=f"{ACTION_MANAGE_CONFIRM}:yes"
+                            ),
+                            InlineKeyboardButton(
+                                "Cancel", callback_data=f"{ACTION_MANAGE_CONFIRM}:no"
+                            ),
+                        ]
                     ]
-                ])
+                )
                 label = "Unstake" if action == "unstake" else "Restake"
                 await query.answer()
                 await query.edit_message_text(
@@ -135,11 +131,15 @@ async def handle_manage_callback(
 
             if action == "stake":
                 lcs = context.bot_data.get(
-                    "lifecycles", {},
+                    "lifecycles",
+                    {},
                 )
                 await _execute_action(
-                    query, config, chain_name,
-                    "stake", lcs,
+                    query,
+                    config,
+                    chain_name,
+                    "stake",
+                    lcs,
                 )
                 return
 
@@ -149,8 +149,9 @@ async def handle_manage_callback(
         await query.answer("Chain not found")
         return
 
-    chain_config = enabled[chain_name]
+    enabled[chain_name]
     from micromech.core.bridge import get_service_info
+
     svc_info = get_service_info(chain_name)
     svc_key = svc_info.get("service_key")
     if not svc_key:
@@ -223,7 +224,11 @@ async def handle_manage_confirm_callback(
 
     lifecycles = context.bot_data.get("lifecycles", {})
     await _execute_action(
-        query, config, chain_name, action, lifecycles,
+        query,
+        config,
+        chain_name,
+        action,
+        lifecycles,
     )
 
 
@@ -238,6 +243,7 @@ async def _execute_action(
     enabled = config.enabled_chains
     chain_config = enabled.get(chain_name)
     from micromech.core.bridge import get_service_info
+
     svc_info = get_service_info(chain_name)
     service_key = svc_info.get("service_key")
     if not chain_config or not service_key:
@@ -259,28 +265,30 @@ async def _execute_action(
         return
 
     try:
-
         if action == "stake":
             success = await asyncio.to_thread(
-                lifecycle.stake, service_key,
+                lifecycle.stake,
+                service_key,
             )
         elif action == "unstake":
             success = await asyncio.to_thread(
-                lifecycle.unstake, service_key,
+                lifecycle.unstake,
+                service_key,
             )
         elif action == "restake":
             unstaked = await asyncio.to_thread(
-                lifecycle.unstake, service_key,
+                lifecycle.unstake,
+                service_key,
             )
             if not unstaked:
                 await query.edit_message_text(
-                    f"Unstake failed for "
-                    f"{bold(chain_name.upper())}",
+                    f"Unstake failed for {bold(chain_name.upper())}",
                     parse_mode="HTML",
                 )
                 return
             success = await asyncio.to_thread(
-                lifecycle.stake, service_key,
+                lifecycle.stake,
+                service_key,
             )
         else:
             await query.edit_message_text("Unknown action")
@@ -288,14 +296,12 @@ async def _execute_action(
 
         if success:
             await query.edit_message_text(
-                f"{label} completed for "
-                f"{bold(chain_name.upper())}",
+                f"{label} completed for {bold(chain_name.upper())}",
                 parse_mode="HTML",
             )
         else:
             await query.edit_message_text(
-                f"{label} failed for "
-                f"{bold(chain_name.upper())}",
+                f"{label} failed for {bold(chain_name.upper())}",
                 parse_mode="HTML",
             )
     except Exception as e:

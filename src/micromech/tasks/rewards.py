@@ -33,12 +33,11 @@ async def rewards_task(
     pre_claim_olas_wei: dict[str, int] = {}
     if config.auto_sell_enabled and bridges:
         from micromech.core.bridge import check_balances
+
         for chain_name in config.enabled_chains:
             try:
                 _, olas = await asyncio.to_thread(check_balances, chain_name)
-                pre_claim_olas_wei[chain_name] = int(
-                    Decimal(str(olas)) * Decimal(10**18)
-                )
+                pre_claim_olas_wei[chain_name] = int(Decimal(str(olas)) * Decimal(10**18))
             except Exception:
                 # Don't add to dict — auto_sell will skip chains
                 # without a floor rather than selling everything
@@ -48,6 +47,7 @@ async def rewards_task(
 
     for chain_name, lifecycle in lifecycles.items():
         from micromech.core.bridge import get_service_info
+
         svc_info = await asyncio.to_thread(get_service_info, chain_name)
         svc_key = svc_info.get("service_key")
         if not svc_key:
@@ -55,25 +55,20 @@ async def rewards_task(
             continue
 
         try:
-            status = await asyncio.to_thread(
-                lifecycle.get_status, svc_key
-            )
+            status = await asyncio.to_thread(lifecycle.get_status, svc_key)
             if not status or not status.get("is_staked"):
                 continue
 
             accrued = status.get("rewards", 0.0)
             if accrued < threshold:
                 logger.debug(
-                    f"Rewards on {chain_name}: {accrued:.4f} OLAS "
-                    f"(below threshold {threshold})"
+                    f"Rewards on {chain_name}: {accrued:.4f} OLAS (below threshold {threshold})"
                 )
                 continue
 
             logger.info(f"Claiming {accrued:.4f} OLAS rewards on {chain_name}")
 
-            success = await asyncio.to_thread(
-                lifecycle.claim_rewards, svc_key
-            )
+            success = await asyncio.to_thread(lifecycle.claim_rewards, svc_key)
 
             if success:
                 claimed_any = True
@@ -94,6 +89,8 @@ async def rewards_task(
 
         # Pass per-chain floor so each chain's pre-existing OLAS is protected
         await auto_sell_task(
-            bridges, notification_service, config,
+            bridges,
+            notification_service,
+            config,
             olas_floor_wei=pre_claim_olas_wei,
         )

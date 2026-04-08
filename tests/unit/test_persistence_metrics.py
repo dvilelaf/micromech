@@ -7,7 +7,9 @@ from micromech.core.persistence import PersistentQueue
 
 
 def _make_request(
-    request_id: str, tool: str = "echo", is_offchain: bool = False,
+    request_id: str,
+    tool: str = "echo",
+    is_offchain: bool = False,
     chain: str = "gnosis",
 ) -> MechRequest:
     return MechRequest(

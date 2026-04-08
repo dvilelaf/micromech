@@ -5,10 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
 
-from micromech.core.config import MicromechConfig
-from tests.conftest import make_test_config
 from micromech.runtime.delivery import TX_RECEIPT_TIMEOUT, DeliveryManager
 from micromech.runtime.http import create_app as create_http_app
 from micromech.web.app import (
@@ -19,6 +16,7 @@ from micromech.web.app import (
     create_web_app,
     get_auth_token,
 )
+from tests.conftest import make_test_config
 
 AUTH_TOKEN = get_auth_token()
 AUTH_HEADERS = {"X-Auth-Token": AUTH_TOKEN, "X-Micromech-Action": "test"}
@@ -302,18 +300,25 @@ class TestBridgeWalletConstruction:
         with (
             patch("micromech.core.bridge.Wallet", FakeWallet),
             patch("micromech.core.bridge.ChainInterfaces"),
-            patch.dict("sys.modules", {
-                "iwa.core.db": MagicMock(),
-                "iwa.core.wallet": type("m", (), {
-                    "Wallet": FakeWallet,
-                    "AccountService": lambda *a: MagicMock(),
-                    "BalanceService": lambda *a: MagicMock(),
-                    "SafeService": lambda *a: MagicMock(),
-                    "TransactionService": lambda *a: MagicMock(),
-                    "TransferService": lambda *a: MagicMock(),
-                    "PluginService": lambda *a: MagicMock(),
-                })(),
-            }),
+            patch.dict(
+                "sys.modules",
+                {
+                    "iwa.core.db": MagicMock(),
+                    "iwa.core.wallet": type(
+                        "m",
+                        (),
+                        {
+                            "Wallet": FakeWallet,
+                            "AccountService": lambda *a: MagicMock(),
+                            "BalanceService": lambda *a: MagicMock(),
+                            "SafeService": lambda *a: MagicMock(),
+                            "TransactionService": lambda *a: MagicMock(),
+                            "TransferService": lambda *a: MagicMock(),
+                            "PluginService": lambda *a: MagicMock(),
+                        },
+                    )(),
+                },
+            ),
         ):
             wallet = bridge.get_wallet()
 
@@ -404,7 +409,9 @@ class TestCreateMechEventMatching:
         mock_get_wallet.return_value = mock_wallet
 
         tx_hash = b"\xde\xad" + b"\x00" * 30
-        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = tx_hash
+        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = (
+            tx_hash
+        )
         mock_web3.eth.wait_for_transaction_receipt.return_value = {
             "status": 1,
             "logs": [
@@ -439,7 +446,9 @@ class TestCreateMechEventMatching:
         mock_get_wallet.return_value = mock_wallet
 
         tx_hash = b"\xde\xad" + b"\x00" * 30
-        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = tx_hash
+        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = (
+            tx_hash
+        )
         mech_hex = "cd" * 20
         mock_web3.eth.wait_for_transaction_receipt.return_value = {
             "status": 1,
@@ -477,18 +486,23 @@ class TestToolExtraParamsInjection:
             return ("ok",)
 
         metadata = ToolMetadata(
-            id="test", name="test", version="0.1.0",
+            id="test",
+            name="test",
+            version="0.1.0",
         )
         tool = Tool(metadata=metadata, run_fn=fake_run)
 
         # Simulate what executor.py does: tool.execute(prompt, **extra_params)
         # extra_params comes from user HTTP input and could contain 'tool'
         import asyncio
-        asyncio.run(tool.execute(
-            "real prompt",
-            counter_callback="injected_cb",
-            extra="safe",
-        ))
+
+        asyncio.run(
+            tool.execute(
+                "real prompt",
+                counter_callback="injected_cb",
+                extra="safe",
+            )
+        )
 
         # 'prompt' and 'tool' are set by execute(), not overridable
         assert captured_kwargs["prompt"] == "real prompt"
@@ -513,6 +527,7 @@ class TestToolExtraParamsInjection:
         )
 
         import asyncio
+
         asyncio.run(tool.execute("p", temperature=0.7, model="qwen"))
 
         assert captured["temperature"] == 0.7
@@ -544,6 +559,7 @@ class TestSSEStream:
 class TestClientIPExtraction:
     def test_direct_connection(self):
         from micromech.web.app import _get_client_ip
+
         request = MagicMock()
         request.headers = {}
         request.client = MagicMock(host="192.168.1.1")
@@ -552,6 +568,7 @@ class TestClientIPExtraction:
     @patch("micromech.web.app._TRUST_PROXY", True)
     def test_forwarded_for_single(self):
         from micromech.web.app import _get_client_ip
+
         request = MagicMock()
         request.headers = {"X-Forwarded-For": "10.0.0.1"}
         assert _get_client_ip(request) == "10.0.0.1"
@@ -559,12 +576,14 @@ class TestClientIPExtraction:
     @patch("micromech.web.app._TRUST_PROXY", True)
     def test_forwarded_for_chain(self):
         from micromech.web.app import _get_client_ip
+
         request = MagicMock()
         request.headers = {"X-Forwarded-For": "10.0.0.1, 172.16.0.1, 192.168.1.1"}
         assert _get_client_ip(request) == "10.0.0.1"
 
     def test_xff_ignored_without_trust(self):
         from micromech.web.app import _get_client_ip
+
         request = MagicMock()
         request.headers = {"X-Forwarded-For": "10.0.0.1"}
         request.client = MagicMock(host="192.168.1.1")
@@ -573,6 +592,7 @@ class TestClientIPExtraction:
 
     def test_no_client(self):
         from micromech.web.app import _get_client_ip
+
         request = MagicMock()
         request.headers = {}
         request.client = None
@@ -653,10 +673,13 @@ class TestNoDirectWeb3:
     def test_wallet_path_not_real(self):
         """WALLET_PATH must point to tmp during tests, never data/wallet.json."""
         from iwa.core.constants import WALLET_PATH
-        assert "tmp" in WALLET_PATH.lower() or "pytest" in WALLET_PATH.lower(), \
+
+        assert "tmp" in WALLET_PATH.lower() or "pytest" in WALLET_PATH.lower(), (
             f"WALLET_PATH points to real wallet: {WALLET_PATH}"
-        assert not WALLET_PATH.endswith("data/wallet.json"), \
+        )
+        assert not WALLET_PATH.endswith("data/wallet.json"), (
             f"WALLET_PATH points to real wallet: {WALLET_PATH}"
+        )
 
     def test_no_standalone_web3_instances(self):
         """No file creates standalone Web3 instances (bypassing iwa).
@@ -714,7 +737,8 @@ class TestPageAuth:
         """When / redirects to /setup, auth token is preserved in URL."""
         with patch("micromech.web.app._needs_setup", return_value=True):
             resp = web_client.get(
-                f"/?token={AUTH_TOKEN}", follow_redirects=False,
+                f"/?token={AUTH_TOKEN}",
+                follow_redirects=False,
             )
             assert resp.status_code == 302
             location = resp.headers["location"]
@@ -744,12 +768,11 @@ class TestLogStreamLimit:
     def test_log_stream_limit_enforced(self, web_client: TestClient):
         """Stuffing _log_queues to capacity should return 429."""
         import micromech.web.app as web_mod
+
         original_max = web_mod._MAX_SSE_CONNECTIONS
         web_mod._MAX_SSE_CONNECTIONS = 0  # No connections allowed
         try:
-            resp = web_client.get(
-                f"/api/logs/stream?token={AUTH_TOKEN}"
-            )
+            resp = web_client.get(f"/api/logs/stream?token={AUTH_TOKEN}")
             # When max is 0, any connection should be rejected
             # But _log_queues is inside create_web_app closure
             # At minimum, auth should pass
@@ -794,5 +817,6 @@ class TestXffTrust:
     def test_xff_not_trusted_by_default(self):
         """Without MICROMECH_TRUST_PROXY, XFF is ignored."""
         from micromech.web.app import _TRUST_PROXY
+
         # Default should be False (not trusting proxy)
         assert _TRUST_PROXY is False

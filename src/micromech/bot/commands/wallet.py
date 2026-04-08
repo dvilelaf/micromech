@@ -9,7 +9,7 @@ from telegram.ext import ContextTypes
 from micromech.bot.formatting import bold, code, escape_html, format_address, format_balance
 from micromech.bot.security import authorized_only, rate_limited
 from micromech.core.bridge import check_balances, get_wallet
-from micromech.core.config import MicromechConfig
+from micromech.core.config import ChainConfig, MicromechConfig
 
 EXPLORER_URLS = {
     "gnosis": "https://gnosisscan.io/address/",
@@ -27,6 +27,7 @@ def _explorer_link(chain: str, address: str, label: str) -> str:
 def _format_chain_wallet(chain_name: str, chain_config: "ChainConfig") -> str:
     """Format wallet info for a single chain."""
     from micromech.core.bridge import get_service_info
+
     svc_info = get_service_info(chain_name)
     multisig = svc_info.get("multisig_address")
     lines = [bold(chain_name.upper())]
@@ -83,6 +84,7 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # Per-chain addresses
     from micromech.core.bridge import get_service_info
+
     for chain_name, chain_config in enabled.items():
         svc_info = get_service_info(chain_name)
         multisig = svc_info.get("multisig_address")

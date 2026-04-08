@@ -135,5 +135,3 @@ async def push_json_to_ipfs(
     """Push JSON object to IPFS. Returns (CID string, CID hex)."""
     data = json.dumps(obj, separators=(",", ":")).encode("utf-8")
     return await push_to_ipfs(data, api_url=api_url)
-
-

@@ -16,7 +16,8 @@ RESTART_TRIGGER = Path("/app/data/.update-request")
 
 @authorized_only
 async def restart_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     """Handle /restart command — restart the mech runtime."""
     if not update.message:
@@ -40,7 +41,8 @@ async def restart_command(
                 )
         except Exception as e:
             logger.error(
-                f"Error in restart command: {e}", exc_info=True,
+                f"Error in restart command: {e}",
+                exc_info=True,
             )
             await update.message.reply_text(
                 "Restart error. Check logs for details.",

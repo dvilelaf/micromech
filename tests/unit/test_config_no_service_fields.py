@@ -4,8 +4,6 @@ These fields belong to iwa's olas plugin and should not be duplicated in microme
 All tests here should FAIL on the current code and PASS after the fix.
 """
 
-import yaml
-
 from micromech.core.config import ChainConfig, MicromechConfig
 
 # Valid Ethereum addresses for test fixtures

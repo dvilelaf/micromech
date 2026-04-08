@@ -48,6 +48,7 @@ NATIVE_SYMBOL = {
 def _load_config(config_path: Optional[Path] = None) -> MicromechConfig:
     """Load config via iwa plugin system (or fallback file)."""
     from micromech.core.config import register_plugin
+
     register_plugin()
     return MicromechConfig.load(config_path)
 
@@ -74,6 +75,7 @@ def init(
 ) -> None:
     """Setup wizard — wallet, chain, funding, deploy. Get running in 3 minutes."""
     from micromech.core.config import register_plugin
+
     register_plugin()
     total_steps = 5
 
@@ -86,6 +88,7 @@ def init(
     wallet_address: Optional[str] = None
     try:
         from iwa.core.wallet import Wallet
+
         wallet = Wallet()
         wallet_address = wallet.master_account.address
         typer.echo(f"  Wallet found: {wallet_address}")
@@ -281,9 +284,9 @@ def run(
     cfg = _load_config(config_path)
     logger.info("Starting micromech server...")
 
+    from micromech.core.bridge import create_bridges
     from micromech.runtime.server import MechServer
 
-    from micromech.core.bridge import create_bridges
     bridges = create_bridges(cfg)
 
     server = MechServer(cfg, bridges=bridges)
@@ -295,8 +298,10 @@ def run(
         # Start Telegram bot if configured
         try:
             from micromech.secrets import secrets
+
             if secrets.telegram_token and secrets.telegram_chat_id:
                 from micromech.bot.app import create_application
+
                 bot_app = create_application(
                     config=cfg,
                     runtime_manager=None,  # Direct server mode, no RuntimeManager
@@ -333,7 +338,7 @@ def status(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
     """Show queue status from the database."""
-    cfg = _load_config(config_path)
+    _load_config(config_path)
     from micromech.core.persistence import PersistentQueue
 
     queue = PersistentQueue(DB_PATH)
@@ -462,12 +467,18 @@ def web(
     def get_tools():
         return reg.list_packages()
 
-    from micromech.metadata_manager import MetadataManager, _BUILTIN_TOOLS_DIR
+    from micromech.metadata_manager import _BUILTIN_TOOLS_DIR, MetadataManager
+
     mm = MetadataManager(cfg, tools_dirs=[_BUILTIN_TOOLS_DIR, CUSTOM_TOOLS_DIR])
 
     web_app = create_web_app(
-        get_status, get_recent, get_tools, noop_on_request,
-        queue=queue, runtime_manager=mgr, metadata_manager=mm,
+        get_status,
+        get_recent,
+        get_tools,
+        noop_on_request,
+        queue=queue,
+        runtime_manager=mgr,
+        metadata_manager=mm,
     )
 
     # Auto-start runtime if service is deployed and not --no-runtime
@@ -486,6 +497,7 @@ def web(
                 logger.warning("Runtime auto-start failed: {}", mgr.error)
 
     from micromech.web.app import get_auth_token
+
     token = get_auth_token()
     typer.echo(f"\n  Dashboard: http://{host}:{port}?token={token}\n")
     uvicorn.run(web_app, host=host, port=port)
@@ -562,7 +574,7 @@ def metadata_publish(
     """Publish tool metadata: scan → IPFS → on-chain (all-in-one)."""
     from micromech.core.config import MicromechConfig, register_plugin
     from micromech.core.constants import CUSTOM_TOOLS_DIR
-    from micromech.metadata_manager import MetadataManager, _BUILTIN_TOOLS_DIR
+    from micromech.metadata_manager import _BUILTIN_TOOLS_DIR, MetadataManager
 
     register_plugin()
     config = MicromechConfig.load()
@@ -572,10 +584,12 @@ def metadata_publish(
         typer.echo(f"  [{step}] {msg}")
 
     typer.echo("Publishing tool metadata...")
-    result = asyncio.run(mm.publish(
-        update_onchain=not skip_onchain,
-        on_progress=on_progress,
-    ))
+    result = asyncio.run(
+        mm.publish(
+            update_onchain=not skip_onchain,
+            on_progress=on_progress,
+        )
+    )
 
     if result.success:
         typer.echo(f"\nIPFS CID: {result.ipfs_cid}")
@@ -823,6 +837,7 @@ def doctor(
 ) -> None:
     """Diagnose common issues — wallet, RPCs, service state, tools."""
     from micromech.core.config import register_plugin
+
     register_plugin()
     issues = 0
     warnings = 0
@@ -847,7 +862,7 @@ def doctor(
     typer.echo("\nConfig:")
     try:
         cfg = MicromechConfig.load()
-        ok(f"Config loaded")
+        ok("Config loaded")
         ok(f"Chains configured: {list(cfg.chains.keys())}")
     except Exception as e:
         fail(f"Config load error: {e}")
@@ -857,6 +872,7 @@ def doctor(
     typer.echo("\nWallet:")
     try:
         from iwa.core.wallet import Wallet
+
         wallet = Wallet()
         ok(f"Address: {wallet.master_account.address}")
     except ImportError:
@@ -868,6 +884,7 @@ def doctor(
     typer.echo("\nChain RPCs:")
     try:
         from iwa.core.chain import ChainInterfaces
+
         interfaces = ChainInterfaces()
         for chain_name in cfg.chains:
             ci = interfaces.get(chain_name)
@@ -895,6 +912,7 @@ def doctor(
     typer.echo("\nTools:")
     try:
         from micromech.tools.registry import ToolRegistry
+
         reg = ToolRegistry()
         reg.load_builtins()
         tool_list = reg.tool_ids

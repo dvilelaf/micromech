@@ -54,9 +54,7 @@ def run(
     counter_callback = kwargs.get("counter_callback")
 
     if model_name not in AVAILABLE_MODELS:
-        logger.warning(
-            "Unknown model '{}', falling back to {}", model_name, DEFAULT_MODEL
-        )
+        logger.warning("Unknown model '{}', falling back to {}", model_name, DEFAULT_MODEL)
         model_name = DEFAULT_MODEL
 
     client = _get_client()

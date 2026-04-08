@@ -1,17 +1,15 @@
 """Configuration models for micromech (all Pydantic-validated)."""
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from micromech.core.constants import (
-    CHAIN_DEFAULTS,
     DEFAULT_CHAIN,
     DEFAULT_CONFIG_DIR,
     DEFAULT_DELIVERY_RATE,
-    DB_PATH,
     validate_eth_address,
 )
 
@@ -28,8 +26,7 @@ class ChainConfig(BaseModel):
     delivery_rate: int = Field(default=DEFAULT_DELIVERY_RATE, ge=0)
     account_tag: str = "mech"
 
-    @field_validator("mech_address", "marketplace_address",
-                     "factory_address", "staking_address")
+    @field_validator("mech_address", "marketplace_address", "factory_address", "staking_address")
     @classmethod
     def check_eth_address(cls, v: Optional[str]) -> Optional[str]:
         return validate_eth_address(v)
@@ -109,6 +106,7 @@ class MicromechConfig(BaseModel):
         """
         try:
             from iwa.core.models import Config
+
             cfg = Config().get_plugin_config("micromech")
             if cfg is not None:
                 return cfg
@@ -129,6 +127,7 @@ class MicromechConfig(BaseModel):
         """
         try:
             from iwa.core.models import Config
+
             iwa_cfg = Config()
             iwa_cfg.plugins["micromech"] = self
             iwa_cfg.save_config()
@@ -140,9 +139,7 @@ class MicromechConfig(BaseModel):
         config_path = path or (DEFAULT_CONFIG_DIR / "micromech.yaml")
         config_path.parent.mkdir(parents=True, exist_ok=True)
         data = self.model_dump(mode="json")
-        config_path.write_text(
-            yaml.dump(data, default_flow_style=False, sort_keys=False)
-        )
+        config_path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
 
 
 def register_plugin() -> None:
@@ -154,10 +151,12 @@ def register_plugin() -> None:
     """
     try:
         from iwa.core.models import Config
+
         iwa_cfg = Config()
         if "micromech" not in iwa_cfg._plugin_models:
             iwa_cfg.register_plugin_config(
-                "micromech", MicromechConfig,
+                "micromech",
+                MicromechConfig,
             )
     except ImportError:
         pass

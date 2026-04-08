@@ -5,4 +5,6 @@ set by app.py when the bot starts. Used by NotificationService to
 lazily resolve the bot for task notifications.
 """
 
-_application = None
+from typing import Any
+
+_application: Any = None

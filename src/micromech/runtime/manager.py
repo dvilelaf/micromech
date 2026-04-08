@@ -42,6 +42,7 @@ class RuntimeManager:
     def _create_bridges(self) -> dict:
         """Create IwaBridge instances for all enabled chains."""
         from micromech.core.bridge import create_bridges
+
         return create_bridges(self.config)
 
     async def start(self) -> bool:

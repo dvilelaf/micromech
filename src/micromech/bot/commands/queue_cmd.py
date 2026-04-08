@@ -58,9 +58,7 @@ async def queue_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 "delivered": "📦",
                 "failed": "❌",
             }.get(req.status, "❓")
-            lines.append(
-                f"{status_emoji} {code(tool)}: {escape_html(prompt_preview)}"
-            )
+            lines.append(f"{status_emoji} {code(tool)}: {escape_html(prompt_preview)}")
 
     text = "\n".join(lines)
     await update.message.reply_text(text, parse_mode="HTML")

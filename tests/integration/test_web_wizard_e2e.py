@@ -58,6 +58,7 @@ def _reset_bridge_caches():
     Without this, state from a previous test leaks into the next.
     """
     import micromech.core.bridge as _bridge
+
     _bridge._cached_wallet = None
     _bridge._cached_interfaces = None
     _bridge._cached_key_storage = None
@@ -128,6 +129,7 @@ class TestWebWizardE2E:
 
             # Reset cache to simulate fresh session
             import micromech.core.bridge as _bridge
+
             _bridge._cached_key_storage = None
 
             # Unlock with same password
@@ -158,6 +160,7 @@ class TestWebWizardE2E:
 
             # Reset cache
             import micromech.core.bridge as _bridge
+
             _bridge._cached_key_storage = None
 
             # Try wrong password
@@ -194,6 +197,7 @@ class TestWebWizardE2E:
 
             # Verify: _cached_key_storage is set with wizard password
             import micromech.core.bridge as _bridge
+
             assert _bridge._cached_key_storage is not None
             assert _bridge._cached_key_storage._password == WIZARD_PASSWORD
 
@@ -244,15 +248,14 @@ class TestWebWizardE2E:
             mock_ci.chain = mock_chain_model
 
             mock_contract = MagicMock()
-            mock_contract.functions.balanceOf.return_value.call.return_value = (
-                20_000 * 10**18
-            )
+            mock_contract.functions.balanceOf.return_value.call.return_value = 20_000 * 10**18
             mock_w3.eth.contract.return_value = mock_contract
 
             mock_interfaces = MagicMock()
             mock_interfaces.get.return_value = mock_ci
 
             import micromech.core.bridge as _bridge
+
             _bridge._cached_interfaces = mock_interfaces
 
             resp = client.get("/api/setup/balance?chain=gnosis")
@@ -273,17 +276,18 @@ class TestWebWizardE2E:
         config_path = tmp_path / "config.yaml"
 
         # Use fallback config path (standalone YAML, no iwa plugin)
-        saved_cfg_holder: list = []
 
         def _mock_save(self, path=None):
             target = path or config_path
             import yaml
+
             target.parent.mkdir(parents=True, exist_ok=True)
             data = self.model_dump(mode="json")
             target.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
 
         def _mock_load(cls, path=None):
             import yaml
+
             target = path or config_path
             if target.exists():
                 data = yaml.safe_load(target.read_text()) or {}
@@ -370,13 +374,14 @@ class TestWebWizardE2E:
         This is the main integration test combining all steps.
         """
         wallet_path = str(tmp_path / "wallet.json")
-        config_path = tmp_path / "config.yaml"
+        tmp_path / "config.yaml"
 
         # Force config load/save to use standalone YAML fallback.
         # Patch iwa.core.models to None so the lazy import inside
         # load()/save() raises ImportError and falls through to YAML.
         import sys
-        real_module = sys.modules.get("iwa.core.models")
+
+        sys.modules.get("iwa.core.models")
 
         with (
             patch("iwa.core.constants.WALLET_PATH", wallet_path),
@@ -407,6 +412,7 @@ class TestWebWizardE2E:
 
             # --- Step 3: Verify wallet is cached in bridge ---
             import micromech.core.bridge as _bridge
+
             assert _bridge._cached_key_storage is not None
             cached_addr = str(_bridge._cached_key_storage.get_address_by_tag("master"))
             assert cached_addr == address
@@ -424,15 +430,14 @@ class TestWebWizardE2E:
             mock_ci.chain = mock_chain_model
 
             mock_contract = MagicMock()
-            mock_contract.functions.balanceOf.return_value.call.return_value = (
-                15_000 * 10**18
-            )
+            mock_contract.functions.balanceOf.return_value.call.return_value = 15_000 * 10**18
             mock_w3.eth.contract.return_value = mock_contract
 
             mock_interfaces = MagicMock()
             mock_interfaces.get.return_value = mock_ci
 
             import micromech.core.bridge as _bridge
+
             _bridge._cached_interfaces = mock_interfaces
 
             resp = client.get("/api/setup/balance?chain=gnosis")
@@ -489,6 +494,7 @@ class TestWebWizardE2E:
             saved_path = tmp_path / "micromech.yaml"
             assert saved_path.exists(), f"Config should exist at {saved_path}"
             import yaml
+
             saved = yaml.safe_load(saved_path.read_text())
             gnosis = saved["chains"]["gnosis"]
             assert gnosis["mech_address"] == "0x" + "22" * 20
@@ -514,10 +520,12 @@ class TestWebWizardE2E:
 
             # Simulate what the web wizard does
             import micromech.core.bridge as _bridge
+
             _bridge._cached_key_storage = ks
 
             # Ensure env password is DIFFERENT (simulates Bug 2)
             from pydantic import SecretStr
+
             with patch("iwa.core.secrets.secrets.wallet_password", SecretStr("wrong_env_pass")):
                 with patch("micromech.core.bridge.ChainInterfaces"):
                     wallet = _bridge.get_wallet()

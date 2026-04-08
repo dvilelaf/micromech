@@ -35,12 +35,14 @@ def _reset_global_sessions():
     """
     try:
         import iwa.core.ipfs as ipfs_mod
+
         ipfs_mod._ASYNC_SESSION = None
     except (ImportError, AttributeError):
         pass
     yield
     try:
         import iwa.core.ipfs as ipfs_mod
+
         ipfs_mod._ASYNC_SESSION = None
     except (ImportError, AttributeError):
         pass

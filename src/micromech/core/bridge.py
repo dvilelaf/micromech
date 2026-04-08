@@ -132,17 +132,23 @@ def get_wallet() -> Any:
         wallet.key_storage = _cached_key_storage
         wallet.account_service = AccountService(_cached_key_storage)
         wallet.balance_service = BalanceService(
-            _cached_key_storage, wallet.account_service,
+            _cached_key_storage,
+            wallet.account_service,
         )
         wallet.safe_service = SafeService(
-            _cached_key_storage, wallet.account_service,
+            _cached_key_storage,
+            wallet.account_service,
         )
         wallet.transaction_service = TransactionService(
-            _cached_key_storage, wallet.account_service, wallet.safe_service,
+            _cached_key_storage,
+            wallet.account_service,
+            wallet.safe_service,
         )
         wallet.transfer_service = TransferService(
-            _cached_key_storage, wallet.account_service,
-            wallet.balance_service, wallet.safe_service,
+            _cached_key_storage,
+            wallet.account_service,
+            wallet.balance_service,
+            wallet.safe_service,
             wallet.transaction_service,
         )
         wallet.plugin_service = PluginService()
@@ -155,7 +161,9 @@ def get_wallet() -> Any:
     # Path B: No wizard — try standard Wallet() (env password).
     # Only if wallet file exists (never auto-create).
     from pathlib import Path
+
     from iwa.core.constants import WALLET_PATH
+
     if Path(WALLET_PATH).exists():
         try:
             _cached_wallet = Wallet()
@@ -220,9 +228,7 @@ def check_balances(chain_name: str) -> tuple[float, float]:
                         "type": "function",
                     }
                 ]
-                contract = ci.web3.eth.contract(
-                    address=str(olas_addr), abi=erc20_abi
-                )
+                contract = ci.web3.eth.contract(address=str(olas_addr), abi=erc20_abi)
                 raw = ci.with_retry(
                     lambda: contract.functions.balanceOf(address).call(),
                 )
@@ -285,6 +291,7 @@ def get_service_info(chain_name: str) -> dict:
     (or empty dict if unavailable).
     """
     import time
+
     now = time.monotonic()
     if chain_name in _service_info_cache:
         ts, cached = _service_info_cache[chain_name]
@@ -292,6 +299,7 @@ def get_service_info(chain_name: str) -> dict:
             return cached
     try:
         from iwa.core.models import Config
+
         olas = Config().get_plugin_config("olas")
         if olas:
             services = _get_attr(olas, "services")

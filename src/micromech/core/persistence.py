@@ -101,9 +101,7 @@ class PersistentQueue:
             self._db.execute_sql(
                 f"ALTER TABLE requests ADD COLUMN chain VARCHAR(32) DEFAULT '{DEFAULT_CHAIN}'"
             )
-            self._db.execute_sql(
-                "CREATE INDEX IF NOT EXISTS idx_requests_chain ON requests(chain)"
-            )
+            self._db.execute_sql("CREATE INDEX IF NOT EXISTS idx_requests_chain ON requests(chain)")
             logger.info("Migrated database: added chain column")
 
     def close(self) -> None:
@@ -221,9 +219,7 @@ class PersistentQueue:
         """Get requests stuck in executing (interrupted by crash)."""
         return self._query_by_status(STATUS_EXECUTING)
 
-    def get_undelivered(
-        self, limit: int = 10, chain: Optional[str] = None
-    ) -> list[RequestRecord]:
+    def get_undelivered(self, limit: int = 10, chain: Optional[str] = None) -> list[RequestRecord]:
         """Get executed but not yet delivered requests, optionally filtered by chain."""
         query = (
             RequestRow.select()
@@ -279,12 +275,12 @@ class PersistentQueue:
             RequestRow.select(
                 RequestRow.tool,
                 pw.fn.COUNT(RequestRow.request_id).alias("total"),
-                pw.fn.SUM(
-                    pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)
-                ).alias("delivered"),
-                pw.fn.SUM(
-                    pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)
-                ).alias("failed"),
+                pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)).alias(
+                    "delivered"
+                ),
+                pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)).alias(
+                    "failed"
+                ),
                 pw.fn.AVG(RequestRow.result_time).alias("avg_time"),
             )
             .where(RequestRow.tool != "")
@@ -304,19 +300,23 @@ class PersistentQueue:
         ]
 
     def _time_series_stats(
-        self, group_expr: Any, label: str, cutoff: datetime, chain: Optional[str] = None,
+        self,
+        group_expr: Any,
+        label: str,
+        cutoff: datetime,
+        chain: Optional[str] = None,
     ) -> list[dict]:
         """Generic time-series aggregation (shared by daily/monthly)."""
         query = (
             RequestRow.select(
                 group_expr.alias(label),
                 pw.fn.COUNT(RequestRow.request_id).alias("total"),
-                pw.fn.SUM(
-                    pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)
-                ).alias("delivered"),
-                pw.fn.SUM(
-                    pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)
-                ).alias("failed"),
+                pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)).alias(
+                    "delivered"
+                ),
+                pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)).alias(
+                    "failed"
+                ),
             )
             .where(RequestRow.created_at >= cutoff)
             .group_by(group_expr)
@@ -337,14 +337,20 @@ class PersistentQueue:
         """Daily request counts for the last N days."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         return self._time_series_stats(
-            pw.fn.DATE(RequestRow.created_at), "day", cutoff, chain,
+            pw.fn.DATE(RequestRow.created_at),
+            "day",
+            cutoff,
+            chain,
         )
 
     def monthly_stats(self, months: int = 12, chain: Optional[str] = None) -> list[dict]:
         """Monthly request counts."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=months * 31)
         return self._time_series_stats(
-            pw.fn.strftime("%Y-%m", RequestRow.created_at), "month", cutoff, chain,
+            pw.fn.strftime("%Y-%m", RequestRow.created_at),
+            "month",
+            cutoff,
+            chain,
         )
 
     def onchain_offchain_counts(self, chain: Optional[str] = None) -> dict[str, int]:
@@ -355,7 +361,9 @@ class PersistentQueue:
         return {"onchain": onchain, "offchain": offchain}
 
     def count_delivered_since(
-        self, hours: int = 24, chain: Optional[str] = None,
+        self,
+        hours: int = 24,
+        chain: Optional[str] = None,
     ) -> int:
         """Count delivered requests in the last N hours."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from micromech.core.config import MicromechConfig
-from tests.conftest import make_test_config
 from micromech.tasks.notifications import NotificationService
+from tests.conftest import make_test_config
 
 
 def _make_config(**overrides) -> MicromechConfig:
@@ -22,9 +22,14 @@ def _make_lifecycle(service_key="0xkey", is_staked=True, rewards=0.0):
     with _svc_info_patch).
     """
     lc = MagicMock()
-    lc.chain_config = MagicMock(spec=[
-        "chain", "staking_address", "mech_address", "account_tag",
-    ])
+    lc.chain_config = MagicMock(
+        spec=[
+            "chain",
+            "staking_address",
+            "mech_address",
+            "account_tag",
+        ]
+    )
     lc.chain_config.chain = "gnosis"
     lc.chain_config.staking_address = "0x" + "a" * 40
     # Stash for callers that need to build get_service_info mock
@@ -156,11 +161,15 @@ class TestFundTask:
 
         config = _make_config(fund_threshold_native=0.1)
 
-        with patch(
-            "micromech.core.bridge.check_safe_balance", return_value=0.01,
-        ), patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"multisig_address": "0x" + "a" * 40},
+        with (
+            patch(
+                "micromech.core.bridge.check_safe_balance",
+                return_value=0.01,
+            ),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "a" * 40},
+            ),
         ):
             await fund_task({}, notification, config)
 
@@ -179,16 +188,23 @@ class TestFundTask:
         bridge.wallet.send.return_value = "0xtxhash"
 
         config = _make_config(
-            fund_threshold_native=0.1, fund_target_native=0.5,
+            fund_threshold_native=0.1,
+            fund_target_native=0.5,
         )
 
-        with patch(
-            "micromech.core.bridge.check_safe_balance", return_value=0.01,
-        ), patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"multisig_address": "0x" + "a" * 40},
-        ), patch(
-            "micromech.core.bridge.check_balances", return_value=(10.0, 0.0),
+        with (
+            patch(
+                "micromech.core.bridge.check_safe_balance",
+                return_value=0.01,
+            ),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "a" * 40},
+            ),
+            patch(
+                "micromech.core.bridge.check_balances",
+                return_value=(10.0, 0.0),
+            ),
         ):
             await fund_task({"gnosis": bridge}, notification, config)
 
@@ -210,7 +226,8 @@ class TestFundTask:
         config = _make_config(fund_threshold_native=0.01)
 
         with patch(
-            "micromech.core.bridge.check_safe_balance", return_value=1.0,
+            "micromech.core.bridge.check_safe_balance",
+            return_value=1.0,
         ):
             await fund_task({}, notification, config)
 
@@ -258,16 +275,23 @@ class TestFundTask:
         bridge.wallet.send.side_effect = Exception("insufficient funds")
 
         config = _make_config(
-            fund_threshold_native=0.1, fund_target_native=0.5,
+            fund_threshold_native=0.1,
+            fund_target_native=0.5,
         )
 
-        with patch(
-            "micromech.core.bridge.check_safe_balance", return_value=0.01,
-        ), patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"multisig_address": "0x" + "a" * 40},
-        ), patch(
-            "micromech.core.bridge.check_balances", return_value=(10.0, 0.0),
+        with (
+            patch(
+                "micromech.core.bridge.check_safe_balance",
+                return_value=0.01,
+            ),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "a" * 40},
+            ),
+            patch(
+                "micromech.core.bridge.check_balances",
+                return_value=(10.0, 0.0),
+            ),
         ):
             await fund_task({"gnosis": bridge}, notification, config)
 
@@ -354,7 +378,9 @@ class TestAutoSellTask:
             return_value=(1.0, 10.0),  # 10 OLAS available
         ):
             await auto_sell_task(
-                {"gnosis": bridge}, notification, config,
+                {"gnosis": bridge},
+                notification,
+                config,
                 olas_floor_wei={"gnosis": 0},
             )
 
@@ -386,7 +412,9 @@ class TestAutoSellTask:
             return_value=(1.0, 10.0),
         ):
             await auto_sell_task(
-                {"gnosis": bridge}, notification, config,
+                {"gnosis": bridge},
+                notification,
+                config,
                 olas_floor_wei=floor_wei,
             )
 
@@ -446,7 +474,9 @@ class TestAutoSellTask:
             return_value=(1.0, 10.0),
         ):
             await auto_sell_task(
-                {"gnosis": bridge}, notification, config,
+                {"gnosis": bridge},
+                notification,
+                config,
                 olas_floor_wei={"gnosis": 0},
             )
 
@@ -477,7 +507,11 @@ class TestProfitabilityCheckTask:
             return_value=_svc_info_for("0xkey"),
         ):
             await profitability_check_task(
-                queue, {"gnosis": lifecycle}, {}, notification, config,
+                queue,
+                {"gnosis": lifecycle},
+                {},
+                notification,
+                config,
             )
 
         notification.send.assert_called_once()
@@ -502,7 +536,11 @@ class TestProfitabilityCheckTask:
             return_value=_svc_info_for("0xkey"),
         ):
             await profitability_check_task(
-                queue, {"gnosis": lifecycle}, {}, notification, config,
+                queue,
+                {"gnosis": lifecycle},
+                {},
+                notification,
+                config,
             )
 
         notification.send.assert_not_called()

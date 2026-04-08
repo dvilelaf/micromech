@@ -1,7 +1,6 @@
 """Status command handler — show per-chain mech status."""
 
 import asyncio
-from typing import Optional
 
 from loguru import logger
 from telegram import Update
@@ -51,6 +50,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     blocks = []
     for chain_name, chain_config in enabled.items():
         from micromech.core.bridge import get_service_info
+
         svc_key = get_service_info(chain_name).get("service_key")
         if not svc_key:
             blocks.append(f"{bold(chain_name.upper())}\nNot deployed")

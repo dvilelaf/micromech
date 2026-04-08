@@ -10,7 +10,6 @@ from micromech.core.config import (
     MicromechConfig,
 )
 
-
 STUB_MARKETPLACE = "0x" + "a" * 40
 STUB_FACTORY = "0x" + "b" * 40
 STUB_STAKING = "0x" + "c" * 40
@@ -136,7 +135,7 @@ class TestMicromechConfig:
             "ipfs": {"gateway": "https://foo/"},
             "log_level": "WARNING",  # old field, should be ignored
         }
-        cfg = MicromechConfig.model_validate(data)
+        MicromechConfig.model_validate(data)
 
     def test_tasks_fields_flat(self):
         cfg = MicromechConfig(

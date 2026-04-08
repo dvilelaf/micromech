@@ -40,7 +40,9 @@ async def profitability_check_task(
         try:
             # Count deliveries in last 24h
             deliveries_24h = await asyncio.to_thread(
-                queue.count_delivered_since, 24, chain_name,
+                queue.count_delivered_since,
+                24,
+                chain_name,
             )
 
             # Revenue from delivery fees (native token)
@@ -53,12 +55,14 @@ async def profitability_check_task(
             lifecycle = lifecycles.get(chain_name)
             if lifecycle:
                 from micromech.core.bridge import get_service_info
+
                 svc_info = await asyncio.to_thread(get_service_info, chain_name)
                 svc_key = svc_info.get("service_key")
                 if svc_key:
                     try:
                         status = await asyncio.to_thread(
-                            lifecycle.get_status, svc_key,
+                            lifecycle.get_status,
+                            svc_key,
                         )
                         if status and status.get("is_staked"):
                             is_staked = True

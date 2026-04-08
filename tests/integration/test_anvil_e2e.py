@@ -23,10 +23,9 @@ Run:
 import asyncio
 import json
 import os
-import sys
 import time as _time
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from web3 import Web3
@@ -89,9 +88,11 @@ def w3(_anvil_forks):
     # Gnosis uses PoA — extra-data field is >32 bytes, which trips web3.py
     try:
         from web3.middleware import ExtraDataToPOAMiddleware
+
         w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
     except ImportError:
         from web3.middleware import ExtraDataLengthMiddleware
+
         w3.middleware_onion.inject(ExtraDataLengthMiddleware, layer=0)
 
     chain = w3.eth.chain_id
@@ -115,11 +116,13 @@ def w3(_anvil_forks):
 
 class _StubKeyStorage:
     """Minimal key_storage stub so DeliveryManager doesn't skip delivery."""
+
     pass
 
 
 class _StubWallet:
     """Minimal wallet stub for AnvilBridge."""
+
     key_storage = _StubKeyStorage()
 
 
@@ -145,12 +148,12 @@ class TestMicromechOffchainE2E:
     @pytest.mark.asyncio
     async def test_tool_execution_result_format(self, tmp_path):
         """Submit requests internally, verify result contains valid prediction JSON."""
+        import micromech.runtime.listener as _listener_mod
+        import micromech.runtime.server as _server_mod
         from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_EXECUTED
         from micromech.runtime.server import MechServer
 
-        import micromech.runtime.server as _server_mod
-        import micromech.runtime.listener as _listener_mod
         _server_mod.DB_PATH = tmp_path / "test.db"
         _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
 
@@ -221,12 +224,12 @@ class TestFailurePaths:
     @pytest.mark.asyncio
     async def test_unknown_tool_fails(self, tmp_path):
         """Submit request with unknown tool, verify STATUS_FAILED in DB."""
+        import micromech.runtime.listener as _listener_mod
+        import micromech.runtime.server as _server_mod
         from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_FAILED
         from micromech.runtime.server import MechServer
 
-        import micromech.runtime.server as _server_mod
-        import micromech.runtime.listener as _listener_mod
         _server_mod.DB_PATH = tmp_path / "fail.db"
         _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
 
@@ -269,12 +272,12 @@ class TestFailurePaths:
     @pytest.mark.asyncio
     async def test_tool_exception_does_not_crash_server(self, tmp_path):
         """Submit request that triggers tool failure, verify server continues running."""
+        import micromech.runtime.listener as _listener_mod
+        import micromech.runtime.server as _server_mod
         from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_EXECUTED, STATUS_FAILED
         from micromech.runtime.server import MechServer
 
-        import micromech.runtime.server as _server_mod
-        import micromech.runtime.listener as _listener_mod
         _server_mod.DB_PATH = tmp_path / "crash.db"
         _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
 
@@ -334,12 +337,12 @@ class TestDuplicateDetection:
     @pytest.mark.asyncio
     async def test_duplicate_request_not_processed_twice(self, tmp_path):
         """Submit same request_id twice, verify only 1 record in DB."""
+        import micromech.runtime.listener as _listener_mod
+        import micromech.runtime.server as _server_mod
         from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_EXECUTED
         from micromech.runtime.server import MechServer
 
-        import micromech.runtime.server as _server_mod
-        import micromech.runtime.listener as _listener_mod
         _server_mod.DB_PATH = tmp_path / "dedup.db"
         _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
 
@@ -441,6 +444,7 @@ class TestMicromechOnchainE2E:
             staking_address=SUPPLY_STAKING_ADDR,
         )
         import micromech.runtime.listener as _listener_mod
+
         _listener_mod.DEFAULT_EVENT_LOOKBACK_BLOCKS = 100
 
         config = MicromechConfig(
@@ -608,21 +612,24 @@ class TestFullServerCycleE2E:
 
         # AnvilBridge defined at module level
 
-        import micromech.runtime.server as _server_mod
         import micromech.runtime.listener as _listener_mod
+        import micromech.runtime.server as _server_mod
+
         _server_mod.DB_PATH = tmp_path / "full_cycle.db"
         _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
         _listener_mod.DEFAULT_EVENT_LOOKBACK_BLOCKS = 100
 
         config = MicromechConfig(
-            chains={"gnosis": ChainConfig(
-                chain="gnosis",
-                mech_address=MECH_ADDR,
-                multisig_address=MECH_MULTISIG,
-                marketplace_address=MARKETPLACE_ADDR,
-                factory_address=MECH_FACTORY,
-                staking_address=SUPPLY_STAKING_ADDR,
-            )},
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    mech_address=MECH_ADDR,
+                    multisig_address=MECH_MULTISIG,
+                    marketplace_address=MARKETPLACE_ADDR,
+                    factory_address=MECH_FACTORY,
+                    staking_address=SUPPLY_STAKING_ADDR,
+                )
+            },
         )
 
         bridge = AnvilBridge(w3)
@@ -741,13 +748,15 @@ class TestMetadataUpdateOnChain:
         # Try multisig first, fall back to owner if it reverts.
         svc_registry = w3.eth.contract(
             address=w3.to_checksum_address(SERVICE_REGISTRY),
-            abi=[{
-                "inputs": [{"name": "serviceId", "type": "uint256"}],
-                "name": "ownerOf",
-                "outputs": [{"type": "address"}],
-                "stateMutability": "view",
-                "type": "function",
-            }],
+            abi=[
+                {
+                    "inputs": [{"name": "serviceId", "type": "uint256"}],
+                    "name": "ownerOf",
+                    "outputs": [{"type": "address"}],
+                    "stateMutability": "view",
+                    "type": "function",
+                }
+            ],
         )
         svc_owner = svc_registry.functions.ownerOf(MECH_SERVICE_ID).call()
 
@@ -765,10 +774,12 @@ class TestMetadataUpdateOnChain:
             w3.provider.make_request("anvil_impersonateAccount", [caller])
             try:
                 metadata_contract.functions.changeHash(
-                    MECH_SERVICE_ID, hash_bytes32,
+                    MECH_SERVICE_ID,
+                    hash_bytes32,
                 ).call({"from": caller})  # dry-run first
                 tx = metadata_contract.functions.changeHash(
-                    MECH_SERVICE_ID, hash_bytes32,
+                    MECH_SERVICE_ID,
+                    hash_bytes32,
                 ).transact({"from": caller, "gas": 200_000})
                 receipt = w3.eth.wait_for_transaction_receipt(tx)
                 if receipt["status"] == 1:
@@ -1217,8 +1228,9 @@ class TestOffchainHTTPE2E:
 
         # AnvilBridge defined at module level
 
-        import micromech.runtime.server as _server_mod
         import micromech.runtime.listener as _listener_mod
+        import micromech.runtime.server as _server_mod
+
         _server_mod.DB_PATH = tmp_path / "http_e2e.db"
         _server_mod.DEFAULT_PORT = 19876
         _server_mod.DEFAULT_HOST = "127.0.0.1"
@@ -1226,15 +1238,17 @@ class TestOffchainHTTPE2E:
 
         port = 19876
         config = MicromechConfig(
-            chains={"gnosis": ChainConfig(
-                chain="gnosis",
-                mech_address=MECH_ADDR,
-                multisig_address=MECH_MULTISIG,
-                marketplace_address=MARKETPLACE_ADDR,
-                factory_address=MECH_FACTORY,
-                staking_address=SUPPLY_STAKING_ADDR,
-                delivery_rate=MECH_DELIVERY_RATE,
-            )},
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    mech_address=MECH_ADDR,
+                    multisig_address=MECH_MULTISIG,
+                    marketplace_address=MARKETPLACE_ADDR,
+                    factory_address=MECH_FACTORY,
+                    staking_address=SUPPLY_STAKING_ADDR,
+                    delivery_rate=MECH_DELIVERY_RATE,
+                )
+            },
         )
 
         bridge = AnvilBridge(w3)
@@ -1271,6 +1285,7 @@ class TestOffchainHTTPE2E:
 
             # --- Step 1: Submit requests via HTTP POST ---
             from micromech.web.app import get_auth_token
+
             auth_headers = {
                 "X-Auth-Token": get_auth_token(),
                 "X-Micromech-Action": "request",
@@ -1287,7 +1302,9 @@ class TestOffchainHTTPE2E:
                         "sender": RICH_ACCOUNT,
                     }
                     async with session.post(
-                        f"{base_url}/request", json=payload, headers=auth_headers,
+                        f"{base_url}/request",
+                        json=payload,
+                        headers=auth_headers,
                     ) as resp:
                         assert resp.status == 202, f"Request {i}: expected 202, got {resp.status}"
                         data = await resp.json()
@@ -1316,11 +1333,10 @@ class TestOffchainHTTPE2E:
                 record = server.queue.get_by_id(rid)
                 assert record is not None, f"Request {rid} not found in DB"
                 assert record.request.status in (
-                    STATUS_EXECUTED, STATUS_DELIVERED, STATUS_FAILED,
-                ), (
-                    f"{rid}: expected executed/delivered/failed, "
-                    f"got '{record.request.status}'"
-                )
+                    STATUS_EXECUTED,
+                    STATUS_DELIVERED,
+                    STATUS_FAILED,
+                ), f"{rid}: expected executed/delivered/failed, got '{record.request.status}'"
                 processed += 1
                 print(f"  {rid}: {record.request.status}")
 
@@ -1403,6 +1419,7 @@ class TestListenerFiltersByMech:
         bridge = AnvilBridge(w3)
 
         import micromech.runtime.listener as _listener_mod
+
         _listener_mod.DEFAULT_EVENT_LOOKBACK_BLOCKS = 100
 
         # --- Test 1: Listener filtered to OUR mech ---
@@ -1468,7 +1485,7 @@ class TestWizardWalletAndLifecycle:
         from micromech.web.app import create_web_app, get_auth_token
 
         wallet_path = str(tmp_path / "wallet.json")
-        config_path = tmp_path / "config.yaml"
+        tmp_path / "config.yaml"
         auth_token = get_auth_token()
 
         def auth_headers():
@@ -1480,6 +1497,7 @@ class TestWizardWalletAndLifecycle:
 
         # Reset bridge caches
         import micromech.core.bridge as _bridge
+
         _bridge._cached_wallet = None
         _bridge._cached_interfaces = None
         _bridge._cached_key_storage = None
@@ -1553,13 +1571,13 @@ class TestRuntimeStartsCorrectly:
     @pytest.mark.asyncio
     async def test_runtime_starts_and_processes_offchain(self, tmp_path):
         """Start runtime without chain bridges, verify offchain processing works."""
+        import micromech.runtime.listener as _listener_mod
+        import micromech.runtime.server as _server_mod
         from micromech.core.config import MicromechConfig
         from micromech.core.constants import STATUS_EXECUTED
         from micromech.core.models import MechRequest
         from micromech.runtime.server import MechServer
 
-        import micromech.runtime.server as _server_mod
-        import micromech.runtime.listener as _listener_mod
         _server_mod.DB_PATH = tmp_path / "runtime.db"
         _listener_mod.DEFAULT_EVENT_POLL_INTERVAL = 1
 

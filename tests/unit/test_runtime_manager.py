@@ -77,15 +77,9 @@ class TestRuntimeManagerStop:
 class TestRuntimeManagerRestart:
     @pytest.mark.asyncio
     async def test_restart_reloads_config(self, manager):
-        with patch.object(
-            RuntimeManager, "start", new_callable=AsyncMock, return_value=True
-        ):
-            with patch.object(
-                RuntimeManager, "stop", new_callable=AsyncMock, return_value=True
-            ):
-                with patch(
-                    "micromech.runtime.manager.MicromechConfig"
-                ) as mock_cfg:
+        with patch.object(RuntimeManager, "start", new_callable=AsyncMock, return_value=True):
+            with patch.object(RuntimeManager, "stop", new_callable=AsyncMock, return_value=True):
+                with patch("micromech.runtime.manager.MicromechConfig") as mock_cfg:
                     mock_cfg.load.return_value = MicromechConfig()
                     ok = await manager.restart()
 

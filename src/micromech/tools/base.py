@@ -10,7 +10,7 @@ micromech wraps these as Tool instances for the async runtime.
 
 import asyncio
 import re
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 

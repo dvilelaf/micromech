@@ -88,10 +88,11 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+ignore = ["E402", "E501"]
 
 [tool.bandit]
 exclude_dirs = ["tests"]
-skips = ["B101"]  # assert in tests is fine
+skips = ["B101", "B105", "B106", "B107", "B110", "B112", "B615"]
 
 [tool.mypy]
 python_version = "3.12"

@@ -99,7 +99,9 @@ class EventListener:
                         "  Request {} tool={} prompt={}",
                         req.request_id[:16] + "...",
                         req.tool or "(ipfs)",
-                        (req.prompt[:60] + "...") if len(req.prompt) > 60 else req.prompt or "(pending)",
+                        (req.prompt[:60] + "...")
+                        if len(req.prompt) > 60
+                        else req.prompt or "(pending)",
                     )
             return resolved
 
@@ -196,7 +198,9 @@ class EventListener:
                         except Exception as inner_e:
                             logger.warning(
                                 "Skipping blocks {}-{}: {}",
-                                s2, e2, inner_e,
+                                s2,
+                                e2,
+                                inner_e,
                             )
         except Exception as e:
             logger.error("Failed to fetch events: {}", e)
@@ -284,8 +288,8 @@ class EventListener:
         Reduces RPC usage by ~75% during quiet periods.
         """
         self._running = True
-        interval = DEFAULT_EVENT_POLL_INTERVAL
-        max_interval = 60
+        interval: float = DEFAULT_EVENT_POLL_INTERVAL
+        max_interval = 60.0
         logger.info("Event listener started (poll {}s, max {}s)", interval, max_interval)
 
         while self._running:

@@ -62,10 +62,12 @@ def _read_rpcs() -> dict[str, str]:
 def _is_port_responding(port: int) -> bool:
     """Check if an Anvil fork is already running on this port."""
     try:
-        w3 = Web3(Web3.HTTPProvider(
-            f"http://localhost:{port}",
-            request_kwargs={"timeout": 2},
-        ))
+        w3 = Web3(
+            Web3.HTTPProvider(
+                f"http://localhost:{port}",
+                request_kwargs={"timeout": 2},
+            )
+        )
         return w3.is_connected()
     except Exception:
         return False
@@ -77,9 +79,7 @@ def _wait_ready(port: int, proc: subprocess.Popen, timeout: int = 30) -> None:
     url = f"http://localhost:{port}"
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            raise RuntimeError(
-                f"Anvil exited early on port {port} (code {proc.returncode})"
-            )
+            raise RuntimeError(f"Anvil exited early on port {port} (code {proc.returncode})")
         try:
             w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 2}))
             if w3.is_connected():
@@ -93,6 +93,7 @@ def _wait_ready(port: int, proc: subprocess.Popen, timeout: int = 30) -> None:
 # ---------------------------------------------------------------------------
 # Session-scoped fixture: auto-start Anvil forks
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _anvil_forks():
@@ -129,8 +130,15 @@ def _anvil_forks():
         )
 
         proc = subprocess.Popen(
-            [_ANVIL_BIN, "--fork-url", rpc_url, "--port", str(port),
-             "--auto-impersonate", "--silent"],
+            [
+                _ANVIL_BIN,
+                "--fork-url",
+                rpc_url,
+                "--port",
+                str(port),
+                "--auto-impersonate",
+                "--silent",
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
@@ -158,9 +166,7 @@ def _anvil_forks():
             os.environ.pop(f"ANVIL_{chain.upper()}", None)
             failed.append(chain)
 
-    if not started and not any(
-        _is_port_responding(p) for p in _CHAIN_PORTS.values()
-    ):
+    if not started and not any(_is_port_responding(p) for p in _CHAIN_PORTS.values()):
         pytest.skip("No RPC URLs in secrets.env and no Anvil forks running")
 
     yield
@@ -179,6 +185,7 @@ def _anvil_forks():
 # Per-test fixture: reset iwa IPFS session
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _reset_ipfs_session():
     """Reset iwa's global aiohttp session before each integration test.
@@ -189,12 +196,14 @@ def _reset_ipfs_session():
     """
     try:
         import iwa.core.ipfs as ipfs_mod
+
         ipfs_mod._ASYNC_SESSION = None
     except (ImportError, AttributeError):
         pass
     yield
     try:
         import iwa.core.ipfs as ipfs_mod
+
         ipfs_mod._ASYNC_SESSION = None
     except (ImportError, AttributeError):
         pass

@@ -89,8 +89,7 @@ async def _trigger_update(
     qualifier = " (forced after timeout)" if forced else ""
     await notification_service.send(
         "Auto-Update Triggered",
-        f"Updating to {version_tag}{qualifier}\n"
-        "micromech will restart shortly.",
+        f"Updating to {version_tag}{qualifier}\nmicromech will restart shortly.",
     )
 
     logger.info(f"Auto-update triggered for version {version_tag} (forced={forced})")
@@ -168,9 +167,7 @@ async def update_check_task(
         logger.info(f"Auto-update scheduled for version {latest}")
         await notification_service.send(
             "Auto-Update Scheduled",
-            f"Current: {current}\n"
-            f"Target: {latest}\n"
-            f"Max wait: {AUTO_UPDATE_MAX_WAIT_HOURS}h.",
+            f"Current: {current}\nTarget: {latest}\nMax wait: {AUTO_UPDATE_MAX_WAIT_HOURS}h.",
         )
 
         # Immediate trigger (micromech has no mech request safety window)
@@ -179,7 +176,6 @@ async def update_check_task(
         logger.info(f"New micromech version available: {latest} (current: {current})")
         await notification_service.send(
             "Update Available",
-            f"Current: {current}\n"
-            f"Latest: {latest}",
+            f"Current: {current}\nLatest: {latest}",
         )
         _notified_version = latest

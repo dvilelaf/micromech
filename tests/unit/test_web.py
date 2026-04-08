@@ -87,7 +87,8 @@ class TestDashboard:
     def test_redirects_to_setup_when_not_configured(self, web_client: TestClient):
         with patch("micromech.web.app._needs_setup", return_value=True):
             resp = web_client.get(
-                f"/?token={AUTH_TOKEN}", follow_redirects=False,
+                f"/?token={AUTH_TOKEN}",
+                follow_redirects=False,
             )
             assert resp.status_code == 302
             assert "/setup" in resp.headers["location"]
@@ -200,7 +201,9 @@ class TestMetricsAPIWithCollector:
 
         app = create_web_app(
             lambda: {"queue": {}, "delivered_total": 0},
-            lambda lim: [], lambda: [], lambda r: None,
+            lambda lim: [],
+            lambda: [],
+            lambda r: None,
             metrics=mc,
         )
         client = TestClient(app)
@@ -463,12 +466,12 @@ class TestHostBinding:
 
     def test_default_host_is_localhost(self):
         from micromech.core.constants import DEFAULT_HOST
-        assert DEFAULT_HOST == "127.0.0.1", (
-            f"DEFAULT_HOST must be 127.0.0.1, got {DEFAULT_HOST}"
-        )
+
+        assert DEFAULT_HOST == "127.0.0.1", f"DEFAULT_HOST must be 127.0.0.1, got {DEFAULT_HOST}"
 
     def test_default_host_is_not_all_interfaces(self):
         from micromech.core.constants import DEFAULT_HOST
+
         assert DEFAULT_HOST != "0.0.0.0", (
             "DEFAULT_HOST must NOT be 0.0.0.0 — web UI must only be accessible from localhost"
         )
@@ -476,7 +479,9 @@ class TestHostBinding:
     def test_cli_web_default_host(self):
         """CLI web command defaults to 127.0.0.1."""
         import inspect
+
         from micromech.cli import web
+
         sig = inspect.signature(web)
         host_param = sig.parameters.get("host")
         assert host_param is not None
@@ -492,12 +497,12 @@ class TestHealthAPI:
         assert "timestamp" in data
 
 
-class TestRecordToDict:
+class TestRecordToDictIpfsCid:
     """Verify _record_to_dict includes request IPFS CID."""
 
     def test_request_ipfs_cid_from_multihash(self):
-        from micromech.web.app import _record_to_dict
         from micromech.core.models import MechRequest, RequestRecord
+        from micromech.web.app import _record_to_dict
 
         req = MechRequest.model_construct(
             request_id="abc123",
@@ -515,8 +520,8 @@ class TestRecordToDict:
         assert d["request_ipfs_cid"].startswith("b")  # bafkrei...
 
     def test_request_ipfs_cid_none_for_raw_data(self):
-        from micromech.web.app import _record_to_dict
         from micromech.core.models import MechRequest, RequestRecord
+        from micromech.web.app import _record_to_dict
 
         req = MechRequest.model_construct(
             request_id="abc123",

@@ -34,10 +34,12 @@ class NotificationService:
         self._resolve_attempts += 1
         try:
             from micromech.secrets import secrets
+
             if not (secrets.telegram_token and secrets.telegram_chat_id):
                 self._resolve_attempts = self._max_resolve_attempts
                 return
             from micromech.bot import _application
+
             if _application is not None:
                 self._bot = _application.bot
                 self._chat_id = secrets.telegram_chat_id
@@ -58,7 +60,7 @@ class NotificationService:
             try:
                 text = f"<b>{_escape_html(title)}</b>\n{_escape_html(message)}"
                 await self._bot.send_message(
-                    chat_id=self._chat_id,
+                    chat_id=self._chat_id,  # type: ignore[arg-type]
                     text=text,
                     parse_mode="HTML",
                 )

@@ -20,9 +20,7 @@ _TOGGLES = [
     ("update_check", "update_check_enabled", "Update check"),
 ]
 
-_TOGGLE_MAP: dict[str, tuple[str, str]] = {
-    key: (attr, label) for key, attr, label in _TOGGLES
-}
+_TOGGLE_MAP: dict[str, tuple[str, str]] = {key: (attr, label) for key, attr, label in _TOGGLES}
 
 
 def _get_value(config: MicromechConfig, attr: str) -> bool:
@@ -31,7 +29,9 @@ def _get_value(config: MicromechConfig, attr: str) -> bool:
 
 
 def _set_value(
-    config: MicromechConfig, attr: str, value: bool,
+    config: MicromechConfig,
+    attr: str,
+    value: bool,
 ) -> None:
     """Set a toggle value on config."""
     setattr(config, attr, value)
@@ -59,22 +59,28 @@ def _build_settings_keyboard(
         prefix = "Disable" if enabled else "Enable"
         value = "off" if enabled else "on"
         rows.append(
-            [InlineKeyboardButton(
-                f"{prefix} {label}",
-                callback_data=f"{ACTION_SETTINGS}:{key}:{value}",
-            )]
+            [
+                InlineKeyboardButton(
+                    f"{prefix} {label}",
+                    callback_data=f"{ACTION_SETTINGS}:{key}:{value}",
+                )
+            ]
         )
-    rows.append([
-        InlineKeyboardButton(
-            "Close", callback_data=f"{ACTION_SETTINGS}:cancel",
-        ),
-    ])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                "Close",
+                callback_data=f"{ACTION_SETTINGS}:cancel",
+            ),
+        ]
+    )
     return InlineKeyboardMarkup(rows)
 
 
 @authorized_only
 async def settings_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE,
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
     """Handle /settings command."""
     if not update.message:
@@ -84,9 +90,7 @@ async def settings_command(
     text = _format_settings(config)
     keyboard = _build_settings_keyboard(config)
 
-    await update.message.reply_text(
-        text, reply_markup=keyboard, parse_mode=ParseMode.HTML
-    )
+    await update.message.reply_text(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
 
 
 async def handle_settings_callback(
@@ -129,5 +133,7 @@ async def handle_settings_callback(
     text = _format_settings(config)
     keyboard = _build_settings_keyboard(config)
     await query.edit_message_text(
-        text, reply_markup=keyboard, parse_mode=ParseMode.HTML,
+        text,
+        reply_markup=keyboard,
+        parse_mode=ParseMode.HTML,
     )

@@ -29,10 +29,18 @@ class TestInitCommand:
         config_path = tmp_path / "config.yaml"
         mock_module = MagicMock(Wallet=MagicMock(return_value=mock_wallet))
         with patch.dict("sys.modules", {"iwa.core.wallet": mock_module}):
-            result = runner.invoke(app, [
-                "init", "--config", str(config_path),
-                "--chain", "gnosis", "--yes", "--skip-funding-check",
-            ])
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    "--config",
+                    str(config_path),
+                    "--chain",
+                    "gnosis",
+                    "--yes",
+                    "--skip-funding-check",
+                ],
+            )
         # Will fail at deploy step (no iwa ServiceManager) but wizard starts
         assert "setup wizard" in result.output.lower()
         assert "wallet found" in result.output.lower()
@@ -45,21 +53,34 @@ class TestInitCommand:
 
         config_path = tmp_path / "config.yaml"
         from micromech.core.config import ChainConfig
-        cfg = MicromechConfig(chains={"gnosis": ChainConfig(
-            chain="gnosis",
-            mech_address="0x" + "33" * 20,
-            marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
-            factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
-            staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
-        )})
+
+        cfg = MicromechConfig(
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    mech_address="0x" + "33" * 20,
+                    marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+                    factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+                    staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+                )
+            }
+        )
         cfg.save(config_path)
 
         mock_module = MagicMock(Wallet=MagicMock(return_value=mock_wallet))
         with patch.dict("sys.modules", {"iwa.core.wallet": mock_module}):
-            result = runner.invoke(app, [
-                "init", "--config", str(config_path),
-                "--chain", "gnosis", "--yes", "--skip-funding-check",
-            ])
+            result = runner.invoke(
+                app,
+                [
+                    "init",
+                    "--config",
+                    str(config_path),
+                    "--chain",
+                    "gnosis",
+                    "--yes",
+                    "--skip-funding-check",
+                ],
+            )
         assert result.exit_code == 0
         assert "already fully deployed" in result.output.lower()
 

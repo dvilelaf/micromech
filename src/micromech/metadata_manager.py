@@ -72,10 +72,7 @@ class MetadataManager:
 
         # Single scan — extract fingerprints directly (no triple scan)
         tools = self._scan_all()
-        current_fps = {
-            t["name"]: t["package_cid"]
-            for t in tools if t.get("package_cid")
-        }
+        current_fps = {t["name"]: t["package_cid"] for t in tools if t.get("package_cid")}
         metadata = build_metadata(tools)
         current_hash = compute_onchain_hash(metadata)
 
@@ -172,7 +169,9 @@ class MetadataManager:
 
                     lc = MechLifecycle(self.config, chain_name)
                     tx = await asyncio.to_thread(
-                        lc.update_metadata_onchain, svc_key, onchain_hash,
+                        lc.update_metadata_onchain,
+                        svc_key,
+                        onchain_hash,
                     )
                     if tx:
                         result.chain_txs[chain_name] = tx
@@ -181,10 +180,7 @@ class MetadataManager:
                         _progress("onchain", f"{chain_name}: update failed (non-fatal)")
 
             # Step 5: Persist state in config
-            fingerprints = {
-                t["name"]: t["package_cid"]
-                for t in tools if t.get("package_cid")
-            }
+            fingerprints = {t["name"]: t["package_cid"] for t in tools if t.get("package_cid")}
             self.config.metadata_ipfs_cid = cid
             self.config.metadata_onchain_hash = onchain_hash
             self.config.metadata_fingerprints = fingerprints
@@ -231,7 +227,8 @@ class MetadataManager:
 
             _progress("ipfs", "Pushing metadata to IPFS...")
             metadata_bytes = _json.dumps(
-                metadata, separators=(",", ":"),
+                metadata,
+                separators=(",", ":"),
             ).encode("utf-8")
             try:
                 resp = req_lib.post(
@@ -254,6 +251,7 @@ class MetadataManager:
             if service_key and chain_name:
                 _progress("onchain", f"Updating on-chain hash on {chain_name}...")
                 from micromech.management import MechLifecycle
+
                 lc = MechLifecycle(self.config, chain_name)
                 tx = lc.update_metadata_onchain(service_key, onchain_hash)
                 if tx:
@@ -262,10 +260,7 @@ class MetadataManager:
                 else:
                     _progress("onchain", f"Skipped (not available on {chain_name})")
 
-            fingerprints = {
-                t["name"]: t["package_cid"]
-                for t in tools if t.get("package_cid")
-            }
+            fingerprints = {t["name"]: t["package_cid"] for t in tools if t.get("package_cid")}
             self.config.metadata_ipfs_cid = cid
             self.config.metadata_onchain_hash = onchain_hash
             self.config.metadata_fingerprints = fingerprints

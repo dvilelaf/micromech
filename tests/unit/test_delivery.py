@@ -25,6 +25,7 @@ def _mock_service_info():
     ):
         yield
 
+
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import STATUS_EXECUTED
 from micromech.core.models import MechRequest, ToolResult
@@ -376,7 +377,8 @@ class TestDeliveryLifecycle:
         import asyncio
 
         monkeypatch.setattr(
-            "micromech.runtime.delivery.DEFAULT_DELIVERY_INTERVAL", 1,
+            "micromech.runtime.delivery.DEFAULT_DELIVERY_INTERVAL",
+            1,
         )
         config = MicromechConfig()
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=None)
@@ -394,6 +396,7 @@ class TestTrySubmit:
 
     def test_safe_success_skips_others(self):
         from micromech.runtime.delivery import _try_submit
+
         result = _try_submit(
             safe_fn=lambda: "safe_hash",
             impersonated_fn=lambda: "imp_hash",
@@ -403,6 +406,7 @@ class TestTrySubmit:
 
     def test_safe_none_tries_impersonation(self):
         from micromech.runtime.delivery import _try_submit
+
         result = _try_submit(
             safe_fn=None,
             impersonated_fn=lambda: "imp_hash",
@@ -412,6 +416,7 @@ class TestTrySubmit:
 
     def test_safe_fails_tries_impersonation(self):
         from micromech.runtime.delivery import _try_submit
+
         result = _try_submit(
             safe_fn=lambda: (_ for _ in ()).throw(RuntimeError("no safe")),
             impersonated_fn=lambda: "imp_hash",
@@ -421,6 +426,7 @@ class TestTrySubmit:
 
     def test_safe_and_imp_fail_uses_signed(self):
         from micromech.runtime.delivery import _try_submit
+
         result = _try_submit(
             safe_fn=lambda: (_ for _ in ()).throw(RuntimeError("a")),
             impersonated_fn=lambda: (_ for _ in ()).throw(RuntimeError("b")),
@@ -430,6 +436,7 @@ class TestTrySubmit:
 
     def test_all_fail_raises(self):
         from micromech.runtime.delivery import _try_submit
+
         with pytest.raises(RuntimeError):
             _try_submit(
                 safe_fn=lambda: (_ for _ in ()).throw(RuntimeError("a")),
@@ -443,10 +450,14 @@ class TestNonHexRequestId:
 
     def test_non_hex_request_id_gets_hashed(self, queue: PersistentQueue):
         import hashlib
+
         config = MicromechConfig()
         bridge = MagicMock(spec=["web3"])
         dm = DeliveryManager(
-            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+            config=config,
+            chain_config=CHAIN_CFG,
+            queue=queue,
+            bridge=bridge,
         )
 
         mock_contract = MagicMock()
@@ -467,10 +478,14 @@ class TestDeliveryBatchFailure:
     @pytest.mark.asyncio
     async def test_delivery_failure_marks_failed(self, queue: PersistentQueue):
         from micromech.core.constants import STATUS_FAILED
+
         config = MicromechConfig()
         bridge = MagicMock()
         dm = DeliveryManager(
-            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+            config=config,
+            chain_config=CHAIN_CFG,
+            queue=queue,
+            bridge=bridge,
         )
 
         req = MechRequest(request_id="r1", prompt="test", tool="echo")
@@ -500,7 +515,10 @@ class TestDeliverOneIpfs:
         config = MicromechConfig()
         bridge = MagicMock(spec=["web3"])
         dm = DeliveryManager(
-            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+            config=config,
+            chain_config=CHAIN_CFG,
+            queue=queue,
+            bridge=bridge,
         )
 
         req = MechRequest(request_id="r1", prompt="test prompt", tool="echo")
@@ -524,7 +542,10 @@ class TestDeliverOneIpfs:
         config = MicromechConfig()
         bridge = MagicMock(spec=["web3"])
         dm = DeliveryManager(
-            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+            config=config,
+            chain_config=CHAIN_CFG,
+            queue=queue,
+            bridge=bridge,
         )
 
         req = MechRequest(request_id="r2", prompt="test", tool="echo")
@@ -553,7 +574,10 @@ class TestDeliverOneIpfs:
         config = MicromechConfig()
         bridge = MagicMock(spec=["web3"])
         dm = DeliveryManager(
-            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge,
+            config=config,
+            chain_config=CHAIN_CFG,
+            queue=queue,
+            bridge=bridge,
         )
 
         req = MechRequest(request_id="r4", prompt="my prompt", tool="llm")

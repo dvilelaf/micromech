@@ -56,8 +56,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
     await update.message.reply_text(
-        f"Welcome to {bold('Micromech')} Telegram Bot.\n"
-        "Use /status to see your mech status.",
+        f"Welcome to {bold('Micromech')} Telegram Bot.\nUse /status to see your mech status.",
         parse_mode="HTML",
     )
 
@@ -188,6 +187,7 @@ def create_application(
 
     # Store global reference for NotificationService lazy resolution
     import micromech.bot as _bot_pkg
+
     _bot_pkg._application = app
 
     return app

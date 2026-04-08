@@ -54,6 +54,7 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Tools (auto-discovered)
     try:
         from micromech.tools.registry import ToolRegistry
+
         reg = ToolRegistry()
         reg.load_builtins()
         tool_names = reg.tool_ids

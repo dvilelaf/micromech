@@ -257,7 +257,8 @@ class TestRunLoop:
     def _fast_poll(self, monkeypatch):
         """Use 1-second poll interval for run-loop tests."""
         monkeypatch.setattr(
-            "micromech.runtime.listener.DEFAULT_EVENT_POLL_INTERVAL", 1,
+            "micromech.runtime.listener.DEFAULT_EVENT_POLL_INTERVAL",
+            1,
         )
 
     @pytest.mark.asyncio
@@ -518,6 +519,7 @@ class TestAdaptivePolling:
         listener.poll_once = mock_poll_once
 
         original_sleep = asyncio.sleep
+
         async def tracked_sleep(t):
             calls.append(t)
             if len(calls) >= 4:
@@ -555,6 +557,7 @@ class TestAdaptivePolling:
         listener.advance_block = lambda: None
 
         original_sleep = asyncio.sleep
+
         async def tracked_sleep(t):
             calls.append(t)
             if len(calls) >= 4:

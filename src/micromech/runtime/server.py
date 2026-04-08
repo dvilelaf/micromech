@@ -173,7 +173,9 @@ class MechServer:
         }
 
     async def run(
-        self, with_http: bool = True, register_signals: bool = True,
+        self,
+        with_http: bool = True,
+        register_signals: bool = True,
     ) -> None:
         """Run the server with all components."""
         self._running = True
@@ -215,20 +217,22 @@ class MechServer:
 
         # Start task scheduler (checkpoint, rewards, fund, alerts, etc.)
         try:
-            from micromech.tasks.scheduler import TaskScheduler
             from micromech.tasks.notifications import NotificationService
+            from micromech.tasks.scheduler import TaskScheduler
 
             notification = NotificationService()
             self._task_scheduler = TaskScheduler(
-                self.config, self.bridges, notification, queue=self.queue,
+                self.config,
+                self.bridges,
+                notification,
+                queue=self.queue,
             )
             self._task_scheduler.start()
             logger.info("TaskScheduler started")
 
             from micromech.tasks.watchdog import watchdog_loop
-            self._tasks.append(asyncio.create_task(
-                watchdog_loop(notification)
-            ))
+
+            self._tasks.append(asyncio.create_task(watchdog_loop(notification)))
         except Exception as e:
             logger.warning("TaskScheduler failed to start: {}", e)
 
@@ -263,7 +267,8 @@ class MechServer:
             return self.registry.list_packages()
 
         from micromech.core.constants import CUSTOM_TOOLS_DIR
-        from micromech.metadata_manager import MetadataManager, _BUILTIN_TOOLS_DIR
+        from micromech.metadata_manager import _BUILTIN_TOOLS_DIR, MetadataManager
+
         mm = MetadataManager(self.config, tools_dirs=[_BUILTIN_TOOLS_DIR, CUSTOM_TOOLS_DIR])
 
         web_app = create_web_app(

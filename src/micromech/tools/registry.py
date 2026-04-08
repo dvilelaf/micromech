@@ -5,6 +5,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import yaml
 from loguru import logger
@@ -68,14 +69,17 @@ class ToolRegistry:
         if tool_id in self._tools:
             if not allow_override:
                 logger.warning(
-                    "Custom tool '{}' conflicts with existing — skipping", tool_id,
+                    "Custom tool '{}' conflicts with existing — skipping",
+                    tool_id,
                 )
                 return False
             logger.warning("Overwriting existing tool: {}", tool_id)
         self._tools[tool_id] = tool
         logger.info(
             "Registered tool: {} (v{}, {})",
-            tool_id, tool.metadata.version, tool.metadata.origin,
+            tool_id,
+            tool.metadata.version,
+            tool.metadata.origin,
         )
         return True
 
@@ -103,12 +107,14 @@ class ToolRegistry:
         for tool in self._tools.values():
             if id(tool) not in seen:
                 seen.add(id(tool))
-                packages.append({
-                    "name": tool.metadata.name,
-                    "version": tool.metadata.version,
-                    "tools": list(tool.ALLOWED_TOOLS),
-                    "origin": tool.metadata.origin,
-                })
+                packages.append(
+                    {
+                        "name": tool.metadata.name,
+                        "version": tool.metadata.version,
+                        "tools": list(tool.ALLOWED_TOOLS),
+                        "origin": tool.metadata.origin,
+                    }
+                )
         return packages
 
     def has(self, tool_id: str) -> bool:
@@ -123,10 +129,10 @@ class ToolRegistry:
     def _load_tool_package(
         self,
         tool_id: str,
-        run_fn: object,
+        run_fn: Any,
         allowed: list[str],
         allow_override: bool = True,
-        **meta_kwargs: object,
+        **meta_kwargs: Any,
     ) -> bool:
         """Register a tool from its run function and metadata.
 
@@ -223,10 +229,15 @@ class ToolRegistry:
             tool_id = allowed[0] if allowed else tool_dir.name
 
             success = self._load_tool_package(
-                tool_id, run_fn, allowed,
+                tool_id,
+                run_fn,
+                allowed,
                 allow_override=allow_override,
-                name=name, description=description,
-                version=version, timeout=timeout, origin=origin,
+                name=name,
+                description=description,
+                version=version,
+                timeout=timeout,
+                origin=origin,
             )
             if success:
                 loaded += 1
@@ -236,13 +247,17 @@ class ToolRegistry:
     def load_builtins(self, disabled: set[str] | None = None) -> None:
         """Auto-discover and load all built-in tools from the tools directory."""
         loaded = self._discover_directory(
-            _BUILTINS_DIR, origin="builtin",
-            module_prefix="micromech.tools", skip_packages=disabled,
+            _BUILTINS_DIR,
+            origin="builtin",
+            module_prefix="micromech.tools",
+            skip_packages=disabled,
         )
         logger.info("Auto-discovered {} built-in tool package(s)", loaded)
 
     def load_custom(
-        self, custom_dir: Path, disabled: set[str] | None = None,
+        self,
+        custom_dir: Path,
+        disabled: set[str] | None = None,
     ) -> None:
         """Auto-discover and load custom tools from an external directory.
 
@@ -252,7 +267,9 @@ class ToolRegistry:
         if not custom_dir.exists():
             return
         loaded = self._discover_directory(
-            custom_dir, origin="custom", skip_packages=disabled,
+            custom_dir,
+            origin="custom",
+            skip_packages=disabled,
         )
         if loaded:
             logger.info("Loaded {} custom tool package(s) from {}", loaded, custom_dir)

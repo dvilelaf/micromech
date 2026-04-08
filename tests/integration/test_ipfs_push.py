@@ -12,8 +12,6 @@ import pytest
 
 from micromech.ipfs.client import compute_cid, fetch_from_ipfs, push_to_ipfs
 
-
-
 AUTONOLAS_API = "https://registry.autonolas.tech"
 AUTONOLAS_GW = "https://gateway.autonolas.tech/ipfs/"
 

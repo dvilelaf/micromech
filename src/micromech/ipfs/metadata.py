@@ -50,7 +50,8 @@ def compute_tools_fingerprint(tools_dir: Path) -> dict[str, str]:
 
 
 def scan_tool_packages(
-    tools_dir: Path, source: str = "builtin",
+    tools_dir: Path,
+    source: str = "builtin",
 ) -> list[dict[str, Any]]:
     """Scan tool package directories and extract metadata.
 

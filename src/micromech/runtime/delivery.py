@@ -29,7 +29,8 @@ TX_RECEIPT_TIMEOUT = 120  # seconds
 def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
     """Wait for transaction receipt and return hex hash. Raises on revert."""
     receipt = web3.eth.wait_for_transaction_receipt(
-        tx_hash, timeout=TX_RECEIPT_TIMEOUT,
+        tx_hash,
+        timeout=TX_RECEIPT_TIMEOUT,
     )
     if receipt["status"] != 1:
         msg = f"{error_prefix} transaction reverted: {tx_hash.hex()}"
@@ -128,8 +129,10 @@ class DeliveryManager:
             _ = self.bridge.wallet.key_storage
         except Exception:
             if not self._wallet_warning_logged:
-                logger.warning("Delivery skipped: no wallet available. "
-                               "Set wallet_password in secrets.env or use the web wizard.")
+                logger.warning(
+                    "Delivery skipped: no wallet available. "
+                    "Set wallet_password in secrets.env or use the web wizard."
+                )
                 self._wallet_warning_logged = True
             return 0
 
@@ -178,7 +181,8 @@ class DeliveryManager:
         return delivered
 
     async def _deliver_one(
-        self, record: RequestRecord,
+        self,
+        record: RequestRecord,
     ) -> tuple[Optional[str], Optional[str]]:
         """Deliver a single response.
 
@@ -191,7 +195,8 @@ class DeliveryManager:
         """
         if record.result is None:
             logger.error(
-                "No result for {}", record.request.request_id,
+                "No result for {}",
+                record.request.request_id,
             )
             return None, None
 
@@ -236,12 +241,14 @@ class DeliveryManager:
         if record.request.is_offchain:
             tx_hash = await asyncio.to_thread(
                 self._submit_offchain_delivery,
-                record, delivery_data,
+                record,
+                delivery_data,
             )
         else:
             tx_hash = await asyncio.to_thread(
                 self._submit_delivery,
-                request_id, delivery_data,
+                request_id,
+                delivery_data,
             )
         return tx_hash, ipfs_cid_hex
 
@@ -255,6 +262,7 @@ class DeliveryManager:
         mech_contract = self._get_mech_contract()
         # deliverToMarketplace must be called from the service multisig
         from micromech.core.bridge import get_service_info
+
         svc_info = get_service_info(self.chain_config.chain)
         multisig = svc_info.get("multisig_address")
         if not multisig:
@@ -268,11 +276,13 @@ class DeliveryManager:
         except ValueError:
             # Non-hex IDs (e.g. "http-abc123") — hash to get deterministic bytes32
             import hashlib
+
             req_id_bytes = hashlib.sha256(request_id.encode()).digest()
         req_id_bytes = req_id_bytes.ljust(32, b"\x00")[:32]
 
         fn_call = mech_contract.functions.deliverToMarketplace(
-            [req_id_bytes], [data],
+            [req_id_bytes],
+            [data],
         )
         return self._submit_tx(fn_call, from_addr, "Delivery")
 
@@ -284,12 +294,11 @@ class DeliveryManager:
         """
         mech_contract = self._get_mech_contract()
         from micromech.core.bridge import get_service_info
+
         svc_info = get_service_info(self.chain_config.chain)
         multisig = svc_info.get("multisig_address")
         if not multisig:
-            raise ValueError(
-                "multisig_address not configured — cannot deliver"
-            )
+            raise ValueError("multisig_address not configured — cannot deliver")
         from_addr = self.bridge.web3.to_checksum_address(multisig)
 
         # requester: the sender from the HTTP request, or our own address
@@ -313,7 +322,10 @@ class DeliveryManager:
         payment_data = b""
 
         fn_call = mech_contract.functions.deliverMarketplaceWithSignatures(
-            requester, deliver_with_sigs, delivery_rates, payment_data,
+            requester,
+            deliver_with_sigs,
+            delivery_rates,
+            payment_data,
         )
         return self._submit_tx(fn_call, from_addr, "Offchain delivery")
 
@@ -351,16 +363,19 @@ class DeliveryManager:
 
     def _via_signed(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
         """Submit any contract call via signed transaction."""
-        tx = fn_call.build_transaction({
-            "from": from_addr,
-            "gas": 500_000,
-            "gasPrice": self.bridge.web3.eth.gas_price,
-            "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
-            "chainId": self.bridge.web3.eth.chain_id,
-        })
+        tx = fn_call.build_transaction(
+            {
+                "from": from_addr,
+                "gas": 500_000,
+                "gasPrice": self.bridge.web3.eth.gas_price,
+                "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
+                "chainId": self.bridge.web3.eth.chain_id,
+            }
+        )
         private_key = self._get_signer_key()
         signed = self.bridge.web3.eth.account.sign_transaction(
-            tx, private_key=private_key,
+            tx,
+            private_key=private_key,
         )
         tx_hash = self.bridge.web3.eth.send_raw_transaction(signed.raw_transaction)
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
@@ -375,11 +390,10 @@ class DeliveryManager:
         ks = self.bridge.wallet.key_storage
         tags_to_try = [self.chain_config.account_tag]
         from micromech.core.bridge import get_service_info
+
         svc_info = get_service_info(self.chain_config.chain)
         if svc_info.get("service_id"):
-            tags_to_try.append(
-                f"service_{svc_info['service_id']}_agent"
-            )
+            tags_to_try.append(f"service_{svc_info['service_id']}_agent")
         tags_to_try.append("master")
 
         for tag in tags_to_try:

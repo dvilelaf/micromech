@@ -31,8 +31,6 @@ from web3 import Web3
 
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import CHAIN_DEFAULTS, STATUS_DELIVERED, STATUS_EXECUTED
-from micromech.core.models import MechRequest
-from micromech.runtime.contracts import load_marketplace_abi, load_mech_abi
 from micromech.runtime.server import MechServer
 
 # ---------------------------------------------------------------------------
@@ -79,16 +77,17 @@ PAYMENT_TYPE_NATIVE = bytes.fromhex(
 # Helpers (reused from multichain test)
 # ---------------------------------------------------------------------------
 
+
 def _load_abi(name: str) -> list:
     """Load ABI from iwa package."""
     try:
         from importlib.resources import files
+
         abi_dir = files("iwa.plugins.olas.contracts.abis")
         return json.loads(abi_dir.joinpath(name).read_text())
     except Exception:
         abi_file = (
-            Path("/media/david/DATA/repos/iwa/src/iwa")
-            / "plugins/olas/contracts/abis" / name
+            Path("/media/david/DATA/repos/iwa/src/iwa") / "plugins/olas/contracts/abis" / name
         )
         return json.loads(abi_file.read_text())
 
@@ -137,10 +136,12 @@ def _connect(chain_name: str) -> Web3 | None:
             return None
         try:
             from web3.middleware import ExtraDataToPOAMiddleware
+
             w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
         except ImportError:
             try:
                 from web3.middleware import ExtraDataLengthMiddleware
+
                 w3.middleware_onion.inject(ExtraDataLengthMiddleware, layer=0)
             except ImportError:
                 pass
@@ -172,7 +173,18 @@ def _mint_olas(w3: Web3, chain_name: str, to: str, amount_wei: int) -> None:
 
 def _approve_olas(w3: Web3, chain_name: str, owner: str, spender: str, amount: int) -> None:
     infra = CHAIN_INFRA[chain_name]
-    abi = [{"inputs": [{"name": "spender", "type": "address"}, {"name": "amount", "type": "uint256"}], "name": "approve", "outputs": [{"type": "bool"}], "stateMutability": "nonpayable", "type": "function"}]  # noqa: E501
+    abi = [
+        {
+            "inputs": [
+                {"name": "spender", "type": "address"},
+                {"name": "amount", "type": "uint256"},
+            ],
+            "name": "approve",
+            "outputs": [{"type": "bool"}],
+            "stateMutability": "nonpayable",
+            "type": "function",
+        }
+    ]  # noqa: E501
     olas = w3.eth.contract(address=Web3.to_checksum_address(infra["olas_token"]), abi=abi)
     tx = olas.functions.approve(Web3.to_checksum_address(spender), amount).transact(
         {"from": owner, "gas": 100_000}
@@ -181,7 +193,8 @@ def _approve_olas(w3: Web3, chain_name: str, owner: str, spender: str, amount: i
 
 
 def _deploy_mech_for_chain(
-    w3: Web3, chain_name: str,
+    w3: Web3,
+    chain_name: str,
 ) -> dict[str, Any]:
     """Deploy a full mech service on Anvil: create -> activate -> register -> deploy -> create mech.
 
@@ -206,7 +219,15 @@ def _deploy_mech_for_chain(
     )
 
     # Discover authorized ServiceManager
-    mgr_abi = [{"inputs": [], "name": "manager", "outputs": [{"type": "address"}], "stateMutability": "view", "type": "function"}]  # noqa: E501
+    mgr_abi = [
+        {
+            "inputs": [],
+            "name": "manager",
+            "outputs": [{"type": "address"}],
+            "stateMutability": "view",
+            "type": "function",
+        }
+    ]  # noqa: E501
     mgr_lookup = w3.eth.contract(
         address=Web3.to_checksum_address(infra["service_registry"]), abi=mgr_abi
     )
@@ -228,9 +249,7 @@ def _deploy_mech_for_chain(
     _approve_olas(w3, chain_name, owner, infra["token_utility"], bond_wei * 5)
 
     # Create service
-    config_hash = bytes.fromhex(
-        "108e90795119d6015274ef03af1a669c6d13ab6acc9e2b2978be01ee9ea2ec93"
-    )
+    config_hash = bytes.fromhex("108e90795119d6015274ef03af1a669c6d13ab6acc9e2b2978be01ee9ea2ec93")
     tx = svc_manager.functions.create(
         owner,
         Web3.to_checksum_address(infra["olas_token"]),
@@ -253,17 +272,16 @@ def _deploy_mech_for_chain(
 
     # Register agent
     agent_instance = w3.eth.accounts[1]
-    tx = svc_manager.functions.registerAgents(
-        svc_id, [agent_instance], [agent_id]
-    ).transact({"from": owner, "gas": 500_000, "value": 1})
+    tx = svc_manager.functions.registerAgents(svc_id, [agent_instance], [agent_id]).transact(
+        {"from": owner, "gas": 500_000, "value": 1}
+    )
     r = w3.eth.wait_for_transaction_receipt(tx)
     assert r["status"] == 1
 
     # Deploy Safe
     deploy_data = bytes.fromhex(
-        DEFAULT_DEPLOY_PAYLOAD.format(
-            fallback_handler=infra["safe_fallback"][2:]
-        )[2:] + int(_time.time()).to_bytes(32, "big").hex()
+        DEFAULT_DEPLOY_PAYLOAD.format(fallback_handler=infra["safe_fallback"][2:])[2:]
+        + int(_time.time()).to_bytes(32, "big").hex()
     )
     tx = svc_manager.functions.deploy(
         svc_id,
@@ -305,6 +323,7 @@ def _deploy_mech_for_chain(
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def anvil_chain(_anvil_forks):
     """Connect to the first available Anvil fork — fresh snapshot per test.
@@ -316,8 +335,10 @@ def anvil_chain(_anvil_forks):
         w3 = _connect(chain_name)
         if w3 is not None:
             snapshot_id = w3.provider.make_request("evm_snapshot", [])["result"]
-            print(f"\n  Connected to {chain_name} Anvil: "
-                  f"chain_id={w3.eth.chain_id}, block={w3.eth.block_number}")
+            print(
+                f"\n  Connected to {chain_name} Anvil: "
+                f"chain_id={w3.eth.chain_id}, block={w3.eth.block_number}"
+            )
             yield chain_name, w3
             w3.provider.make_request("evm_revert", [snapshot_id])
             return
@@ -336,6 +357,7 @@ def deployed_mech(anvil_chain: tuple[str, Web3]) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestFullMechCycle:
     """FULL cycle: request on-chain -> MechServer picks up -> executes -> delivers -> verify."""
@@ -369,10 +391,12 @@ class TestFullMechCycle:
         fee = marketplace.functions.fee().call()
         value = infra["delivery_rate"] + fee
 
-        request_data = json.dumps({
-            "prompt": "Will ETH hit 100k by 2030?",
-            "tool": "echo",
-        }).encode()
+        request_data = json.dumps(
+            {
+                "prompt": "Will ETH hit 100k by 2030?",
+                "tool": "echo",
+            }
+        ).encode()
 
         block_before_request = w3.eth.block_number
 
@@ -431,9 +455,7 @@ class TestFullMechCycle:
 
         print("  Step 2: MechServer configured, starting...")
 
-        server_task = asyncio.create_task(
-            server.run(with_http=False, register_signals=False)
-        )
+        server_task = asyncio.create_task(server.run(with_http=False, register_signals=False))
 
         try:
             # ── Step 3: Wait for request pickup + execution ────────────
@@ -464,8 +486,10 @@ class TestFullMechCycle:
             # Verify result contains valid echo response
             result_data = json.loads(record.result.output)
             assert "result" in result_data, f"Missing 'result' in: {result_data}"
-            print(f"  Step 3: Request executed in {elapsed:.1f}s. "
-                  f"result={str(result_data['result'])[:40]}")
+            print(
+                f"  Step 3: Request executed in {elapsed:.1f}s. "
+                f"result={str(result_data['result'])[:40]}"
+            )
 
             # ── Step 4: Wait for on-chain delivery ─────────────────────
             max_wait_delivery = 30  # seconds
@@ -482,8 +506,7 @@ class TestFullMechCycle:
             record = server.queue.get_by_id(request_id_hex)
             assert record is not None
             assert record.request.status == STATUS_DELIVERED, (
-                f"Expected 'delivered', got '{record.request.status}' "
-                f"after {max_wait_delivery}s"
+                f"Expected 'delivered', got '{record.request.status}' after {max_wait_delivery}s"
             )
             print(f"  Step 4: Delivery confirmed in DB after {elapsed:.1f}s")
 
@@ -494,18 +517,20 @@ class TestFullMechCycle:
             assert delivery_tx_hash, "No delivery tx hash in DB"
 
             tx_receipt = w3.eth.get_transaction_receipt(delivery_tx_hash)
-            assert tx_receipt["status"] == 1, (
-                f"Delivery tx {delivery_tx_hash} reverted on-chain"
-            )
+            assert tx_receipt["status"] == 1, f"Delivery tx {delivery_tx_hash} reverted on-chain"
             assert len(tx_receipt["logs"]) > 0, "Delivery tx emitted no events"
-            print(f"  Step 5: Delivery tx confirmed on-chain: "
-                  f"{delivery_tx_hash[:24]}... "
-                  f"({len(tx_receipt['logs'])} event logs)")
+            print(
+                f"  Step 5: Delivery tx confirmed on-chain: "
+                f"{delivery_tx_hash[:24]}... "
+                f"({len(tx_receipt['logs'])} event logs)"
+            )
 
             # Verify via MarketplaceDelivery event (emitted by deliverToMarketplace)
             from web3._utils.events import EventLogErrorFlags
+
             mp_delivery_events = marketplace.events.MarketplaceDelivery().process_receipt(
-                tx_receipt, errors=EventLogErrorFlags.Discard,
+                tx_receipt,
+                errors=EventLogErrorFlags.Discard,
             )
             assert len(mp_delivery_events) >= 1, (
                 f"No MarketplaceDelivery events in delivery tx "
@@ -525,18 +550,15 @@ class TestFullMechCycle:
                     break
 
             assert found_in_delivery, (
-                f"Request {request_id_hex[:16]}... not found in "
-                f"MarketplaceDelivery events"
+                f"Request {request_id_hex[:16]}... not found in MarketplaceDelivery events"
             )
-            print(f"  Step 5b: MarketplaceDelivery event confirmed for our request")
+            print("  Step 5b: MarketplaceDelivery event confirmed for our request")
 
             # ── Step 6: Verify marketplace delivery count on-chain ─────
             delivery_count = marketplace.functions.mapMechDeliveryCounts(
                 Web3.to_checksum_address(mech_addr)
             ).call()
-            assert delivery_count >= 1, (
-                f"Expected delivery count >= 1, got {delivery_count}"
-            )
+            assert delivery_count >= 1, f"Expected delivery count >= 1, got {delivery_count}"
             print(f"  Step 6: Marketplace delivery count = {delivery_count}")
 
             # ── Step 7: Verify IPFS hash if available ──────────────────
@@ -595,10 +617,12 @@ class TestFullMechCycle:
         request_ids: list[str] = []
         for i in range(n_requests):
             value = infra["delivery_rate"] + fee
-            request_data = json.dumps({
-                "prompt": f"Multi-request test #{i}: Will BTC hit {i+1}00k?",
-                "tool": "echo",
-            }).encode()
+            request_data = json.dumps(
+                {
+                    "prompt": f"Multi-request test #{i}: Will BTC hit {i + 1}00k?",
+                    "tool": "echo",
+                }
+            ).encode()
 
             tx = marketplace.functions.request(
                 request_data,
@@ -651,9 +675,7 @@ class TestFullMechCycle:
         server = MechServer(config, bridges={chain_name: bridge})
         server.listeners[chain_name]._last_block = block_before
 
-        server_task = asyncio.create_task(
-            server.run(with_http=False, register_signals=False)
-        )
+        server_task = asyncio.create_task(server.run(with_http=False, register_signals=False))
 
         try:
             # Wait for all requests to be delivered
@@ -706,8 +728,10 @@ class TestFullMechCycle:
                 receipt = w3.eth.get_transaction_receipt(tx_hash)
                 assert receipt["status"] == 1, f"Delivery tx for {rid[:16]}... reverted"
 
-            print(f"  ALL {n_requests} requests delivered on-chain in {elapsed:.0f}s "
-                  f"(mapMechDeliveryCounts={on_chain_count})")
+            print(
+                f"  ALL {n_requests} requests delivered on-chain in {elapsed:.0f}s "
+                f"(mapMechDeliveryCounts={on_chain_count})"
+            )
 
         finally:
             svc_patch2.stop()

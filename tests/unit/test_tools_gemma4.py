@@ -21,9 +21,7 @@ class TestGemma4ApiTool:
         from micromech.tools.gemma4_api_tool.gemma4_api_tool import run
 
         mock_client = MagicMock()
-        mock_client.models.generate_content.return_value = (
-            self._make_mock_response()
-        )
+        mock_client.models.generate_content.return_value = self._make_mock_response()
         mock_get_client.return_value = mock_client
 
         result = run(prompt="What is 2+2?")
@@ -40,8 +38,8 @@ class TestGemma4ApiTool:
         from micromech.tools.gemma4_api_tool.gemma4_api_tool import run
 
         mock_client = MagicMock()
-        mock_client.models.generate_content.return_value = (
-            self._make_mock_response("The answer is 4.", tokens=15)
+        mock_client.models.generate_content.return_value = self._make_mock_response(
+            "The answer is 4.", tokens=15
         )
         mock_get_client.return_value = mock_client
 
@@ -57,9 +55,7 @@ class TestGemma4ApiTool:
         from micromech.tools.gemma4_api_tool.gemma4_api_tool import run
 
         mock_client = MagicMock()
-        mock_client.models.generate_content.return_value = (
-            self._make_mock_response()
-        )
+        mock_client.models.generate_content.return_value = self._make_mock_response()
         mock_get_client.return_value = mock_client
 
         result_str, _, _, _ = run(prompt="test", model="nonexistent")
@@ -71,6 +67,7 @@ class TestGemma4ApiTool:
 
         with patch.dict("os.environ", {}, clear=True):
             import os
+
             os.environ.pop("GOOGLE_API_KEY", None)
             with pytest.raises(RuntimeError, match="GOOGLE_API_KEY"):
                 _get_client()
@@ -81,9 +78,7 @@ class TestGemma4ApiTool:
         from micromech.tools.gemma4_api_tool.gemma4_api_tool import run
 
         mock_client = MagicMock()
-        mock_client.models.generate_content.return_value = (
-            self._make_mock_response()
-        )
+        mock_client.models.generate_content.return_value = self._make_mock_response()
         mock_get_client.return_value = mock_client
 
         mock_cb = MagicMock()

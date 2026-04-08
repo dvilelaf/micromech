@@ -5,15 +5,15 @@ import asyncio
 import pytest
 
 from micromech.core.config import ChainConfig, MicromechConfig
-from micromech.core.constants import CHAIN_DEFAULTS, DB_PATH
+from micromech.core.constants import CHAIN_DEFAULTS
 from micromech.core.models import MechRequest, ToolResult
-from micromech.core.persistence import PersistentQueue
 from micromech.runtime.server import MechServer
 
 
 @pytest.fixture
 def server_config(tmp_path) -> MicromechConfig:
     from tests.conftest import make_test_config
+
     return make_test_config()
 
 
@@ -109,7 +109,9 @@ class TestMechServerDedup:
     async def test_duplicate_request_skipped(self, server_config):
         server = MechServer(server_config)
         req = MechRequest(
-            request_id="r1", prompt="hello", tool="echo",
+            request_id="r1",
+            prompt="hello",
+            tool="echo",
         )
         await server._on_new_request(req)
         await server._on_new_request(req)  # duplicate
@@ -121,7 +123,9 @@ class TestMechServerDedup:
         """Request already in EXECUTED state should be skipped."""
         server = MechServer(server_config)
         req = MechRequest(
-            request_id="r1", prompt="hello", tool="echo",
+            request_id="r1",
+            prompt="hello",
+            tool="echo",
         )
         server.queue.add_request(req)
         server.queue.mark_executing("r1")
@@ -138,7 +142,9 @@ class TestMechServerProcessing:
     async def test_on_new_request(self, server_config):
         server = MechServer(server_config)
         req = MechRequest(
-            request_id="r1", prompt="hello", tool="echo",
+            request_id="r1",
+            prompt="hello",
+            tool="echo",
         )
         await server._on_new_request(req)
         record = server.queue.get_by_id("r1")
@@ -153,7 +159,9 @@ class TestMechServerProcessing:
         server = MechServer(server_config)
         server._load_tools()
         req = MechRequest(
-            request_id="r1", prompt="hello world", tool="echo",
+            request_id="r1",
+            prompt="hello world",
+            tool="echo",
         )
         await server._on_new_request(req)
         queued_req = await server._request_queue.get()
@@ -167,12 +175,15 @@ class TestMechServerProcessing:
 
     @pytest.mark.asyncio
     async def test_execute_and_cleanup_removes_from_dedup(
-        self, server_config,
+        self,
+        server_config,
     ):
         server = MechServer(server_config)
         server._load_tools()
         req = MechRequest(
-            request_id="r1", prompt="hello", tool="echo",
+            request_id="r1",
+            prompt="hello",
+            tool="echo",
         )
         await server._on_new_request(req)
         assert "r1" in server._queued_ids
@@ -208,7 +219,9 @@ class TestMechServerRun:
         async def inject_and_stop():
             await asyncio.sleep(0.2)
             req = MechRequest(
-                request_id="r1", prompt="hello", tool="echo",
+                request_id="r1",
+                prompt="hello",
+                tool="echo",
             )
             await server._on_new_request(req)
             await asyncio.sleep(0.5)
@@ -216,7 +229,8 @@ class TestMechServerRun:
 
         asyncio.create_task(inject_and_stop())
         await asyncio.wait_for(
-            server.run(with_http=False), timeout=5.0,
+            server.run(with_http=False),
+            timeout=5.0,
         )
         record = server.queue.get_by_id("r1")
         assert record is not None
@@ -233,7 +247,8 @@ class TestMechServerRun:
 
         asyncio.create_task(stop_soon())
         await asyncio.wait_for(
-            server.run(with_http=False), timeout=3.0,
+            server.run(with_http=False),
+            timeout=3.0,
         )
         assert server.registry.has("echo")
         server.shutdown()
@@ -243,7 +258,8 @@ class TestMultiChainServer:
     """Test multi-chain listener/delivery creation."""
 
     def test_multi_chain_creates_per_chain_components(
-        self, tmp_path,
+        self,
+        tmp_path,
     ):
         gnosis = CHAIN_DEFAULTS["gnosis"]
         base = CHAIN_DEFAULTS["base"]
@@ -298,6 +314,7 @@ class TestMultiChainServer:
 
     def test_get_status_includes_chains(self, tmp_path):
         from tests.conftest import make_test_config
+
         config = make_test_config()
         server = MechServer(config)
         status = server.get_status()

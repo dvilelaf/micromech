@@ -193,7 +193,7 @@ class TestCustomTools:
         )
         (tool_dir / "my_tool.py").write_text(
             'ALLOWED_TOOLS = ["my-custom"]\n'
-            'def run(**kwargs):\n'
+            "def run(**kwargs):\n"
             '    return kwargs.get("prompt", ""), None, None, None\n'
         )
         (tool_dir / "__init__.py").write_text("")
@@ -213,9 +213,7 @@ class TestCustomTools:
             "name: echo_clone\nversion: 1.0.0\nentry_point: echo_clone.py\n"
         )
         (tool_dir / "echo_clone.py").write_text(
-            'ALLOWED_TOOLS = ["echo"]\n'
-            'def run(**kwargs):\n'
-            '    return "custom", None, None, None\n'
+            'ALLOWED_TOOLS = ["echo"]\ndef run(**kwargs):\n    return "custom", None, None, None\n'
         )
         (tool_dir / "__init__.py").write_text("")
 
@@ -234,9 +232,7 @@ class TestCustomTools:
             "name: skipped_tool\nversion: 1.0.0\nentry_point: skipped_tool.py\n"
         )
         (tool_dir / "skipped_tool.py").write_text(
-            'ALLOWED_TOOLS = ["skip-me"]\n'
-            'def run(**kwargs):\n'
-            '    return "", None, None, None\n'
+            'ALLOWED_TOOLS = ["skip-me"]\ndef run(**kwargs):\n    return "", None, None, None\n'
         )
         (tool_dir / "__init__.py").write_text("")
 
@@ -252,9 +248,7 @@ class TestCustomTools:
             "name: custom_pkg\nversion: 0.2.0\nentry_point: custom_pkg.py\n"
         )
         (tool_dir / "custom_pkg.py").write_text(
-            'ALLOWED_TOOLS = ["custom-id"]\n'
-            'def run(**kwargs):\n'
-            '    return "", None, None, None\n'
+            'ALLOWED_TOOLS = ["custom-id"]\ndef run(**kwargs):\n    return "", None, None, None\n'
         )
         (tool_dir / "__init__.py").write_text("")
 
@@ -274,9 +268,9 @@ class TestCustomTools:
             "name: bad_tool\nversion: 1.0.0\nentry_point: bad_tool.py\n"
         )
         (tool_dir / "bad_tool.py").write_text(
-            'import nonexistent_library_xyz\n'
+            "import nonexistent_library_xyz\n"
             'ALLOWED_TOOLS = ["bad"]\n'
-            'def run(**kwargs):\n'
+            "def run(**kwargs):\n"
             '    return "", None, None, None\n'
         )
         (tool_dir / "__init__.py").write_text("")
@@ -292,10 +286,7 @@ class TestCustomTools:
         (tool_dir / "component.yaml").write_text(
             "name: no_run\nversion: 1.0.0\nentry_point: no_run.py\n"
         )
-        (tool_dir / "no_run.py").write_text(
-            'ALLOWED_TOOLS = ["no-run"]\n'
-            '# no run() function\n'
-        )
+        (tool_dir / "no_run.py").write_text('ALLOWED_TOOLS = ["no-run"]\n# no run() function\n')
         (tool_dir / "__init__.py").write_text("")
 
         reg = ToolRegistry()
