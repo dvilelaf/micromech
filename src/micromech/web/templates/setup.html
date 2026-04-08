@@ -139,6 +139,21 @@
         .balance-ok { color: var(--success); }
         .balance-waiting { color: var(--warning); }
 
+        /* Toggle switch */
+        .toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle .slider {
+            position: absolute; inset: 0; background: rgba(255,255,255,0.15);
+            border-radius: 22px; cursor: pointer; transition: background 0.2s;
+        }
+        .toggle .slider::before {
+            content: ''; position: absolute; width: 16px; height: 16px;
+            left: 3px; bottom: 3px; background: white; border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .toggle input:checked + .slider { background: var(--success); }
+        .toggle input:checked + .slider::before { transform: translateX(18px); }
+
         /* Chain selector */
         .chain-grid {
             display: grid;
@@ -777,9 +792,7 @@
                 toolToggles[pkg.name] = pkg.enabled;
                 const row = document.createElement('div');
                 row.className = 'balance-row';
-                row.style.cursor = 'pointer';
-                row.dataset.tool = pkg.name;
-                row.onclick = () => toggleTool(pkg.name);
+                row.style.alignItems = 'center';
 
                 const left = document.createElement('span');
                 const toolIds = (pkg.tools || []).join(', ');
@@ -792,13 +805,20 @@
                     left.appendChild(ver);
                 }
 
-                const right = document.createElement('span');
-                right.className = 'tool-status';
-                right.style.color = pkg.enabled ? 'var(--success)' : 'var(--text-muted)';
-                right.textContent = pkg.enabled ? 'enabled' : 'disabled';
+                const toggle = document.createElement('label');
+                toggle.className = 'toggle';
+                const input = document.createElement('input');
+                input.type = 'checkbox';
+                input.checked = pkg.enabled;
+                input.dataset.tool = pkg.name;
+                input.onchange = () => toggleTool(pkg.name);
+                const slider = document.createElement('span');
+                slider.className = 'slider';
+                toggle.appendChild(input);
+                toggle.appendChild(slider);
 
                 row.appendChild(left);
-                row.appendChild(right);
+                row.appendChild(toggle);
                 container.appendChild(row);
             });
         } catch (e) {
@@ -807,14 +827,8 @@
     }
 
     function toggleTool(name) {
-        toolToggles[name] = !toolToggles[name];
-        const row = document.querySelector(`[data-tool="${name}"]`);
-        if (row) {
-            const status = row.querySelector('.tool-status');
-            status.style.color = toolToggles[name] ? 'var(--success)' : 'var(--text-muted)';
-            status.textContent = toolToggles[name] ? 'enabled' : 'disabled';
-        }
-        // Must have at least 1 tool enabled
+        const input = document.querySelector(`input[data-tool="${name}"]`);
+        toolToggles[name] = input ? input.checked : !toolToggles[name];
         const anyEnabled = Object.values(toolToggles).some(v => v);
         document.getElementById('btn-deploy').disabled = !anyEnabled;
     }
