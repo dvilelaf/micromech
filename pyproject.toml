@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "micromech"
-version = "0.0.2"
+version = "0.0.3"
 description = "Lightweight OLAS mech runtime"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -72,8 +72,6 @@ micromech = "micromech.cli:app"
 [tool.hatch.build.targets.wheel]
 packages = ["src/micromech"]
 
-[tool.hatch.build.targets.wheel.force-include]
-"src/micromech/web/templates" = "micromech/web/templates"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
