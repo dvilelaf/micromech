@@ -306,8 +306,12 @@ def _deploy_mech_for_chain(
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def anvil_chain():
-    """Connect to the first available Anvil fork — fresh snapshot per test."""
+def anvil_chain(_anvil_forks):
+    """Connect to the first available Anvil fork — fresh snapshot per test.
+
+    Anvil forks are auto-started by the session-scoped ``_anvil_forks``
+    fixture in conftest.py.
+    """
     for chain_name in ("gnosis", "base"):
         w3 = _connect(chain_name)
         if w3 is not None:

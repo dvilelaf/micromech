@@ -78,6 +78,9 @@ packages = ["src/micromech"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "timeout: mark test with a timeout in seconds",
+]
 
 [tool.ruff]
 line-length = 100

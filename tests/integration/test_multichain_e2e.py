@@ -239,10 +239,11 @@ def _olas_balance(w3: Web3, chain_name: str, account: str) -> int:
 # --- Fixtures ---
 
 @pytest.fixture
-def available_chains() -> dict[str, Web3]:
+def available_chains(_anvil_forks) -> dict[str, Web3]:
     """Connect to all available Anvil forks. Requires >= 2.
 
-    Per-test fixture with snapshot/revert for isolation.
+    Anvil forks are auto-started by the session-scoped ``_anvil_forks``
+    fixture in conftest.py.  Per-test snapshot/revert for isolation.
     """
     connected: dict[str, Web3] = {}
     snapshots: dict[str, str] = {}
@@ -254,10 +255,11 @@ def available_chains() -> dict[str, Web3]:
             _fund_native(w3, rich)
             connected[chain_name] = w3
             print(f"  {chain_name}: chain_id={w3.eth.chain_id}, block={w3.eth.block_number}")
-    assert len(connected) >= 2, (
-        f"Need >=2 Anvil forks, got {len(connected)}: {list(connected)}. "
-        f"Start with: just anvil-fork gnosis,base"
-    )
+    if len(connected) < 2:
+        pytest.skip(
+            f"Need >=2 Anvil forks, got {len(connected)}: {list(connected)}. "
+            f"Check secrets.env has >=2 chain RPCs."
+        )
 
     yield connected
 

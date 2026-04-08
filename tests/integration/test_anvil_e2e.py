@@ -75,15 +75,25 @@ def _load_abi(name: str) -> list:
 
 
 @pytest.fixture
-def w3():
+def w3(_anvil_forks):
     """Connect to Anvil fork of Gnosis — fresh snapshot per test.
 
-    Each test gets an isolated on-chain state via evm_snapshot/revert,
-    so tests never pollute each other.
+    Anvil is auto-started by the session-scoped ``_anvil_forks`` fixture
+    in conftest.py.  Each test gets isolated on-chain state via
+    evm_snapshot/revert, so tests never pollute each other.
     """
     w3 = Web3(Web3.HTTPProvider(ANVIL_URL, request_kwargs={"timeout": 30}))
     if not w3.is_connected():
-        pytest.skip("Anvil not running on " + ANVIL_URL)
+        pytest.fail("Anvil not running on " + ANVIL_URL + " (auto-start failed?)")
+
+    # Gnosis uses PoA — extra-data field is >32 bytes, which trips web3.py
+    try:
+        from web3.middleware import ExtraDataToPOAMiddleware
+        w3.middleware_onion.inject(ExtraDataToPOAMiddleware, layer=0)
+    except ImportError:
+        from web3.middleware import ExtraDataLengthMiddleware
+        w3.middleware_onion.inject(ExtraDataLengthMiddleware, layer=0)
+
     chain = w3.eth.chain_id
     assert chain == 100, f"Expected Gnosis (100), got {chain}"
 
