@@ -348,33 +348,46 @@ release-check:
     #!/usr/bin/env bash
     set -e
 
+    VERSION=$(grep -m1 'version = ' pyproject.toml | cut -d '"' -f2)
+    TAG="v$VERSION"
+
     echo "Running security checks..."
     just security
     echo "Running quality checks..."
     just check
     echo "Running tests..."
     just test-unit
+    echo "Building package..."
+    just build
 
     echo "Validating git state..."
     just _validate-git-state
-    echo "Validating release tag..."
-    just _validate-tag-at-head
 
-    VERSION=$(grep -m1 'version = ' pyproject.toml | cut -d '"' -f2)
-    echo "All checks passed! Ready to publish v$VERSION."
+    # Check tag doesn't already exist (tag is created by `just release`)
+    if git rev-parse "$TAG" >/dev/null 2>&1; then
+        echo "Error: Tag $TAG already exists!"
+        echo "  If you need to recreate it: git tag -d $TAG && git push origin :refs/tags/$TAG"
+        exit 1
+    fi
 
-# Create a new release tag
-release version:
+    echo "All checks passed! Ready to release $TAG."
+
+# Run checks, create and push release tag
+release: release-check
     #!/usr/bin/env bash
     set -e
-    TAG="v{{version}}"
-    echo "Creating tag $TAG..."
-    git tag "$TAG"
-    git push origin "$TAG"
-    echo "Tag $TAG pushed."
 
-# Build and publish docker image (run release-check first)
-publish: release-check
+    VERSION=$(grep -m1 'version = ' pyproject.toml | cut -d '"' -f2)
+    TAG="v$VERSION"
+
+    echo "Creating and pushing tag $TAG..."
+    git tag -a "$TAG" -m "Release $TAG"
+    git push origin main
+    git push origin "$TAG"
+    echo "Release $TAG created and pushed!"
+
+# Build and publish docker image (requires tag at HEAD)
+publish: _validate-git-state _validate-tag-at-head
     #!/usr/bin/env bash
     set -e
 
