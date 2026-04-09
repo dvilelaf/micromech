@@ -727,8 +727,8 @@ class TestMetadataUpdateOnChain:
         assert onchain_hash_hex.startswith("0x")
         # Convert hex to bytes32
         onchain_hash_bytes = bytes.fromhex(onchain_hash_hex[2:])
-        assert len(onchain_hash_bytes) == 34, (
-            f"Expected 34 bytes (multihash), got {len(onchain_hash_bytes)}"
+        assert len(onchain_hash_bytes) == 32, (
+            f"Expected 32 bytes (bytes32 digest), got {len(onchain_hash_bytes)}"
         )
         print(f"  On-chain hash: {onchain_hash_hex[:20]}...")
 
@@ -760,10 +760,10 @@ class TestMetadataUpdateOnChain:
         )
         svc_owner = svc_registry.functions.ownerOf(MECH_SERVICE_ID).call()
 
-        # changeHash takes (serviceId, bytes32 hash)
-        # The multihash is 34 bytes but the contract expects bytes32 (32 bytes).
-        # Pad/truncate to 32 bytes (drop the first 2 bytes of multihash prefix 0x1220).
-        hash_bytes32 = onchain_hash_bytes[2:]  # strip 0x12 0x20 prefix -> 32 bytes sha256
+        # changeHash takes (serviceId, bytes32 hash).
+        # compute_onchain_hash() already strips the 0x1220 multihash prefix
+        # and returns a 32-byte sha256 digest.
+        hash_bytes32 = onchain_hash_bytes
         assert len(hash_bytes32) == 32
 
         # Try both multisig and owner as potential callers
