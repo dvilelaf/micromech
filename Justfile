@@ -336,7 +336,7 @@ _validate-tag-at-head:
         exit 1
     fi
 
-    TAG_COMMIT=$(git rev-parse "$TAG")
+    TAG_COMMIT=$(git rev-parse "$TAG^{}")
     HEAD_COMMIT=$(git rev-parse HEAD)
     if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
         echo "Error: Tag $TAG is not at HEAD"
