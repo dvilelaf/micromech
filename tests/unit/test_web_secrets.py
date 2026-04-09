@@ -3,9 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from micromech.web.app import create_web_app, get_auth_token
-
-AUTH_TOKEN = get_auth_token()
+from micromech.web.app import create_web_app
 
 
 @pytest.fixture
@@ -31,14 +29,9 @@ def client(tmp_path, monkeypatch):
 
 
 class TestGetSecrets:
-    def test_requires_auth(self, client):
-        c, _ = client
-        res = c.get("/api/setup/secrets")
-        assert res.status_code in (401, 403, 200)  # depends on auth middleware
-
     def test_returns_editable_keys(self, client):
         c, _ = client
-        res = c.get("/api/setup/secrets", headers={"X-Auth-Token": AUTH_TOKEN})
+        res = c.get("/api/setup/secrets")
         assert res.status_code == 200
         data = res.json()
         assert "telegram_token" in data
@@ -46,21 +39,21 @@ class TestGetSecrets:
 
     def test_masks_sensitive_values(self, client):
         c, _ = client
-        res = c.get("/api/setup/secrets", headers={"X-Auth-Token": AUTH_TOKEN})
+        res = c.get("/api/setup/secrets")
         data = res.json()
         # telegram_token is sensitive and set → should be masked
         assert data["telegram_token"] == "***"
 
     def test_returns_empty_string_for_unset_keys(self, client):
         c, _ = client
-        res = c.get("/api/setup/secrets", headers={"X-Auth-Token": AUTH_TOKEN})
+        res = c.get("/api/setup/secrets")
         data = res.json()
         # telegram_chat_id not in our test secrets.env
         assert data.get("telegram_chat_id") == ""
 
     def test_does_not_expose_wallet_password(self, client):
         c, _ = client
-        res = c.get("/api/setup/secrets", headers={"X-Auth-Token": AUTH_TOKEN})
+        res = c.get("/api/setup/secrets")
         data = res.json()
         assert "wallet_password" not in data
 
@@ -70,7 +63,7 @@ class TestPostSecrets:
         c, secrets_path = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
+            headers={"Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
             json={"telegram_token": "newtoken", "telegram_chat_id": "99999"},
         )
         assert res.status_code == 200
@@ -82,7 +75,7 @@ class TestPostSecrets:
         c, secrets_path = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
+            headers={"Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
             json={"gnosis_rpc": "https://custom-rpc.example.com"},
         )
         assert res.status_code == 200
@@ -92,7 +85,7 @@ class TestPostSecrets:
         c, secrets_path = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
+            headers={"Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
             json={"telegram_token": "***"},  # masked — should be ignored
         )
         assert res.status_code == 200
@@ -103,7 +96,7 @@ class TestPostSecrets:
         c, secrets_path = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
+            headers={"Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
             json={"wallet_password": "hacked", "some_random_key": "value"},
         )
         assert res.status_code == 200
@@ -117,7 +110,7 @@ class TestPostSecrets:
         c, _ = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
+            headers={"Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
             json={"gnosis_rpc": "https://example.com", "telegram_chat_id": "12345"},
         )
         data = res.json()
@@ -128,7 +121,7 @@ class TestPostSecrets:
         c, _ = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json"},
+            headers={"Content-Type": "application/json"},
             # No X-Micromech-Action header
             json={"gnosis_rpc": "https://example.com"},
         )
@@ -138,7 +131,7 @@ class TestPostSecrets:
         c, secrets_path = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
+            headers={"Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
             json={"gnosis_rpc": "https://evil.com\nwallet_password=pwned"},
         )
         assert res.status_code == 400
@@ -148,7 +141,7 @@ class TestPostSecrets:
         c, secrets_path = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
+            headers={"Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
             json={"gnosis_rpc": None},
         )
         assert res.status_code == 400
@@ -158,7 +151,7 @@ class TestPostSecrets:
         c, secrets_path = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
+            headers={"Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
             json={"gnosis_rpc": False},
         )
         assert res.status_code == 400
@@ -167,7 +160,7 @@ class TestPostSecrets:
         c, secrets_path = client
         res = c.post(
             "/api/setup/secrets",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
+            headers={"Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
             json={"gnosis_rpc": 12345},
         )
         assert res.status_code == 400

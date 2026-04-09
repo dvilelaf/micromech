@@ -6,7 +6,6 @@ import logging
 import os
 import queue as stdlib_queue
 import re
-import secrets
 import threading
 import time
 from collections import defaultdict
@@ -31,13 +30,6 @@ STATIC_DIR = Path(__file__).parent / "static"
 # CSRF header required on state-changing endpoints (browsers won't send
 # this in simple cross-origin requests)
 CSRF_HEADER = "X-Micromech-Action"
-
-# --- Auth token ---
-# Generated once at startup, printed to the console. Required on all
-# state-changing endpoints via X-Auth-Token header (or ?token= query param
-# for SSE streams). Read-only GET endpoints (status, health, metrics) are
-# open so monitoring tools work without auth.
-_AUTH_TOKEN: str = os.environ.get("MICROMECH_AUTH_TOKEN", "") or secrets.token_urlsafe(32)
 
 # --- Simple rate limiter ---
 _RATE_LIMITS: dict[str, tuple[int, int]] = {
@@ -163,27 +155,6 @@ def _get_client_ip(request: Request) -> str:
     return "unknown"
 
 
-def _check_auth(request: Request, *, allow_query_param: bool = False) -> Optional[JSONResponse]:
-    """Validate auth token from header or (GET-only) query param.
-
-    Query-param tokens appear in server logs and proxy history, so they are
-    only accepted for GET requests (e.g. SSE streams, setup page HTML) when
-    ``allow_query_param=True``.  POST/mutating endpoints must send the token
-    in the ``X-Auth-Token`` header.
-    """
-    token = request.headers.get("X-Auth-Token")
-    if not token and allow_query_param:
-        token = request.query_params.get("token")
-    if not token or not secrets.compare_digest(token, _AUTH_TOKEN):
-        return JSONResponse({"error": "Invalid or missing auth token"}, 401)
-    return None
-
-
-def get_auth_token() -> str:
-    """Return the current auth token (for CLI to display)."""
-    return _AUTH_TOKEN
-
-
 _setup_needed: Optional[bool] = None
 
 # Deploy concurrency guard — per-chain locks allow parallel multi-chain deploy
@@ -284,49 +255,19 @@ def create_web_app(
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):
         if _needs_setup():
-            # Preserve auth token in redirect
-            token = request.query_params.get("token", "")
-            url = f"/setup?token={token}" if token else "/setup"
-            return RedirectResponse(url=url, status_code=302)
-        # Auth: token can be passed as ?token= for initial access
-        token = request.query_params.get("token", "")
-        if not (token and secrets.compare_digest(token, _AUTH_TOKEN)):
-            if _check_auth(request) is not None:
-                return HTMLResponse(
-                    "<html><body style='font-family:sans-serif;text-align:center;padding:4em'>"
-                    "<h2>micromech</h2>"
-                    "<p>Access this page with <code>?token=YOUR_AUTH_TOKEN</code></p>"
-                    "<p style='color:#666'>The auth token is printed in the server console at startup.</p>"
-                    "</body></html>",
-                    status_code=401,
-                )
+            return RedirectResponse(url="/setup", status_code=302)
         return templates.TemplateResponse(
             request=request,
             name="dashboard.html",
-            context={"auth_token": _AUTH_TOKEN},
+            context={},
         )
 
     @app.get("/setup", response_class=HTMLResponse)
     async def setup_page(request: Request) -> HTMLResponse:
-        # Auth check: token can be passed as ?token= query param for initial access
-        token = request.query_params.get("token")
-        if token and secrets.compare_digest(token, _AUTH_TOKEN):
-            # Valid token in URL — serve the page
-            pass
-        elif _check_auth(request) is not None:
-            # No valid auth — show a minimal login prompt instead of leaking the token
-            return HTMLResponse(
-                "<html><body style='font-family:sans-serif;text-align:center;padding:4em'>"
-                "<h2>micromech setup</h2>"
-                "<p>Access this page with <code>?token=YOUR_AUTH_TOKEN</code></p>"
-                "<p style='color:#666'>The auth token is printed in the server console at startup.</p>"
-                "</body></html>",
-                status_code=401,
-            )
         return templates.TemplateResponse(
             request=request,
             name="setup.html",
-            context={"auth_token": _AUTH_TOKEN},
+            context={},
         )
 
     # --- Setup API ---
@@ -334,7 +275,6 @@ def create_web_app(
     @app.get("/api/setup/state")
     async def setup_state(request: Request) -> dict:
         """Get current setup state."""
-        authenticated = _check_auth(request) is None
         wallet_exists = False
         wallet_address = None
         needs_password = False
@@ -396,7 +336,7 @@ def create_web_app(
         else:
             step = "complete"
 
-        result = {
+        return {
             "wallet_exists": wallet_exists,
             "wallet_address": wallet_address,
             "needs_password": needs_password,
@@ -405,15 +345,6 @@ def create_web_app(
             "chains": chains_deployed,
             "step": step,
         }
-
-        # Strip sensitive addresses when not authenticated
-        if not authenticated:
-            result["wallet_address"] = None
-            for chain_data in result["chains"].values():
-                chain_data.pop("mech_address", None)
-                chain_data.pop("multisig_address", None)
-
-        return result
 
     @app.post("/api/setup/wallet")
     async def setup_wallet(
@@ -425,9 +356,6 @@ def create_web_app(
         If no wallet exists, creates a new one and returns address + mnemonic.
         If wallet exists but locked, unlocks it and returns address.
         """
-        auth_err = _check_auth(request)
-        if auth_err:
-            return auth_err
         if not x_micromech_action:
             return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
         if _rate_limited("/api/setup/wallet", _get_client_ip(request)):
@@ -512,9 +440,6 @@ def create_web_app(
     @app.get("/api/setup/secrets")
     async def get_secrets(request: Request) -> dict:
         """Return editable secrets (sensitive values masked)."""
-        auth_err = _check_auth(request, allow_query_param=True)
-        if auth_err:
-            return auth_err
         if _rate_limited("/api/setup/secrets/get", _get_client_ip(request)):
             return JSONResponse({"error": "Too many requests. Try again later."}, 429)
         try:
@@ -536,9 +461,6 @@ def create_web_app(
         x_micromech_action: Optional[str] = Header(None),
     ) -> dict:
         """Write editable secrets to secrets.env."""
-        auth_err = _check_auth(request)
-        if auth_err:
-            return auth_err
         if not x_micromech_action:
             return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
         if _rate_limited("/api/setup/secrets/post", _get_client_ip(request)):
@@ -598,9 +520,6 @@ def create_web_app(
         Requires X-Micromech-Action header (CSRF protection).
         Only one deploy at a time (concurrency guard).
         """
-        auth_err = _check_auth(request)
-        if auth_err:
-            return auth_err
         if not x_micromech_action:
             return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
 
@@ -753,9 +672,6 @@ def create_web_app(
     @app.post("/api/setup/tools")
     async def api_setup_tools_save(request: Request):
         """Save which tools are enabled/disabled."""
-        auth_err = _check_auth(request)
-        if auth_err:
-            return auth_err
         csrf = request.headers.get(CSRF_HEADER)
         if not csrf:
             return JSONResponse({"error": f"Missing {CSRF_HEADER} header"}, 403)
@@ -783,9 +699,6 @@ def create_web_app(
         Must be called AFTER saving disabled_tools via POST /api/setup/tools.
         Returns the new list of active tool IDs.
         """
-        auth_err = _check_auth(request)
-        if auth_err:
-            return auth_err
         csrf = request.headers.get(CSRF_HEADER)
         if not csrf:
             return JSONResponse({"error": f"Missing {CSRF_HEADER} header"}, 403)
@@ -851,10 +764,6 @@ def create_web_app(
         """Publish tool metadata to IPFS + update on-chain hash (SSE stream)."""
         if not metadata_manager:
             return JSONResponse({"error": "Metadata manager not configured"}, 501)
-
-        auth_err = _check_auth(request)
-        if auth_err:
-            return auth_err
 
         csrf = request.headers.get(CSRF_HEADER)
         if not csrf:
@@ -993,13 +902,8 @@ def create_web_app(
     async def metrics_stream(request: Request) -> StreamingResponse:
         """Server-Sent Events stream for real-time dashboard updates.
 
-        Requires auth via ?token= query param (SSE can't set headers).
         Limited to _MAX_SSE_CONNECTIONS concurrent streams.
         """
-        auth_err = _check_auth(request, allow_query_param=True)
-        if auth_err:
-            return auth_err
-
         sem = _get_sse_semaphore()
         # Acquire eagerly (before returning StreamingResponse) to avoid TOCTOU
         try:
@@ -1215,9 +1119,6 @@ def create_web_app(
         x_micromech_action: Optional[str] = Header(None),
     ) -> dict:
         """Start, stop, or restart the mech runtime."""
-        auth_err = _check_auth(request)
-        if auth_err:
-            return auth_err
         if not x_micromech_action:
             return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
         if action not in _RUNTIME_ACTIONS:
@@ -1245,9 +1146,6 @@ def create_web_app(
 
         Requires X-Micromech-Action header (CSRF protection).
         """
-        auth_err = _check_auth(request)
-        if auth_err:
-            return auth_err
         if not x_micromech_action:
             return JSONResponse(
                 {"success": False, "error": "Missing X-Micromech-Action header"},
@@ -1313,10 +1211,6 @@ def create_web_app(
     @app.get("/api/logs/stream")
     async def logs_stream(request: Request) -> StreamingResponse:
         """SSE stream of real-time loguru output."""
-        auth_err = _check_auth(request, allow_query_param=True)
-        if auth_err:
-            return auth_err
-
         if len(_log_queues) >= _MAX_SSE_CONNECTIONS:
             return JSONResponse(
                 {"error": "Too many log connections"},

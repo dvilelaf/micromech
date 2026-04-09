@@ -279,6 +279,7 @@ def config(
 def run(
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
     no_http: bool = typer.Option(False, "--no-http", help="Disable HTTP server"),
+    host: str = typer.Option("127.0.0.1", "--host", help="HTTP server bind address"),
 ) -> None:
     """Run the mech server (listener + executor + delivery + HTTP)."""
     cfg = _load_config(config_path)
@@ -289,7 +290,7 @@ def run(
 
     bridges = create_bridges(cfg)
 
-    server = MechServer(cfg, bridges=bridges)
+    server = MechServer(cfg, bridges=bridges, host=host)
 
     async def _run_all():
         """Run server + optionally Telegram bot."""
@@ -524,10 +525,7 @@ def web(
             else:
                 logger.warning("Runtime auto-start failed: {}", mgr.error)
 
-    from micromech.web.app import get_auth_token
-
-    token = get_auth_token()
-    typer.echo(f"\n  Dashboard: http://{host}:{port}?token={token}\n")
+    typer.echo(f"\n  Dashboard: http://{host}:{port}\n")
     uvicorn.run(web_app, host=host, port=port)
 
 

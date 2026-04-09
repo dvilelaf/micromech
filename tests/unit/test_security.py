@@ -1,4 +1,4 @@
-"""Tests for security hardening code (auth, rate limiting, headers, CSP, etc.)."""
+"""Tests for security hardening code (rate limiting, headers, CSP, etc.)."""
 
 import time
 from unittest.mock import MagicMock, patch
@@ -10,16 +10,13 @@ from micromech.runtime.delivery import TX_RECEIPT_TIMEOUT, DeliveryManager
 from micromech.runtime.http import create_app as create_http_app
 from micromech.web.app import (
     _MAX_TRACKED_IPS,
-    _check_auth,
     _rate_counters,
     _rate_limited,
     create_web_app,
-    get_auth_token,
 )
 from tests.conftest import make_test_config
 
-AUTH_TOKEN = get_auth_token()
-AUTH_HEADERS = {"X-Auth-Token": AUTH_TOKEN, "X-Micromech-Action": "test"}
+CSRF_HEADERS = {"X-Micromech-Action": "test"}
 
 
 # --- Fixtures ---
@@ -54,61 +51,6 @@ def _clear_rate_counters():
     _rate_counters.clear()
     yield
     _rate_counters.clear()
-
-
-# ============================================================
-# Auth Token
-# ============================================================
-
-
-class TestAuthToken:
-    def test_get_auth_token_returns_nonempty_string(self):
-        token = get_auth_token()
-        assert isinstance(token, str)
-        assert len(token) > 16
-
-    def test_get_auth_token_stable_within_process(self):
-        assert get_auth_token() == get_auth_token()
-
-    def test_check_auth_valid_header(self):
-        request = MagicMock()
-        request.headers = {"X-Auth-Token": AUTH_TOKEN}
-        request.query_params = {}
-        result = _check_auth(request)
-        assert result is None  # no error
-
-    def test_check_auth_valid_query_param_with_flag(self):
-        """Query param auth accepted when allow_query_param=True (e.g. SSE streams)."""
-        request = MagicMock()
-        request.headers = {}
-        request.query_params = {"token": AUTH_TOKEN}
-        result = _check_auth(request, allow_query_param=True)
-        assert result is None
-
-    def test_check_auth_query_param_rejected_by_default(self):
-        """Query param auth rejected by default (prevents token leakage in POST logs)."""
-        request = MagicMock()
-        request.headers = {}
-        request.query_params = {"token": AUTH_TOKEN}
-        result = _check_auth(request)
-        assert result is not None
-        assert result.status_code == 401
-
-    def test_check_auth_missing_token(self):
-        request = MagicMock()
-        request.headers = {}
-        request.query_params = {}
-        result = _check_auth(request)
-        assert result is not None
-        assert result.status_code == 401
-
-    def test_check_auth_wrong_token(self):
-        request = MagicMock()
-        request.headers = {"X-Auth-Token": "wrong-token-value"}
-        request.query_params = {}
-        result = _check_auth(request)
-        assert result is not None
-        assert result.status_code == 401
 
 
 # ============================================================
@@ -179,62 +121,41 @@ class TestSecurityHeaders:
     def test_headers_present_on_post(self, web_client: TestClient):
         resp = web_client.post(
             "/api/runtime/start",
-            headers=AUTH_HEADERS,
+            headers=CSRF_HEADERS,
         )
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
 
 
 # ============================================================
-# Web App Auth Enforcement
+# Web App CSRF Enforcement
 # ============================================================
 
 
-class TestWebAppAuthEnforcement:
-    def test_setup_wallet_requires_auth(self, web_client: TestClient):
-        resp = web_client.post(
-            "/api/setup/wallet",
-            json={"password": "testpassword"},
-            headers={"X-Micromech-Action": "wallet"},
-        )
-        assert resp.status_code == 401
-
+class TestWebAppCsrfEnforcement:
     def test_setup_wallet_requires_csrf(self, web_client: TestClient):
         resp = web_client.post(
             "/api/setup/wallet",
             json={"password": "testpassword"},
-            headers={"X-Auth-Token": AUTH_TOKEN},
         )
         assert resp.status_code == 403
 
-    def test_setup_deploy_requires_auth(self, web_client: TestClient):
+    def test_setup_deploy_requires_csrf(self, web_client: TestClient):
         resp = web_client.post(
             "/api/setup/deploy",
             json={"chain": "gnosis"},
-            headers={"X-Micromech-Action": "deploy"},
-        )
-        assert resp.status_code == 401
-
-    def test_runtime_control_requires_auth(self, web_client: TestClient):
-        resp = web_client.post(
-            "/api/runtime/start",
-            headers={"X-Micromech-Action": "start"},
-        )
-        assert resp.status_code == 401
-
-    def test_runtime_control_requires_csrf(self, web_client: TestClient):
-        resp = web_client.post(
-            "/api/runtime/start",
-            headers={"X-Auth-Token": AUTH_TOKEN},
         )
         assert resp.status_code == 403
 
-    def test_management_requires_auth(self, web_client: TestClient):
+    def test_runtime_control_requires_csrf(self, web_client: TestClient):
+        resp = web_client.post("/api/runtime/start")
+        assert resp.status_code == 403
+
+    def test_management_requires_csrf(self, web_client: TestClient):
         resp = web_client.post(
             "/api/management/stake",
             json={"service_key": "svc-1"},
-            headers={"X-Micromech-Action": "test"},
         )
-        assert resp.status_code == 401
+        assert resp.status_code == 403
 
     def test_setup_wallet_rate_limited(self, web_client: TestClient):
         """After 10 attempts, wallet endpoint returns 429."""
@@ -242,43 +163,26 @@ class TestWebAppAuthEnforcement:
             web_client.post(
                 "/api/setup/wallet",
                 json={"password": "testpassword"},
-                headers=AUTH_HEADERS,
+                headers=CSRF_HEADERS,
             )
         resp = web_client.post(
             "/api/setup/wallet",
             json={"password": "testpassword"},
-            headers=AUTH_HEADERS,
+            headers=CSRF_HEADERS,
         )
         assert resp.status_code == 429
 
 
 # ============================================================
-# HTTP App Auth Enforcement
+# HTTP App CSRF Enforcement
 # ============================================================
 
 
-class TestHttpAppAuthEnforcement:
-    def test_request_rejects_no_auth(self, http_client: TestClient):
-        resp = http_client.post(
-            "/request",
-            json={"prompt": "test"},
-            headers={"X-Micromech-Action": "test"},
-        )
-        assert resp.status_code == 401
-
-    def test_request_rejects_wrong_auth(self, http_client: TestClient):
-        resp = http_client.post(
-            "/request",
-            json={"prompt": "test"},
-            headers={"X-Auth-Token": "bad", "X-Micromech-Action": "test"},
-        )
-        assert resp.status_code == 401
-
+class TestHttpAppCsrfEnforcement:
     def test_request_rejects_no_csrf(self, http_client: TestClient):
         resp = http_client.post(
             "/request",
             json={"prompt": "test"},
-            headers={"X-Auth-Token": AUTH_TOKEN},
         )
         assert resp.status_code == 403
 
@@ -545,18 +449,13 @@ class TestToolExtraParamsInjection:
 
 
 # ============================================================
-# SSE Stream: auth + connection limit
+# SSE Stream: connection limit
 # ============================================================
 
 
 class TestSSEStream:
-    def test_sse_requires_auth(self, web_client: TestClient):
-        """SSE stream without auth token returns 401."""
-        resp = web_client.get("/api/metrics/stream")
-        assert resp.status_code == 401
-
-    def test_sse_route_exists_with_auth(self, web_client: TestClient):
-        """SSE endpoint is registered and requires auth."""
+    def test_sse_route_exists(self, web_client: TestClient):
+        """SSE endpoint is registered."""
         routes = [r.path for r in web_client.app.routes]
         assert "/api/metrics/stream" in routes
 
@@ -619,7 +518,7 @@ class TestSignatureValidation:
         resp = http_client.post(
             "/request",
             json={"prompt": "test", "signature": "0xdeadbeef"},
-            headers=AUTH_HEADERS,
+            headers=CSRF_HEADERS,
         )
         assert resp.status_code == 202
 
@@ -627,7 +526,7 @@ class TestSignatureValidation:
         resp = http_client.post(
             "/request",
             json={"prompt": "test", "signature": "abcdef0123"},
-            headers=AUTH_HEADERS,
+            headers=CSRF_HEADERS,
         )
         assert resp.status_code == 202
 
@@ -635,7 +534,7 @@ class TestSignatureValidation:
         resp = http_client.post(
             "/request",
             json={"prompt": "test", "signature": None},
-            headers=AUTH_HEADERS,
+            headers=CSRF_HEADERS,
         )
         assert resp.status_code == 202
 
@@ -643,7 +542,7 @@ class TestSignatureValidation:
         resp = http_client.post(
             "/request",
             json={"prompt": "test", "signature": "not-hex!@#"},
-            headers=AUTH_HEADERS,
+            headers=CSRF_HEADERS,
         )
         assert resp.status_code == 422
 
@@ -651,7 +550,7 @@ class TestSignatureValidation:
         resp = http_client.post(
             "/request",
             json={"prompt": "test", "signature": ""},
-            headers=AUTH_HEADERS,
+            headers=CSRF_HEADERS,
         )
         assert resp.status_code == 202
 
@@ -712,55 +611,24 @@ class TestNoDirectWeb3:
 
 
 # ============================================================
-# Dashboard/Setup Page Auth Protection
+# Dashboard/Setup Page Access (no auth required)
 # ============================================================
 
 
-class TestPageAuth:
-    """Verify that dashboard and setup pages require auth."""
+class TestPageAccess:
+    """Verify that dashboard and setup pages are accessible without auth."""
 
-    def test_dashboard_requires_auth(self, web_client: TestClient):
-        """Dashboard without token returns 401, not the full page with token."""
-        resp = web_client.get("/", follow_redirects=False)
-        # Either redirects to /setup (needs setup) or returns 401 (needs auth)
-        assert resp.status_code in (302, 401)
-        if resp.status_code == 401:
-            assert "token" not in resp.text or AUTH_TOKEN not in resp.text
-
-    def test_setup_requires_auth(self, web_client: TestClient):
-        """Setup page without token returns 401."""
+    def test_setup_page_accessible(self, web_client: TestClient):
+        """Setup page renders without auth."""
         resp = web_client.get("/setup")
-        assert resp.status_code == 401
-        assert AUTH_TOKEN not in resp.text
-
-    def test_setup_with_token_query_param(self, web_client: TestClient):
-        """Setup page with valid ?token= grants access."""
-        resp = web_client.get(f"/setup?token={AUTH_TOKEN}")
         assert resp.status_code == 200
 
-    def test_setup_with_wrong_token(self, web_client: TestClient):
-        """Setup page with invalid token returns 401."""
-        resp = web_client.get("/setup?token=wrong-token-xyz")
-        assert resp.status_code == 401
-
-    def test_redirect_to_setup_preserves_token(self, web_client: TestClient):
-        """When / redirects to /setup, auth token is preserved in URL."""
-        with patch("micromech.web.app._needs_setup", return_value=True):
-            resp = web_client.get(
-                f"/?token={AUTH_TOKEN}",
-                follow_redirects=False,
-            )
-            assert resp.status_code == 302
-            location = resp.headers["location"]
-            assert f"token={AUTH_TOKEN}" in location
-
-    def test_redirect_to_setup_no_token_no_leak(self, web_client: TestClient):
-        """When / redirects to /setup without token, no token in URL."""
+    def test_redirect_to_setup_when_needed(self, web_client: TestClient):
+        """When / needs setup, it redirects to /setup."""
         with patch("micromech.web.app._needs_setup", return_value=True):
             resp = web_client.get("/", follow_redirects=False)
             assert resp.status_code == 302
-            location = resp.headers["location"]
-            assert AUTH_TOKEN not in location
+            assert resp.headers["location"] == "/setup"
 
 
 # ============================================================
@@ -771,10 +639,6 @@ class TestPageAuth:
 class TestLogStreamLimit:
     """Verify log stream has connection limits."""
 
-    def test_log_stream_requires_auth(self, web_client: TestClient):
-        resp = web_client.get("/api/logs/stream")
-        assert resp.status_code == 401
-
     def test_log_stream_limit_enforced(self, web_client: TestClient):
         """Stuffing _log_queues to capacity should return 429."""
         import micromech.web.app as web_mod
@@ -782,10 +646,7 @@ class TestLogStreamLimit:
         original_max = web_mod._MAX_SSE_CONNECTIONS
         web_mod._MAX_SSE_CONNECTIONS = 0  # No connections allowed
         try:
-            resp = web_client.get(f"/api/logs/stream?token={AUTH_TOKEN}")
-            # When max is 0, any connection should be rejected
-            # But _log_queues is inside create_web_app closure
-            # At minimum, auth should pass
+            resp = web_client.get("/api/logs/stream")
             assert resp.status_code in (200, 429)
         finally:
             web_mod._MAX_SSE_CONNECTIONS = original_max

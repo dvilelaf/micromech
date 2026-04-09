@@ -43,9 +43,11 @@ class MechServer:
         self,
         config: MicromechConfig,
         bridges: Optional[dict[str, Any]] = None,
+        host: str = DEFAULT_HOST,
     ):
         self.config = config
         self.bridges = bridges or {}
+        self.host = host
 
         # Shared components
         self.queue = PersistentQueue(DB_PATH)
@@ -334,7 +336,7 @@ class MechServer:
 
         config = uvicorn.Config(
             app,
-            host=DEFAULT_HOST,
+            host=self.host,
             port=DEFAULT_PORT,
             log_level="info",
         )

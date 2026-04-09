@@ -6,10 +6,8 @@ from fastapi.testclient import TestClient
 from micromech.core.constants import STATUS_PENDING
 from micromech.core.models import MechRequest
 from micromech.runtime.http import create_app
-from micromech.web.app import get_auth_token
 
 AUTH = {
-    "X-Auth-Token": get_auth_token(),
     "X-Micromech-Action": "test",
 }
 

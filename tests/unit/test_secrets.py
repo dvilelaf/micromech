@@ -15,7 +15,6 @@ class TestMicromechSecrets:
         assert s.telegram_token is None
         assert s.telegram_chat_id is None
         assert s.health_url is None
-        assert s.micromech_auth_token is None
 
     def test_telegram_fields_loaded(self):
         with patch.dict(

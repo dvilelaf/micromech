@@ -91,11 +91,7 @@ def create_app(
         payload: RequestPayload,
     ) -> JSONResponse:
         """Submit an off-chain request."""
-        from micromech.web.app import _check_auth, _get_client_ip, _rate_limited
-
-        auth_err = _check_auth(request)
-        if auth_err:
-            return auth_err
+        from micromech.web.app import _get_client_ip, _rate_limited
 
         csrf = request.headers.get("X-Micromech-Action")
         if not csrf:

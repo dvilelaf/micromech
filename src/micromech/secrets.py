@@ -29,8 +29,4 @@ class MicromechSecrets(BaseSettings):
             raise ValueError(msg)
         return v
 
-    # Web dashboard auth (existing MICROMECH_AUTH_TOKEN)
-    micromech_auth_token: Optional[SecretStr] = None
-
-
 secrets = MicromechSecrets()

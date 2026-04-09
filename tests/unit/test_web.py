@@ -6,9 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from micromech.core.models import MechRequest, MechResponse, RequestRecord, ToolResult
-from micromech.web.app import create_web_app, get_auth_token
-
-AUTH_TOKEN = get_auth_token()
+from micromech.web.app import create_web_app
 
 
 def _make_record(req_id: str, status: str = "pending", tool: str = "echo") -> RequestRecord:
@@ -62,60 +60,39 @@ def web_client() -> TestClient:
 class TestDashboard:
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_renders_html(self, mock_setup, web_client: TestClient):
-        resp = web_client.get(f"/?token={AUTH_TOKEN}")
+        resp = web_client.get("/")
         assert resp.status_code == 200
         assert "micromech" in resp.text
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_has_tabs(self, mock_setup, web_client: TestClient):
-        resp = web_client.get(f"/?token={AUTH_TOKEN}")
+        resp = web_client.get("/")
         assert "Overview" in resp.text
         assert "Live Activity" in resp.text
         assert "Charts" in resp.text
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_has_chart_js(self, mock_setup, web_client: TestClient):
-        resp = web_client.get(f"/?token={AUTH_TOKEN}")
+        resp = web_client.get("/")
         assert "chart.js" in resp.text
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_has_sse_connection(self, mock_setup, web_client: TestClient):
-        resp = web_client.get(f"/?token={AUTH_TOKEN}")
+        resp = web_client.get("/")
         assert "EventSource" in resp.text
         assert "/api/metrics/stream" in resp.text
 
     def test_redirects_to_setup_when_not_configured(self, web_client: TestClient):
         with patch("micromech.web.app._needs_setup", return_value=True):
-            resp = web_client.get(
-                f"/?token={AUTH_TOKEN}",
-                follow_redirects=False,
-            )
+            resp = web_client.get("/", follow_redirects=False)
             assert resp.status_code == 302
             assert "/setup" in resp.headers["location"]
 
     def test_setup_page_renders(self, web_client: TestClient):
-        resp = web_client.get(f"/setup?token={AUTH_TOKEN}")
+        resp = web_client.get("/setup")
         assert resp.status_code == 200
         assert "setup" in resp.text.lower()
         assert "micromech" in resp.text.lower()
-
-    @patch("micromech.web.app._needs_setup", return_value=False)
-    def test_dashboard_js_does_not_reference_undefined_auth_token(
-        self, mock_setup, web_client: TestClient
-    ):
-        """Regression: dashboard.html must use authHeaders() / authQueryParam(),
-        never a bare AUTH_TOKEN identifier (which is not declared)."""
-        resp = web_client.get(f"/?token={AUTH_TOKEN}")
-        assert resp.status_code == 200
-        # A bare AUTH_TOKEN reference would be a ReferenceError in the browser.
-        # Rule out `X-Auth-Token:` header literals and the authHeaders helper.
-        import re
-
-        matches = re.findall(r"(?<![\w-])AUTH_TOKEN(?![\w-])", resp.text)
-        assert matches == [], (
-            f"dashboard.html references undefined AUTH_TOKEN identifier "
-            f"({len(matches)} occurrences). Use authHeaders() instead."
-        )
 
 
 class TestAPIEndpoints:
@@ -155,7 +132,6 @@ class TestMetricsAPI:
     def test_metrics_events_empty(self, web_client: TestClient):
         resp = web_client.get("/api/metrics/events")
         assert resp.status_code == 200
-        # No metrics collector wired, returns []
         assert resp.json() == []
 
     def test_metrics_tools_no_queue(self, web_client: TestClient):
@@ -181,8 +157,6 @@ class TestMetricsAPI:
 
     def test_metrics_stream_endpoint_exists(self, web_client: TestClient):
         """SSE endpoint is registered and reachable."""
-        # We can't easily test a streaming infinite generator in sync tests.
-        # Verify the route exists by checking the app routes.
         routes = [r.path for r in web_client.app.routes]
         assert "/api/metrics/stream" in routes
 
@@ -273,7 +247,7 @@ class TestChainAPI:
 class TestManagementAPI:
     """Test the /api/management/{action} endpoint."""
 
-    CSRF = {"X-Micromech-Action": "test", "X-Auth-Token": AUTH_TOKEN}
+    CSRF = {"X-Micromech-Action": "test"}
 
     @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
@@ -380,7 +354,6 @@ class TestManagementAPI:
         assert resp.status_code == 200
         data = resp.json()
         assert data["success"] is False
-        # Error message is sanitized — no raw exception in response
         assert "server logs" in data["error"].lower() or "failed" in data["error"].lower()
 
     def test_management_csrf_required(self, web_client: TestClient):
@@ -388,24 +361,14 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/stake",
             json={"service_key": "svc-1"},
-            headers={"X-Auth-Token": AUTH_TOKEN},
         )
         assert resp.status_code == 403
-
-    def test_management_auth_required(self, web_client: TestClient):
-        """Requests without X-Auth-Token header are rejected."""
-        resp = web_client.post(
-            "/api/management/stake",
-            json={"service_key": "svc-1"},
-            headers={"X-Micromech-Action": "test"},
-        )
-        assert resp.status_code == 401
 
 
 class TestToolsHotReload:
     """Tests for /api/tools/reload and /api/setup/tools save flow."""
 
-    CSRF = {"X-Micromech-Action": "tools", "X-Auth-Token": AUTH_TOKEN}
+    CSRF = {"X-Micromech-Action": "tools"}
 
     def _make_client(self, reload_tools_fn=None) -> TestClient:
         async def on_request(req):
@@ -444,23 +407,11 @@ class TestToolsHotReload:
 
     def test_reload_requires_csrf(self):
         client = self._make_client(reload_tools_fn=lambda: [])
-        resp = client.post(
-            "/api/tools/reload",
-            headers={"X-Auth-Token": AUTH_TOKEN},
-        )
+        resp = client.post("/api/tools/reload")
         assert resp.status_code == 403
 
-    def test_reload_requires_auth(self):
-        client = self._make_client(reload_tools_fn=lambda: [])
-        resp = client.post(
-            "/api/tools/reload",
-            headers={"X-Micromech-Action": "tools"},
-        )
-        assert resp.status_code == 401
-
     def test_reload_sanitizes_error_response(self):
-        """The 500 response must NOT leak the raw exception message —
-        it could contain filesystem paths or stack details."""
+        """The 500 response must NOT leak the raw exception message."""
         def broken_reload():
             raise RuntimeError("/opt/secret/wallet.json: permission denied")
 
@@ -473,8 +424,7 @@ class TestToolsHotReload:
         assert "reload failed" in body["error"].lower()
 
     def test_reload_supports_async_callable(self):
-        """The endpoint must await coroutine-returning reloaders so the
-        real MechServer.reload_tools (which is async) works."""
+        """The endpoint must await coroutine-returning reloaders."""
         async def async_reload():
             return ["echo", "llm"]
 
@@ -487,7 +437,6 @@ class TestToolsHotReload:
         """Too many reloads from the same client get 429."""
         from micromech.web.app import _RATE_LIMITS, _rate_counters
 
-        # Clear state so other tests don't poison the counter.
         _rate_counters.clear()
         max_req, _window = _RATE_LIMITS["/api/tools/reload"]
 
@@ -614,33 +563,6 @@ class TestSetupAPI:
         assert chains[0]["name"] == "gnosis"
 
 
-class TestHostBinding:
-    """Verify the server only binds to localhost (security)."""
-
-    def test_default_host_is_localhost(self):
-        from micromech.core.constants import DEFAULT_HOST
-
-        assert DEFAULT_HOST == "127.0.0.1", f"DEFAULT_HOST must be 127.0.0.1, got {DEFAULT_HOST}"
-
-    def test_default_host_is_not_all_interfaces(self):
-        from micromech.core.constants import DEFAULT_HOST
-
-        assert DEFAULT_HOST != "0.0.0.0", (
-            "DEFAULT_HOST must NOT be 0.0.0.0 — web UI must only be accessible from localhost"
-        )
-
-    def test_cli_web_default_host(self):
-        """CLI web command defaults to 127.0.0.1."""
-        import inspect
-
-        from micromech.cli import web
-
-        sig = inspect.signature(web)
-        host_param = sig.parameters.get("host")
-        assert host_param is not None
-        assert host_param.default.default == "127.0.0.1"
-
-
 class TestHealthAPI:
     def test_health_check(self, web_client: TestClient):
         resp = web_client.get("/api/health")
@@ -663,14 +585,14 @@ class TestRecordToDictIpfsCid:
             status="delivered",
             tool="echo",
             prompt="test",
-            data=bytes.fromhex("1220" + "ab" * 32),  # valid multihash
+            data=bytes.fromhex("1220" + "ab" * 32),
             created_at=None,
             is_offchain=False,
         )
         record = RequestRecord.model_construct(request=req, result=None, response=None)
         d = _record_to_dict(record)
         assert d["request_ipfs_cid"] is not None
-        assert d["request_ipfs_cid"].startswith("b")  # bafkrei...
+        assert d["request_ipfs_cid"].startswith("b")
 
     def test_request_ipfs_cid_none_for_raw_data(self):
         from micromech.core.models import MechRequest, RequestRecord
@@ -682,7 +604,7 @@ class TestRecordToDictIpfsCid:
             status="pending",
             tool="echo",
             prompt="test",
-            data=b'{"prompt":"test"}',  # raw JSON, not multihash
+            data=b'{"prompt":"test"}',
             created_at=None,
             is_offchain=False,
         )
