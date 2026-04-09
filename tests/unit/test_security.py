@@ -77,12 +77,22 @@ class TestAuthToken:
         result = _check_auth(request)
         assert result is None  # no error
 
-    def test_check_auth_valid_query_param(self):
+    def test_check_auth_valid_query_param_with_flag(self):
+        """Query param auth accepted when allow_query_param=True (e.g. SSE streams)."""
+        request = MagicMock()
+        request.headers = {}
+        request.query_params = {"token": AUTH_TOKEN}
+        result = _check_auth(request, allow_query_param=True)
+        assert result is None
+
+    def test_check_auth_query_param_rejected_by_default(self):
+        """Query param auth rejected by default (prevents token leakage in POST logs)."""
         request = MagicMock()
         request.headers = {}
         request.query_params = {"token": AUTH_TOKEN}
         result = _check_auth(request)
-        assert result is None
+        assert result is not None
+        assert result.status_code == 401
 
     def test_check_auth_missing_token(self):
         request = MagicMock()
