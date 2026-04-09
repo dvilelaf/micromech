@@ -72,6 +72,7 @@ def _secure_write(path: Path, content: str) -> None:
     attacks and predictable-path races). shutil.move handles cross-device
     renames (e.g. Docker volume mounts on separate filesystems).
     """
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".secrets_", suffix=".tmp")
     tmp = Path(tmp_name)
     try:
