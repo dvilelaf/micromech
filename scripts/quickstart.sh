@@ -335,16 +335,7 @@ echo -e "${GREEN}Docker is ready.${NC}"
 echo
 
 # 2. Setup Directory
-# When run as root (e.g. via sudo), install to /opt/micromech.
-# Otherwise, create a 'micromech' subdir in the current directory.
-if [ "$(id -u)" = "0" ]; then
-    INSTALL_DIR="/opt/micromech"
-    # Keep ownership of files for the user who invoked sudo (if known)
-    REAL_USER="${SUDO_USER:-root}"
-else
-    INSTALL_DIR="$(pwd)/micromech"
-    REAL_USER="$(id -un)"
-fi
+INSTALL_DIR="$(pwd)/micromech"
 
 echo -e "${BLUE}📂 Setting up directory '$INSTALL_DIR'...${NC}"
 
@@ -353,10 +344,6 @@ if [ -d "$INSTALL_DIR" ]; then
     echo -e "(Your data/ and secrets.env are preserved.)"
 else
     mkdir -p "$INSTALL_DIR/data"
-    # Give ownership to the real (non-root) user so they can manage it without sudo
-    if [ "$REAL_USER" != "root" ]; then
-        chown -R "$REAL_USER":"$REAL_USER" "$INSTALL_DIR"
-    fi
 fi
 cd "$INSTALL_DIR"
 
@@ -408,7 +395,7 @@ echo -e "${GREEN}🎉 Micromech is running!${NC}"
 echo
 echo -e "The dashboard is only accessible via SSH tunnel (port is bound to localhost)."
 echo -e "From your local machine, run:"
-echo -e "  ${BLUE}ssh -L 8090:localhost:8090 $(whoami)@<server-ip>${NC}"
+echo -e "  ${BLUE}ssh -L 8090:localhost:8090 <user>@<server>${NC}"
 echo -e "Then open: ${BLUE}http://localhost:8090${NC}"
 echo -e "Configure secrets, RPC endpoints and Telegram from the Setup tab."
 echo
