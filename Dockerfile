@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install runtime dependencies (web + cli + chain, no dev)
-RUN uv sync --frozen --no-dev --extra web --extra cli --extra chain
+RUN uv sync --frozen --no-dev --extra web --extra cli --extra chain --extra tasks
 
 ENV PATH="/app/.venv/bin:$PATH"
 

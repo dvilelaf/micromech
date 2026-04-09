@@ -38,7 +38,7 @@ except ImportError:
     }
 
 # Runtime defaults (not user-configurable — CLI args override host/port)
-DEFAULT_HOST = "127.0.0.1"
+DEFAULT_HOST = "0.0.0.0"  # noqa: S104 — Docker handles external access via port mapping
 DEFAULT_PORT = 8090
 DEFAULT_MAX_CONCURRENT = 10
 DEFAULT_REQUEST_TIMEOUT = 300  # 5 minutes
