@@ -398,11 +398,14 @@ generate_updater_script
 cleanup
 trap - EXIT
 
+# Start micromech
 echo
-echo -e "${GREEN}🎉 Setup Complete!${NC}"
+echo -e "${BLUE}🚀 Starting Micromech...${NC}"
+docker compose up -d
+
 echo
-echo -e "Next steps:"
-echo -e "1. Start micromech:    ${BLUE}cd $INSTALL_DIR && docker compose up -d${NC}"
-echo -e "2. Open the dashboard: ${BLUE}http://localhost:8090${NC}"
-echo -e "   (configure secrets, RPC endpoints and Telegram from the Setup tab)"
+echo -e "${GREEN}🎉 Micromech is running!${NC}"
+echo
+echo -e "Open the dashboard: ${BLUE}http://$(hostname -I | awk '{print $1}'):8090${NC}"
+echo -e "Configure secrets, RPC endpoints and Telegram from the Setup tab."
 echo
