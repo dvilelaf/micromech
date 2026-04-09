@@ -48,6 +48,9 @@ _RATE_LIMITS: dict[str, tuple[int, int]] = {
     # Hot-reload does filesystem I/O and importlib — cap to avoid DoS via
     # an authenticated attacker spamming reloads.
     "/api/tools/reload": (6, 60),
+    # Secrets file I/O — cap reads and writes to avoid hammering the filesystem.
+    "/api/setup/secrets/get": (30, 60),
+    "/api/setup/secrets/post": (10, 60),
 }
 _MAX_TRACKED_IPS = 1000
 _rate_counters: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
@@ -160,9 +163,17 @@ def _get_client_ip(request: Request) -> str:
     return "unknown"
 
 
-def _check_auth(request: Request) -> Optional[JSONResponse]:
-    """Validate auth token from header or query param. Returns error response or None."""
-    token = request.headers.get("X-Auth-Token") or request.query_params.get("token")
+def _check_auth(request: Request, *, allow_query_param: bool = False) -> Optional[JSONResponse]:
+    """Validate auth token from header or (GET-only) query param.
+
+    Query-param tokens appear in server logs and proxy history, so they are
+    only accepted for GET requests (e.g. SSE streams, setup page HTML) when
+    ``allow_query_param=True``.  POST/mutating endpoints must send the token
+    in the ``X-Auth-Token`` header.
+    """
+    token = request.headers.get("X-Auth-Token")
+    if not token and allow_query_param:
+        token = request.query_params.get("token")
     if not token or not secrets.compare_digest(token, _AUTH_TOKEN):
         return JSONResponse({"error": "Invalid or missing auth token"}, 401)
     return None
@@ -474,6 +485,17 @@ def create_web_app(
 
         try:
             result = await asyncio.to_thread(_create_or_unlock)
+            # Persist password ONLY when a new wallet is created so the container
+            # can auto-unlock on restart.  Re-unlocks of an existing wallet do NOT
+            # overwrite the stored value — the user may have intentionally cleared
+            # it from secrets.env for security reasons.
+            if result.get("created"):
+                try:
+                    from micromech.core.secrets_file import write_secret
+
+                    write_secret("wallet_password", password)
+                except Exception:
+                    logger.warning("Could not write wallet_password to secrets.env (non-fatal)")
             return JSONResponse(
                 result,
                 headers={"Cache-Control": "no-store"},
@@ -486,6 +508,61 @@ def create_web_app(
                 {"error": "Failed to create or unlock wallet."},
                 status_code=500,
             )
+
+    @app.get("/api/setup/secrets")
+    async def get_secrets(request: Request) -> dict:
+        """Return editable secrets (sensitive values masked)."""
+        auth_err = _check_auth(request, allow_query_param=True)
+        if auth_err:
+            return auth_err
+        if _rate_limited("/api/setup/secrets/get", _get_client_ip(request)):
+            return JSONResponse({"error": "Too many requests. Try again later."}, 429)
+        try:
+            from micromech.core.secrets_file import EDITABLE_KEYS, SENSITIVE_KEYS, read_secrets_file
+
+            all_secrets = read_secrets_file()
+            result = {}
+            for key in EDITABLE_KEYS:
+                value = all_secrets.get(key, "")
+                result[key] = "***" if (key in SENSITIVE_KEYS and value) else value
+            return JSONResponse(result)
+        except Exception:
+            logger.exception("Failed to read secrets file")
+            return JSONResponse({"error": "Could not read secrets file"}, 500)
+
+    @app.post("/api/setup/secrets")
+    async def save_secrets(
+        request: Request,
+        x_micromech_action: Optional[str] = Header(None),
+    ) -> dict:
+        """Write editable secrets to secrets.env."""
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
+        if not x_micromech_action:
+            return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
+        if _rate_limited("/api/setup/secrets/post", _get_client_ip(request)):
+            return JSONResponse({"error": "Too many requests. Try again later."}, 429)
+        try:
+            from micromech.core.secrets_file import EDITABLE_KEYS, write_secrets
+
+            body = await request.json()
+            updates: dict[str, str] = {}
+            for k, v in body.items():
+                if k not in EDITABLE_KEYS:
+                    continue
+                if not isinstance(v, str):
+                    return JSONResponse({"error": f"Value for '{k}' must be a string"}, 400)
+                if v == "***":
+                    continue
+                updates[k] = v
+            write_secrets(updates)
+            return JSONResponse({"status": "ok", "saved": list(updates.keys())})
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, 400)
+        except Exception:
+            logger.exception("Failed to write secrets file")
+            return JSONResponse({"error": "Could not write secrets file"}, 500)
 
     @app.get("/api/setup/balance")
     async def setup_balance(chain: str = "gnosis") -> dict:
@@ -1236,7 +1313,7 @@ def create_web_app(
     @app.get("/api/logs/stream")
     async def logs_stream(request: Request) -> StreamingResponse:
         """SSE stream of real-time loguru output."""
-        auth_err = _check_auth(request)
+        auth_err = _check_auth(request, allow_query_param=True)
         if auth_err:
             return auth_err
 

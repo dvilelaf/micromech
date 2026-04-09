@@ -285,6 +285,7 @@
                 <div class="progress-step" id="prog-3"></div>
                 <div class="progress-step" id="prog-4"></div>
                 <div class="progress-step" id="prog-5"></div>
+                <div class="progress-step" id="prog-6"></div>
             </div>
 
             <!-- Step 1: Wallet -->
@@ -387,19 +388,87 @@
                 <div id="tools-list" style="margin-bottom: 1rem;"></div>
                 <div class="btn-row">
                     <button class="btn btn-primary" onclick="goStep(3)">Back</button>
-                    <button class="btn btn-accent" id="btn-deploy" onclick="saveToolsAndDeploy()">Deploy</button>
+                    <button class="btn btn-primary" id="btn-tools-next" onclick="saveToolsAndNext()">Next</button>
                 </div>
             </div>
 
-            <!-- Step 5: Deploy -->
+            <!-- Step 5: Services (optional) -->
             <div class="step" id="step-5">
+                <h2>Services <span style="font-size:0.7rem; color:var(--text-muted); font-weight:400; vertical-align:middle; margin-left:0.4rem;">optional</span></h2>
+                <p>Enable optional services. You can change these later from the dashboard.</p>
+
+                <!-- Telegram -->
+                <div class="glass" style="margin-bottom:1rem; padding:1rem;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
+                        <div>
+                            <div style="font-weight:600; font-size:0.95rem;">Telegram remote control</div>
+                            <div style="color:var(--text-muted); font-size:0.82rem;">Control your mech from your phone via a Telegram bot.</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="tg-enabled" onchange="onTelegramToggle()">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div id="tg-fields" style="display:none;">
+                        <div style="margin-bottom:0.6rem;">
+                            <label style="display:block; color:var(--text-muted); font-size:0.8rem; margin-bottom:0.3rem;">
+                                Bot token — get it from <a href="https://t.me/BotFather" target="_blank" style="color:var(--accent-color);">@BotFather</a>
+                            </label>
+                            <input type="password" id="tg-token" placeholder="123456789:AAF..."
+                                style="width:100%; padding:0.6rem; border-radius:6px; border:1px solid var(--glass-border);
+                                background:rgba(0,0,0,0.3); color:var(--text-color); font-family:var(--font-mono); font-size:0.85rem; outline:none;"
+                                oninput="onServicesChange()">
+                        </div>
+                        <div>
+                            <label style="display:block; color:var(--text-muted); font-size:0.8rem; margin-bottom:0.3rem;">
+                                Your chat ID — send any message to <a href="https://t.me/userinfobot" target="_blank" style="color:var(--accent-color);">@userinfobot</a>
+                            </label>
+                            <input type="text" id="tg-chat-id" placeholder="123456789"
+                                style="width:100%; padding:0.6rem; border-radius:6px; border:1px solid var(--glass-border);
+                                background:rgba(0,0,0,0.3); color:var(--text-color); font-family:var(--font-mono); font-size:0.85rem; outline:none;"
+                                oninput="onServicesChange()">
+                        </div>
+                        <p id="tg-error" style="color:var(--error); font-size:0.8rem; margin-top:0.4rem; display:none;"></p>
+                    </div>
+                </div>
+
+                <!-- Custom RPCs -->
+                <div class="glass" style="padding:1rem;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:0.75rem;">
+                        <div>
+                            <div style="font-weight:600; font-size:0.95rem;">Custom RPC endpoints</div>
+                            <div style="color:var(--text-muted); font-size:0.82rem;">Add your own RPC URLs (Alchemy, Infura…). Public RPCs are always used as fallback.</div>
+                        </div>
+                        <label class="toggle">
+                            <input type="checkbox" id="rpc-enabled" onchange="onRpcToggle()">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div id="rpc-fields" style="display:none;">
+                        <div id="rpc-chain-inputs"></div>
+                        <p style="color:var(--text-muted); font-size:0.78rem; margin-top:0.5rem;">
+                            Multiple URLs can be comma-separated. Custom URLs are tried first.
+                        </p>
+                    </div>
+                </div>
+
+                <p id="services-save-status" style="font-size:0.82rem; margin-top:0.75rem; display:none;"></p>
+
+                <div class="btn-row">
+                    <button class="btn btn-primary" onclick="goStep(4)">Back</button>
+                    <button class="btn btn-accent" id="btn-services-next" onclick="saveServicesAndDeploy()">Next</button>
+                </div>
+            </div>
+
+            <!-- Step 6: Deploy -->
+            <div class="step" id="step-6">
                 <h2 id="deploy-header">Deploying to OLAS Protocol</h2>
                 <p>Executing on-chain transactions. This may take a minute...</p>
                 <div id="deploy-progress"></div>
             </div>
 
-            <!-- Step 6: Done -->
-            <div class="step" id="step-6">
+            <!-- Step 7: Done -->
+            <div class="step" id="step-7">
                 <div class="success-icon" id="success-icon">&#10003;</div>
                 <div class="success-text">
                     <h2 id="success-title">Your mech is ready!</h2>
@@ -441,8 +510,8 @@
         document.getElementById('step-' + n).classList.add('active');
         currentStep = n;
 
-        // Update progress bar
-        for (let i = 1; i <= 5; i++) {
+        // Update progress bar (6 visible steps, step 7 is "done" — no dot)
+        for (let i = 1; i <= 6; i++) {
             const el = document.getElementById('prog-' + i);
             el.classList.remove('active', 'done');
             if (i < n) el.classList.add('done');
@@ -476,7 +545,7 @@
 
             if (data.wallet_exists) {
                 walletAddress = data.wallet_address;
-                if (data.step === 'complete') { goStep(6); return; }
+                if (data.step === 'complete') { goStep(7); return; }
                 // Wallet already unlocked — skip straight to chain selection
                 goStep(2);
                 return;
@@ -846,10 +915,10 @@
         const input = document.querySelector(`input[data-tool="${name}"]`);
         toolToggles[name] = input ? input.checked : !toolToggles[name];
         const anyEnabled = Object.values(toolToggles).some(v => v);
-        document.getElementById('btn-deploy').disabled = !anyEnabled;
+        document.getElementById('btn-tools-next').disabled = !anyEnabled;
     }
 
-    async function saveToolsAndDeploy() {
+    async function saveToolsAndNext() {
         const disabled = Object.entries(toolToggles)
             .filter(([_, enabled]) => !enabled)
             .map(([name]) => name);
@@ -867,10 +936,178 @@
             alert('Failed to save tool configuration: ' + e.message);
             return;
         }
+        goStep(5);
+        loadServicesStep();
+    }
+
+    // --- Step 5: Services ---
+    const RPC_CHAIN_LABELS = {
+        gnosis: 'Gnosis', ethereum: 'Ethereum', base: 'Base',
+        polygon: 'Polygon', optimism: 'Optimism', arbitrum: 'Arbitrum', celo: 'Celo'
+    };
+
+    // Escape a string for safe use in textContent/setAttribute (no innerHTML injection).
+    function _escHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function loadServicesStep() {
+        // Build RPC inputs for the selected chains using DOM APIs (no innerHTML with dynamic data).
+        const container = document.getElementById('rpc-chain-inputs');
+        container.innerHTML = '';
+        for (const chain of selectedChains) {
+            const labelText = RPC_CHAIN_LABELS[chain] || chain;
+            const div = document.createElement('div');
+            div.style.marginBottom = '0.6rem';
+
+            const lbl = document.createElement('label');
+            lbl.style.cssText = 'display:block; color:var(--text-muted); font-size:0.8rem; margin-bottom:0.3rem;';
+            lbl.textContent = labelText;  // textContent — safe, no XSS
+
+            const inp = document.createElement('input');
+            inp.type = 'text';
+            inp.id = 'rpc-' + chain;  // chain comes from CHAIN_DEFAULTS (server-controlled allowlist)
+            inp.placeholder = 'https://your-node.example.com';
+            inp.style.cssText = 'width:100%; padding:0.6rem; border-radius:6px; border:1px solid var(--glass-border); background:rgba(0,0,0,0.3); color:var(--text-color); font-family:var(--font-mono); font-size:0.82rem; outline:none;';
+            inp.oninput = onServicesChange;
+
+            div.appendChild(lbl);
+            div.appendChild(inp);
+            container.appendChild(div);
+        }
+
+        // Pre-fill from existing secrets
+        try {
+            const res = await fetch('/api/setup/secrets', { headers: authHeaders() });
+            const data = await res.json();
+            if (data.telegram_token && data.telegram_token !== '***') {
+                document.getElementById('tg-token').value = data.telegram_token;
+            }
+            if (data.telegram_chat_id) {
+                document.getElementById('tg-chat-id').value = data.telegram_chat_id;
+            }
+            if (data.telegram_token) {
+                document.getElementById('tg-enabled').checked = true;
+                document.getElementById('tg-fields').style.display = 'block';
+            }
+            for (const chain of selectedChains) {
+                const key = chain + '_rpc';
+                if (data[key]) {
+                    const input = document.getElementById('rpc-' + chain);
+                    if (input) input.value = data[key];
+                }
+            }
+            if ([...selectedChains].some(c => document.getElementById('rpc-' + c)?.value)) {
+                document.getElementById('rpc-enabled').checked = true;
+                document.getElementById('rpc-fields').style.display = 'block';
+            }
+        } catch (_) { /* non-fatal */ }
+    }
+
+    function onTelegramToggle() {
+        document.getElementById('tg-fields').style.display =
+            document.getElementById('tg-enabled').checked ? 'block' : 'none';
+        onServicesChange();
+    }
+
+    function onRpcToggle() {
+        document.getElementById('rpc-fields').style.display =
+            document.getElementById('rpc-enabled').checked ? 'block' : 'none';
+    }
+
+    function onServicesChange() {
+        const tgEnabled = document.getElementById('tg-enabled').checked;
+        const errEl = document.getElementById('tg-error');
+        if (tgEnabled) {
+            const token = document.getElementById('tg-token').value.trim();
+            const chatId = document.getElementById('tg-chat-id').value.trim();
+            if (token && !chatId) {
+                errEl.textContent = 'Chat ID is required when Telegram is enabled.';
+                errEl.style.display = 'block';
+            } else if (chatId && !token) {
+                errEl.textContent = 'Bot token is required when Telegram is enabled.';
+                errEl.style.display = 'block';
+            } else {
+                errEl.style.display = 'none';
+            }
+        } else {
+            errEl.style.display = 'none';
+        }
+    }
+
+    function _isValidHttpUrl(s) {
+        try {
+            const u = new URL(s);
+            return u.protocol === 'http:' || u.protocol === 'https:';
+        } catch (_) { return false; }
+    }
+
+    async function saveServicesAndDeploy() {
+        const updates = {};
+        const statusEl = document.getElementById('services-save-status');
+        statusEl.style.display = 'none';
+
+        const tgEnabled = document.getElementById('tg-enabled').checked;
+        if (tgEnabled) {
+            const token = document.getElementById('tg-token').value.trim();
+            const chatId = document.getElementById('tg-chat-id').value.trim();
+            if (!token || !chatId) {
+                onServicesChange();
+                return;
+            }
+            updates['telegram_token'] = token;
+            updates['telegram_chat_id'] = chatId;
+        }
+
+        const rpcEnabled = document.getElementById('rpc-enabled').checked;
+        if (rpcEnabled) {
+            for (const chain of selectedChains) {
+                const input = document.getElementById('rpc-' + chain);
+                const val = input ? input.value.trim() : '';
+                if (!val) continue;
+                // Validate each comma-separated URL
+                const urls = val.split(',').map(u => u.trim()).filter(Boolean);
+                const invalid = urls.find(u => !_isValidHttpUrl(u));
+                if (invalid) {
+                    statusEl.textContent = `Invalid URL for ${RPC_CHAIN_LABELS[chain] || chain}: "${invalid}"`;
+                    statusEl.style.color = 'var(--error)';
+                    statusEl.style.display = 'block';
+                    return;
+                }
+                updates[chain + '_rpc'] = val;
+            }
+        }
+
+        if (Object.keys(updates).length > 0) {
+            try {
+                statusEl.textContent = 'Saving…';
+                statusEl.style.color = 'var(--text-muted)';
+                statusEl.style.display = 'block';
+                const res = await fetch('/api/setup/secrets', {
+                    method: 'POST',
+                    headers: authHeaders({
+                        'Content-Type': 'application/json',
+                        'X-Micromech-Action': 'save-secrets',
+                    }),
+                    body: JSON.stringify(updates),
+                });
+                const data = await res.json();
+                if (data.error) {
+                    statusEl.textContent = 'Could not save: ' + data.error;
+                    statusEl.style.color = 'var(--error)';
+                    return;
+                }
+                statusEl.style.display = 'none';
+            } catch (e) {
+                statusEl.textContent = 'Could not save: ' + e.message;
+                statusEl.style.color = 'var(--error)';
+                return;
+            }
+        }
         startDeploy();
     }
 
-    // --- Step 5: Parallel Deploy ---
+    // --- Step 6: Parallel Deploy ---
     const DEPLOY_STEPS = [
         'Create service', 'Activate registration', 'Register agent',
         'Deploy Safe multisig', 'Create mech on marketplace', 'Stake service',
@@ -896,8 +1133,8 @@
     }
 
     async function startDeploy() {
-        goStep(5);
-        document.getElementById('btn-deploy').disabled = true;
+        goStep(6);
+        document.getElementById('btn-services-next').disabled = true;
         const container = document.getElementById('deploy-progress');
         container.innerHTML = '';
 
@@ -916,7 +1153,7 @@
         const allOk = results.every(r => r.status === 'fulfilled' && r.value);
         if (allOk) {
             setTimeout(() => {
-                goStep(6);
+                goStep(7);
                 document.getElementById('success-title').textContent =
                     chains.length > 1 ? `Deployed on ${chains.length} chains!` : 'Your mech is ready!';
                 document.getElementById('success-desc').textContent = 'Starting runtime...';

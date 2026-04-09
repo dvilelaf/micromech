@@ -261,8 +261,8 @@ while true; do
                     # Ensure data directory has correct permissions for container user (1000:1000)
                     chown -R 1000:1000 data/ 2>/dev/null || true
 
-                    # Generate temporary docker-compose.yml with absolute path for data volume
-                    sed "s|- \\./data|- $PROJECT_DIR/data|g" docker-compose.yml > /tmp/docker-compose-abs.yml
+                    # Generate temporary docker-compose.yml with absolute paths for volumes
+                    sed "s|- \\./data|- $PROJECT_DIR/data|g; s|- \\./secrets\\.env|- $PROJECT_DIR/secrets.env|g" docker-compose.yml > /tmp/docker-compose-abs.yml
 
                     # Start Micromech with new image using absolute paths
                     log "Starting micromech with new image..."
