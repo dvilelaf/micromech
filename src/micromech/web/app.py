@@ -996,7 +996,7 @@ def create_web_app(
         Requires auth via ?token= query param (SSE can't set headers).
         Limited to _MAX_SSE_CONNECTIONS concurrent streams.
         """
-        auth_err = _check_auth(request)
+        auth_err = _check_auth(request, allow_query_param=True)
         if auth_err:
             return auth_err
 
