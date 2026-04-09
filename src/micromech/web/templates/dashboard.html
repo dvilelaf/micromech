@@ -234,6 +234,63 @@
         .log-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
         .log-header h3 { font-size: 0.95rem; color: var(--text-muted); margin: 0; }
 
+        /* Toast notifications (bottom-right, auto-dismiss) */
+        #toast-container {
+            position: fixed;
+            right: 1.25rem;
+            bottom: 1.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            z-index: 1000;
+            pointer-events: none;
+            max-width: min(420px, calc(100vw - 2.5rem));
+        }
+        .toast {
+            background: rgba(20, 22, 30, 0.92);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-left: 3px solid var(--success);
+            border-radius: 6px;
+            padding: 0.75rem 1rem;
+            font-size: 0.85rem;
+            color: var(--text);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            pointer-events: auto;
+            animation: toast-in 0.2s ease-out;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+        }
+        .toast.toast-error { border-left-color: var(--error); }
+        .toast.toast-warning { border-left-color: var(--warning); }
+        .toast.toast-leaving { animation: toast-out 0.25s ease-in forwards; }
+        @keyframes toast-in {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes toast-out {
+            to { opacity: 0; transform: translateY(10px); }
+        }
+
+        /* Toggle switch (Tools tab) */
+        .toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; display: inline-block; vertical-align: middle; }
+        .toggle input { opacity: 0; width: 0; height: 0; }
+        .toggle .slider {
+            position: absolute; inset: 0; background: rgba(255,255,255,0.15);
+            border-radius: 22px; cursor: pointer; transition: background 0.2s;
+        }
+        .toggle .slider::before {
+            content: ''; position: absolute; width: 16px; height: 16px;
+            left: 3px; bottom: 3px; background: white; border-radius: 50%;
+            transition: transform 0.2s;
+        }
+        .toggle input:checked + .slider { background: var(--success); }
+        .toggle input:checked + .slider::before { transform: translateX(18px); }
+        .tool-row { display: grid; grid-template-columns: auto 1fr auto 1fr auto 1fr; gap: 0.5rem 1rem; font-size: 0.85rem; align-items: center; }
+        .tool-row.disabled-row { opacity: 0.5; }
+        .tool-row-header { color: var(--text-muted); font-weight: 600; }
+
         /* Scrollbar */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
@@ -409,17 +466,28 @@
                         <span class="label">IPFS CID</span>
                         <span id="ipfs-cid" style="font-family:var(--font-mono);font-size:0.78rem;">-</span>
                     </div>
-                    <div id="metadata-progress" style="display:none; margin-top:1rem; font-family:var(--font-mono); font-size:0.8rem; max-height:150px; overflow-y:auto;"></div>
-                    <pre class="mgmt-result" id="metadata-result" style="display:none;"></pre>
+                    <p id="metadata-inline-error" style="display:none;margin-top:0.75rem;font-size:0.8rem;color:var(--error);"></p>
                     <div style="margin-top:1rem;">
                         <button class="btn btn-primary" id="btn-update-metadata" onclick="startMetadataUpdate()" style="display:none;">Update metadata</button>
                     </div>
                 </div>
                 <div class="glass">
-                    <h3 style="font-size:0.95rem; color:var(--text-muted); margin-bottom:1rem;">Registered Tools</h3>
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;gap:1rem;flex-wrap:wrap;">
+                        <h3 style="font-size:0.95rem; color:var(--text-muted); margin:0;">Available Tools</h3>
+                        <div style="display:flex;gap:0.5rem;align-items:center;">
+                            <span id="tools-dirty-hint" style="font-size:0.75rem;color:var(--warning);display:none;">Unsaved changes</span>
+                            <button class="btn btn-sm btn-secondary" id="btn-rescan-tools" onclick="rescanTools()" title="Re-scan data/tools/ for newly dropped packages">Rescan</button>
+                            <button class="btn btn-sm btn-primary" id="btn-save-tools" onclick="saveAndReloadTools()" disabled>Save &amp; reload</button>
+                        </div>
+                    </div>
+                    <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:1rem;">
+                        Toggle tools on or off and click <em>Save &amp; reload</em> — the change
+                        is applied to the running mech and published on-chain in one step.
+                    </p>
                     <div id="tools-table">
                         <p style="color:var(--text-muted);">Loading...</p>
                     </div>
+                    <p id="tools-inline-error" style="display:none;margin-top:0.75rem;font-size:0.8rem;color:var(--error);"></p>
                 </div>
             </section>
 
@@ -467,6 +535,8 @@
         </main>
     </div>
 
+    <div id="toast-container" role="status" aria-live="polite"></div>
+
     <script>
     const authHeaders = (function() {
         const _t = '{{ auth_token }}';
@@ -476,6 +546,44 @@
     })();
     function authQueryParam() {
         return 'token=' + encodeURIComponent('{{ auth_token }}');
+    }
+
+    /**
+     * Show a transient notification in the bottom-right corner.
+     *
+     * @param {string} message - Plain text shown to the user.
+     * @param {'success'|'error'|'warning'} [type='success']
+     * @param {number} [durationMs=5000] - Auto-dismiss delay. Errors default
+     *     to 0 (persistent until the user dismisses) so they can't be missed.
+     */
+    function showToast(message, type, durationMs) {
+        type = type || 'success';
+        if (durationMs === undefined) {
+            durationMs = (type === 'error') ? 0 : 5000;
+        }
+        const container = document.getElementById('toast-container');
+        if (!container) return;
+        const toast = document.createElement('div');
+        toast.className = 'toast' + (type === 'error' ? ' toast-error' :
+                                     type === 'warning' ? ' toast-warning' : '');
+        const msg = document.createElement('span');
+        msg.style.flex = '1';
+        msg.textContent = message;
+        const close = document.createElement('button');
+        close.textContent = '×';
+        close.setAttribute('aria-label', 'Dismiss');
+        close.style.cssText = 'background:none;border:0;color:var(--text-muted);font-size:1.1rem;line-height:1;cursor:pointer;padding:0 0 0 0.25rem;';
+        const dismiss = () => {
+            toast.classList.add('toast-leaving');
+            setTimeout(() => { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 250);
+        };
+        close.onclick = dismiss;
+        toast.appendChild(msg);
+        toast.appendChild(close);
+        container.appendChild(toast);
+        if (durationMs > 0) {
+            setTimeout(dismiss, durationMs);
+        }
     }
 
     // --- State ---
@@ -1395,107 +1503,346 @@
     }
 
     // --- Tools tab ---
+    // State for the tools tab: persisted disabled set + pending UI changes
+    let toolsPersistedDisabled = new Set();
+    let toolsPendingDisabled = new Set();
+    // True while a save/reload/rescan request is in flight — used to lock
+    // all tool-related controls so the user can't race the UI against the
+    // server.
+    let toolsActionInFlight = false;
+
+    function toolsDirty() {
+        if (toolsPersistedDisabled.size !== toolsPendingDisabled.size) return true;
+        for (const n of toolsPersistedDisabled) {
+            if (!toolsPendingDisabled.has(n)) return true;
+        }
+        return false;
+    }
+
+    function setToolsTogglesEnabled(enabled) {
+        document.querySelectorAll('#tools-table input[type="checkbox"]').forEach(cb => {
+            cb.disabled = !enabled;
+        });
+    }
+
+    function updateToolsDirtyUI() {
+        const dirty = toolsDirty();
+        document.getElementById('tools-dirty-hint').style.display = dirty ? '' : 'none';
+        const saveBtn = document.getElementById('btn-save-tools');
+        const rescanBtn = document.getElementById('btn-rescan-tools');
+        const mdBtn = document.getElementById('btn-update-metadata');
+        if (toolsActionInFlight) {
+            saveBtn.disabled = true;
+            rescanBtn.disabled = true;
+            if (mdBtn) mdBtn.disabled = true;
+            setToolsTogglesEnabled(false);
+        } else {
+            saveBtn.disabled = !dirty;
+            rescanBtn.disabled = false;
+            if (mdBtn) mdBtn.disabled = false;
+            setToolsTogglesEnabled(true);
+        }
+    }
+
     async function loadToolsTab() {
+        // 1) On-chain metadata status (badge + Update metadata button)
         try {
             const res = await fetch('/api/metadata');
             const data = await res.json();
             if (data.error) {
                 document.getElementById('metadata-status-badge').textContent = 'Error';
-                return;
-            }
-            const badge = document.getElementById('metadata-status-badge');
-            const btn = document.getElementById('btn-update-metadata');
-            if (data.status === 'up_to_date') {
-                badge.className = 'staking-badge staking-staked';
-                badge.textContent = 'Up to date';
-                btn.style.display = 'none';
-            } else if (data.status === 'stale') {
-                badge.className = 'staking-badge staking-not_staked';
-                badge.textContent = 'Stale — local tools changed';
-                btn.style.display = '';
-                btn.textContent = 'Update metadata';
             } else {
-                badge.className = 'staking-badge staking-unknown';
-                badge.textContent = 'Not registered';
-                btn.style.display = '';
-                btn.textContent = 'Register metadata';
-            }
-            document.getElementById('local-hash').textContent = data.computed_hash ? data.computed_hash.slice(0, 24) + '...' : '-';
-            const cidEl = document.getElementById('ipfs-cid');
-            if (data.ipfs_cid) {
-                cidEl.textContent = '';
-                const a = document.createElement('a');
-                a.href = 'https://gateway.autonolas.tech/ipfs/' + encodeURIComponent(data.ipfs_cid);
-                a.target = '_blank';
-                a.rel = 'noopener';
-                a.style.cssText = 'color:var(--accent-color);text-decoration:none;';
-                a.textContent = data.ipfs_cid.slice(0, 24) + '...';
-                cidEl.appendChild(a);
-            } else {
-                cidEl.textContent = '-';
-            }
-            // Tools table
-            const container = document.getElementById('tools-table');
-            container.innerHTML = '';
-            if (!data.tools || data.tools.length === 0) {
-                container.textContent = 'No tools loaded.';
-            } else {
-                const grid = document.createElement('div');
-                grid.style.cssText = 'display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:0.5rem 1rem;font-size:0.85rem;';
-                ['Package', 'Type', 'Tool IDs', 'Version', 'Package CID'].forEach(h => {
-                    const s = document.createElement('span');
-                    s.style.cssText = 'color:var(--text-muted);font-weight:600;';
-                    s.textContent = h;
-                    grid.appendChild(s);
-                });
-                data.tools.forEach(t => {
-                    const name = document.createElement('span');
-                    name.textContent = t.name || '-';
-                    const src = document.createElement('span');
-                    const isCustom = t.source === 'custom';
-                    src.style.cssText = 'font-size:0.65rem;padding:1px 6px;border-radius:4px;font-weight:500;' +
-                        (isCustom ? 'background:rgba(155,89,182,0.15);color:#c39bd3;' : 'background:rgba(255,255,255,0.08);color:var(--text-muted);');
-                    src.textContent = isCustom ? 'CUSTOM' : 'BUILTIN';
-                    const ids = document.createElement('span');
-                    ids.style.color = 'var(--text-muted)';
-                    ids.textContent = (t.tools || []).join(', ');
-                    const ver = document.createElement('span');
-                    ver.style.cssText = 'font-family:var(--font-mono);font-size:0.75rem;';
-                    ver.textContent = t.version || '-';
-                    const cid = document.createElement('span');
-                    cid.style.cssText = 'font-family:var(--font-mono);font-size:0.75rem;color:var(--text-muted);';
-                    cid.textContent = t.package_cid ? t.package_cid.slice(0, 16) + '...' : '-';
-                    cid.title = t.package_cid || '';
-                    grid.appendChild(name);
-                    grid.appendChild(src);
-                    grid.appendChild(ids);
-                    grid.appendChild(ver);
-                    grid.appendChild(cid);
-                });
-                container.appendChild(grid);
+                const badge = document.getElementById('metadata-status-badge');
+                const btn = document.getElementById('btn-update-metadata');
+                if (data.status === 'up_to_date') {
+                    badge.className = 'staking-badge staking-staked';
+                    badge.textContent = 'Up to date';
+                    btn.style.display = 'none';
+                } else if (data.status === 'stale') {
+                    badge.className = 'staking-badge staking-not_staked';
+                    badge.textContent = 'Stale — local tools changed';
+                    btn.style.display = '';
+                    btn.textContent = 'Update metadata';
+                } else {
+                    badge.className = 'staking-badge staking-unknown';
+                    badge.textContent = 'Not registered';
+                    btn.style.display = '';
+                    btn.textContent = 'Register metadata';
+                }
+                document.getElementById('local-hash').textContent = data.computed_hash ? data.computed_hash.slice(0, 24) + '...' : '-';
+                const cidEl = document.getElementById('ipfs-cid');
+                if (data.ipfs_cid) {
+                    cidEl.textContent = '';
+                    const a = document.createElement('a');
+                    a.href = 'https://gateway.autonolas.tech/ipfs/' + encodeURIComponent(data.ipfs_cid);
+                    a.target = '_blank';
+                    a.rel = 'noopener';
+                    a.style.cssText = 'color:var(--accent-color);text-decoration:none;';
+                    a.textContent = data.ipfs_cid.slice(0, 24) + '...';
+                    cidEl.appendChild(a);
+                } else {
+                    cidEl.textContent = '-';
+                }
             }
         } catch (e) {
             document.getElementById('metadata-status-badge').textContent = 'Error';
         }
+
+        // 2) All available tool packages (with enabled flag) — for toggle switches
+        const container = document.getElementById('tools-table');
+        container.innerHTML = '';
+        let tools;
+        try {
+            const res = await fetch('/api/setup/tools');
+            tools = await res.json();
+        } catch (e) {
+            container.textContent = 'Failed to load tools: ' + e.message;
+            return;
+        }
+        if (!Array.isArray(tools) || tools.length === 0) {
+            container.textContent = 'No tools found in builtin or data/tools/.';
+            updateToolsDirtyUI();
+            return;
+        }
+
+        // Reset state from server truth
+        toolsPersistedDisabled = new Set(tools.filter(t => !t.enabled).map(t => t.name));
+        toolsPendingDisabled = new Set(toolsPersistedDisabled);
+
+        const grid = document.createElement('div');
+        grid.className = 'tool-row';
+        ['', 'Package', 'Type', 'Tool IDs', 'Version', 'Description'].forEach(h => {
+            const s = document.createElement('span');
+            s.className = 'tool-row-header';
+            s.textContent = h;
+            grid.appendChild(s);
+        });
+
+        tools.forEach(t => {
+            const label = document.createElement('label');
+            label.className = 'toggle';
+            label.title = 'Enable/disable ' + (t.name || 'tool');
+            const input = document.createElement('input');
+            input.type = 'checkbox';
+            input.checked = t.enabled;
+            // aria-label names the control; the checkbox's native `checked`
+            // state is already announced by screen readers, so we don't
+            // duplicate "enabled/disabled" in the label.
+            input.setAttribute('aria-label', t.name || 'tool');
+            const slider = document.createElement('span');
+            slider.className = 'slider';
+            slider.setAttribute('aria-hidden', 'true');
+            label.appendChild(input);
+            label.appendChild(slider);
+
+            const name = document.createElement('span');
+            name.textContent = t.name || '-';
+
+            const src = document.createElement('span');
+            const isCustom = t.source === 'custom';
+            src.style.cssText = 'font-size:0.65rem;padding:1px 6px;border-radius:4px;font-weight:500;' +
+                (isCustom ? 'background:rgba(155,89,182,0.15);color:#c39bd3;' : 'background:rgba(255,255,255,0.08);color:var(--text-muted);');
+            src.textContent = isCustom ? 'CUSTOM' : 'BUILTIN';
+
+            const ids = document.createElement('span');
+            ids.style.color = 'var(--text-muted)';
+            ids.textContent = (t.tools || []).join(', ');
+
+            const ver = document.createElement('span');
+            ver.style.cssText = 'font-family:var(--font-mono);font-size:0.75rem;';
+            ver.textContent = t.version || '-';
+
+            const desc = document.createElement('span');
+            desc.style.cssText = 'color:var(--text-muted);font-size:0.78rem;';
+            desc.textContent = t.description || '';
+
+            const cells = [label, name, src, ids, ver, desc];
+            const applyDim = (enabled) => {
+                cells.forEach(c => { c.style.opacity = enabled ? '' : '0.5'; });
+            };
+            applyDim(t.enabled);
+
+            input.onchange = () => {
+                if (input.checked) {
+                    toolsPendingDisabled.delete(t.name);
+                    applyDim(true);
+                } else {
+                    toolsPendingDisabled.add(t.name);
+                    applyDim(false);
+                }
+                updateToolsDirtyUI();
+            };
+
+            cells.forEach(c => grid.appendChild(c));
+        });
+        container.appendChild(grid);
+        updateToolsDirtyUI();
     }
 
-    async function startMetadataUpdate() {
-        const btn = document.getElementById('btn-update-metadata');
-        const progress = document.getElementById('metadata-progress');
-        const result = document.getElementById('metadata-result');
-        btn.disabled = true;
-        btn.textContent = 'Updating...';
-        progress.style.display = 'block';
-        progress.innerHTML = '';
-        result.style.display = 'none';
+    function _clearToolsInlineError() {
+        const el = document.getElementById('tools-inline-error');
+        if (el) { el.style.display = 'none'; el.textContent = ''; }
+    }
+
+    function _showToolsInlineError(msg) {
+        const el = document.getElementById('tools-inline-error');
+        if (!el) return;
+        el.textContent = msg;
+        el.style.display = '';
+    }
+
+    async function saveAndReloadTools() {
+        if (toolsActionInFlight) return;
+        const btn = document.getElementById('btn-save-tools');
+        // Snapshot the user's current selection — if they toggle while the
+        // request is in flight, the snapshot is what we actually sent, so
+        // we can reconcile state correctly on success/failure.
+        const snapshot = new Set(toolsPendingDisabled);
+        toolsActionInFlight = true;
+        _clearToolsInlineError();
+        btn.textContent = 'Saving…';
+        updateToolsDirtyUI();
+        let phase = 'save';
+        try {
+            // 1) Persist the disabled_tools list
+            const saveRes = await fetch('/api/setup/tools', {
+                method: 'POST',
+                headers: authHeaders({
+                    'Content-Type': 'application/json',
+                    'X-Micromech-Action': 'tools-save',
+                }),
+                body: JSON.stringify({ disabled_tools: Array.from(snapshot) }),
+            });
+            if (!saveRes.ok) {
+                const err = await saveRes.json().catch(() => ({}));
+                throw new Error(err.error || ('HTTP ' + saveRes.status));
+            }
+
+            // 2) Hot-reload the registry
+            phase = 'reload';
+            btn.textContent = 'Reloading…';
+            const reloadRes = await fetch('/api/tools/reload', {
+                method: 'POST',
+                headers: authHeaders({'X-Micromech-Action': 'tools-reload'}),
+            });
+            if (!reloadRes.ok) {
+                const err = await reloadRes.json().catch(() => ({}));
+                throw new Error(err.error || ('HTTP ' + reloadRes.status));
+            }
+
+            // Commit: the snapshot is what the server now knows.
+            toolsPersistedDisabled = new Set(snapshot);
+            toolsPendingDisabled = new Set(snapshot);
+
+            // 3) Publish metadata on-chain. The whole point of Save is to
+            // leave the mech in a consistent end-to-end state: config,
+            // in-memory registry, AND the on-chain ALLOWED_TOOLS.
+            phase = 'publish';
+            btn.textContent = 'Publishing…';
+            const publishOutcome = await publishMetadataStream();
+
+            // Refresh the whole Tools tab AFTER publish so the metadata
+            // card shows the new IPFS CID / on-chain hash. loadToolsTab
+            // reads /api/metadata which reflects the values metadata_manager
+            // persisted to config on successful publish.
+            try {
+                await loadToolsTab();
+            } catch (_refreshErr) {
+                // non-fatal — the action itself succeeded
+            }
+
+            if (publishOutcome.success) {
+                showToast('Tools updated. Metadata published on-chain.', 'success');
+            } else {
+                // Save + reload succeeded, but publish failed. Show a
+                // persistent inline error + a toast so the operator knows
+                // the local state is correct but the chain is out of sync.
+                _showToolsInlineError(
+                    'Tools applied locally, but on-chain publish failed: '
+                    + (publishOutcome.error || 'unknown')
+                    + '. Use "Update metadata" above to retry.'
+                );
+                showToast('Publish failed — tools applied locally only', 'warning');
+            }
+        } catch (e) {
+            // Recover: restore pending state to the last-known good
+            // persisted state so the UI stops advertising "Unsaved changes"
+            // against a value the server may have partially accepted.
+            toolsPendingDisabled = new Set(toolsPersistedDisabled);
+            const label = (phase === 'save') ? 'Save failed'
+                        : (phase === 'reload') ? 'Reload failed'
+                        : 'Publish failed';
+            _showToolsInlineError(label + ': ' + e.message);
+            showToast(label, 'error');
+        } finally {
+            toolsActionInFlight = false;
+            btn.textContent = 'Save & reload';
+            updateToolsDirtyUI();
+        }
+    }
+
+    async function rescanTools() {
+        if (toolsActionInFlight) return;
+        const btn = document.getElementById('btn-rescan-tools');
+        toolsActionInFlight = true;
+        _clearToolsInlineError();
+        btn.textContent = 'Scanning…';
+        updateToolsDirtyUI();
+        try {
+            const res = await fetch('/api/tools/reload', {
+                method: 'POST',
+                headers: authHeaders({'X-Micromech-Action': 'tools-reload'}),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || ('HTTP ' + res.status));
+            }
+            const data = await res.json();
+            const n = (data.tools || []).length;
+            try {
+                await loadToolsTab();
+            } catch (_refreshErr) { /* non-fatal */ }
+            showToast(
+                'Rescanned — ' + n + ' tool' + (n === 1 ? '' : 's') + ' active.',
+                'success',
+            );
+        } catch (e) {
+            _showToolsInlineError('Rescan failed: ' + e.message);
+            showToast('Rescan failed', 'error');
+        } finally {
+            toolsActionInFlight = false;
+            btn.textContent = 'Rescan';
+            updateToolsDirtyUI();
+        }
+    }
+
+    /**
+     * Drive the /api/metadata/publish SSE flow.
+     *
+     * Does NOT write anything to the DOM — the caller decides how to
+     * surface progress and outcome (button text, toast, inline error).
+     * Intermediate SSE steps are discarded; the detailed server log lines
+     * are already streamed to the Logs tab, so we don't duplicate them
+     * in the operator's face. An optional ``onStep`` callback lets
+     * callers react to phase changes (e.g., update button text).
+     *
+     * @param {(step: string) => void} [onStep]
+     * @returns {Promise<{success: boolean, error?: string}>}
+     */
+    async function publishMetadataStream(onStep) {
         try {
             const res = await fetch('/api/metadata/publish', {
                 method: 'POST',
-                headers: { 'X-Auth-Token': AUTH_TOKEN, 'X-Micromech-Action': 'metadata' },
+                headers: authHeaders({'X-Micromech-Action': 'metadata'}),
             });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                return { success: false, error: err.error || ('HTTP ' + res.status) };
+            }
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
             let buf = '';
+            let outcome = { success: false, error: 'stream ended without done event' };
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) break;
@@ -1507,22 +1854,33 @@
                     let evt;
                     try { evt = JSON.parse(line.slice(6)); } catch { continue; }
                     if (evt.step === 'done') {
-                        result.style.display = 'block';
-                        result.style.color = evt.success ? 'var(--success)' : 'var(--error)';
-                        result.textContent = evt.success ? 'Metadata published.' : ('Failed: ' + evt.error);
-                    } else {
-                        const p = document.createElement('div');
-                        p.style.color = 'var(--text-muted)';
-                        p.textContent = evt.message || evt.step;
-                        progress.appendChild(p);
+                        outcome = {
+                            success: !!evt.success,
+                            error: evt.error || undefined,
+                        };
+                    } else if (onStep) {
+                        onStep(evt.step || '');
                     }
                 }
             }
-            setTimeout(loadToolsTab, 1000);
+            return outcome;
         } catch (e) {
-            result.style.display = 'block';
-            result.style.color = 'var(--error)';
-            result.textContent = 'Connection lost: ' + e.message;
+            return { success: false, error: e.message };
+        }
+    }
+
+    async function startMetadataUpdate() {
+        const btn = document.getElementById('btn-update-metadata');
+        btn.disabled = true;
+        btn.textContent = 'Publishing…';
+        try {
+            const outcome = await publishMetadataStream();
+            if (outcome.success) {
+                showToast('Metadata published on-chain.', 'success');
+                await loadToolsTab();
+            } else {
+                showToast('Publish failed: ' + (outcome.error || 'unknown'), 'error');
+            }
         } finally {
             btn.disabled = false;
             btn.textContent = 'Update metadata';

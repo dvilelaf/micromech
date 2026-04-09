@@ -471,6 +471,33 @@ def web(
 
     mm = MetadataManager(cfg, tools_dirs=[_BUILTIN_TOOLS_DIR, CUSTOM_TOOLS_DIR])
 
+    async def _reload_tools() -> list[str]:
+        """Hot-reload delegator for the ``web`` command path.
+
+        The RuntimeManager lazily creates the MechServer inside start(),
+        so at web-app construction time ``mgr._server`` may be None. When
+        the runtime is not running, there is no in-memory registry to
+        swap — the disabled_tools change was already persisted to
+        config.yaml by the UI and will take effect on the next start().
+        """
+        server = getattr(mgr, "_server", None)
+        if server is None:
+            # Refresh the standalone registry used by the dashboard when
+            # the runtime is stopped, so the Tools tab reflects any new
+            # packages dropped into data/tools/.
+            from micromech.tools.registry import ToolRegistry
+
+            fresh_cfg = MicromechConfig.load()
+            disabled = (
+                set(fresh_cfg.disabled_tools) if fresh_cfg.disabled_tools else None
+            )
+            new_reg = ToolRegistry()
+            new_reg.load_builtins(disabled=disabled)
+            new_reg.load_custom(CUSTOM_TOOLS_DIR, disabled=disabled)
+            reg.swap_contents(new_reg)
+            return reg.tool_ids
+        return await server.reload_tools()
+
     web_app = create_web_app(
         get_status,
         get_recent,
@@ -479,6 +506,7 @@ def web(
         queue=queue,
         runtime_manager=mgr,
         metadata_manager=mm,
+        reload_tools=_reload_tools,
     )
 
     # Auto-start runtime if service is deployed and not --no-runtime

@@ -57,13 +57,40 @@ class MetadataManager:
         self.tools_dirs = tools_dirs or [_BUILTIN_TOOLS_DIR]
 
     def _scan_all(self) -> list[dict]:
-        """Scan all tools directories (builtin + custom), merged."""
+        """Scan all tools directories (builtin + custom), merged.
+
+        Packages listed in ``disabled_tools`` are excluded — the metadata
+        pipeline must reflect the same tool set the runtime actually
+        serves, otherwise on-chain ALLOWED_TOOLS would advertise tools
+        the mech cannot execute.
+
+        The disabled list is re-read from disk on every scan. Multiple
+        subsystems hold their own MicromechConfig references (RuntimeManager,
+        MechServer, this MetadataManager, the web setup handler), and the
+        ``POST /api/setup/tools`` handler saves to disk without touching
+        those in-memory copies. Re-reading here guarantees the metadata
+        pipeline always reflects what was last persisted, regardless of
+        which reference is stale.
+        """
         from micromech.ipfs.metadata import scan_tool_packages
+
+        try:
+            fresh = MicromechConfig.load()
+            disabled_list = fresh.disabled_tools or []
+            # Also propagate to the live config so publish() persists the
+            # correct value alongside the new metadata hashes.
+            self.config.disabled_tools = disabled_list
+        except Exception:
+            disabled_list = self.config.disabled_tools or []
+        disabled = set(disabled_list)
 
         tools: list[dict] = []
         for d in self.tools_dirs:
             source = "builtin" if d == _BUILTIN_TOOLS_DIR else "custom"
-            tools.extend(scan_tool_packages(d, source=source))
+            for t in scan_tool_packages(d, source=source):
+                if t["name"] in disabled:
+                    continue
+                tools.append(t)
         return tools
 
     def get_status(self) -> MetadataStatus:

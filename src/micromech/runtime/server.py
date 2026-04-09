@@ -76,6 +76,9 @@ class MechServer:
         self._executor_tasks: set[asyncio.Task] = set()
         # Dedup set to prevent double execution of the same request
         self._queued_ids: set[str] = set()
+        # Serializes reload_tools() calls — lazy-init on first async use
+        # because MechServer() can be constructed outside an event loop.
+        self._reload_lock: Optional[asyncio.Lock] = None
 
     def _load_tools(self) -> None:
         """Load tools (builtins + custom from data/tools/, respecting disabled list)."""
@@ -85,6 +88,52 @@ class MechServer:
         self.registry.load_builtins(disabled=disabled)
         self.registry.load_custom(CUSTOM_TOOLS_DIR, disabled=disabled)
         logger.info("Loaded tools: {}", self.registry.tool_ids)
+
+    async def reload_tools(self) -> list[str]:
+        """Hot-reload tools without restarting the server.
+
+        Re-reads ``disabled_tools`` from config on disk, rebuilds the registry
+        from scratch (builtins + custom) **in a worker thread** (so the event
+        loop stays responsive during filesystem + importlib work), then
+        atomically swaps the registry contents via
+        :meth:`ToolRegistry.swap_contents`.
+
+        A lock serializes concurrent reload calls. The config is only
+        mutated **after** the rebuild succeeds, so a failed reload leaves
+        server state unchanged.
+
+        In-flight executor lookups via ``registry.get()`` either see the
+        old or the new map — never a half-populated state.
+        """
+        if self._reload_lock is None:
+            self._reload_lock = asyncio.Lock()
+
+        async with self._reload_lock:
+            # Build the new registry off the event loop — YAML parsing,
+            # importlib, rglob() are all blocking I/O.
+            fresh_cfg, new_registry = await asyncio.to_thread(
+                self._build_reloaded_registry,
+            )
+            # Only mutate shared state after a successful rebuild.
+            self.config.disabled_tools = fresh_cfg.disabled_tools
+            self.registry.swap_contents(new_registry)
+            logger.info("Tools hot-reloaded: {}", self.registry.tool_ids)
+            return self.registry.tool_ids
+
+    def _build_reloaded_registry(self) -> tuple[MicromechConfig, ToolRegistry]:
+        """Synchronous worker for :meth:`reload_tools` — runs in a thread.
+
+        Returns the freshly-loaded config and a fully-populated registry.
+        Any exception aborts the reload with no side effects on the server.
+        """
+        from micromech.core.constants import CUSTOM_TOOLS_DIR
+
+        fresh = MicromechConfig.load()
+        disabled = set(fresh.disabled_tools) if fresh.disabled_tools else None
+        new_registry = ToolRegistry()
+        new_registry.load_builtins(disabled=disabled)
+        new_registry.load_custom(CUSTOM_TOOLS_DIR, disabled=disabled)
+        return fresh, new_registry
 
     async def _recover(self) -> None:
         """Recover interrupted requests from DB on startup.
@@ -279,6 +328,7 @@ class MechServer:
             queue=self.queue,
             metrics=self.metrics,
             metadata_manager=mm,
+            reload_tools=self.reload_tools,
         )
         app.mount("/dashboard", web_app)
 

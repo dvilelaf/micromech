@@ -45,6 +45,9 @@ _RATE_LIMITS: dict[str, tuple[int, int]] = {
     "/api/setup/wallet": (10, 60),  # 10 attempts per minute (brute-force protection)
     "/request": (60, 60),  # 60 requests per minute
     "/api/metadata/publish": (3, 60),  # 3 per minute (each costs gas)
+    # Hot-reload does filesystem I/O and importlib — cap to avoid DoS via
+    # an authenticated attacker spamming reloads.
+    "/api/tools/reload": (6, 60),
 }
 _MAX_TRACKED_IPS = 1000
 _rate_counters: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
@@ -229,6 +232,7 @@ def create_web_app(
     metrics: "MetricsCollector | None" = None,
     runtime_manager: "Any | None" = None,
     metadata_manager: "Any | None" = None,
+    reload_tools: Optional[Callable[[], list[str]]] = None,
 ) -> FastAPI:
     """Create the web UI FastAPI app.
 
@@ -692,8 +696,50 @@ def create_web_app(
         return {
             "status": "saved",
             "disabled_tools": disabled,
-            "restart_required": True,
+            "hot_reloadable": reload_tools is not None,
         }
+
+    @app.post("/api/tools/reload")
+    async def api_tools_reload(request: Request):
+        """Hot-reload the tool registry (builtins + custom), honoring disabled_tools.
+
+        Must be called AFTER saving disabled_tools via POST /api/setup/tools.
+        Returns the new list of active tool IDs.
+        """
+        auth_err = _check_auth(request)
+        if auth_err:
+            return auth_err
+        csrf = request.headers.get(CSRF_HEADER)
+        if not csrf:
+            return JSONResponse({"error": f"Missing {CSRF_HEADER} header"}, 403)
+        if _rate_limited("/api/tools/reload", _get_client_ip(request)):
+            return JSONResponse(
+                {"error": "Rate limit exceeded — too many reload attempts"},
+                429,
+            )
+        if reload_tools is None:
+            return JSONResponse(
+                {"error": "Hot reload not available (server not wired)"},
+                501,
+            )
+        try:
+            result = reload_tools()
+            # Support both sync and async reload_tools implementations so
+            # tests (which pass simple lambdas) and the real async server
+            # method can share this endpoint.
+            if asyncio.iscoroutine(result):
+                tool_ids = await result
+            else:
+                tool_ids = result
+        except Exception as e:
+            # Log full error internally, return a generic message to avoid
+            # leaking filesystem paths or stack traces to the client.
+            logger.error("Tool hot-reload failed: {}", e)
+            return JSONResponse(
+                {"error": "Tool reload failed — see server logs"},
+                500,
+            )
+        return {"status": "reloaded", "tools": tool_ids}
 
     # --- Metadata API ---
 

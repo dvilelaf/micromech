@@ -46,6 +46,115 @@ class TestMechServerInit:
         assert server.registry.has("echo")
         server.shutdown()
 
+    @pytest.mark.asyncio
+    async def test_reload_tools_honors_disabled(self, server_config, monkeypatch):
+        """reload_tools() re-reads disabled_tools from disk and rebuilds registry."""
+        server = MechServer(server_config)
+        server._load_tools()
+        assert server.registry.has("echo")
+
+        # Simulate user saving disabled_tools via the web UI — MicromechConfig.load()
+        # returns a fresh config with echo_tool disabled.
+        fresh_cfg = MicromechConfig(
+            chains=server_config.chains,
+            disabled_tools=["echo_tool"],
+        )
+        monkeypatch.setattr(
+            "micromech.runtime.server.MicromechConfig.load",
+            classmethod(lambda cls: fresh_cfg),
+        )
+
+        tool_ids = await server.reload_tools()
+        assert "echo" not in tool_ids
+        assert not server.registry.has("echo")
+        # Server state updated
+        assert server.config.disabled_tools == ["echo_tool"]
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_reload_tools_restores_after_re_enable(self, server_config, monkeypatch):
+        """Toggling a tool off and on again re-registers it."""
+        server = MechServer(server_config)
+        server._load_tools()
+
+        # Disable
+        disabled_cfg = MicromechConfig(
+            chains=server_config.chains,
+            disabled_tools=["echo_tool"],
+        )
+        monkeypatch.setattr(
+            "micromech.runtime.server.MicromechConfig.load",
+            classmethod(lambda cls: disabled_cfg),
+        )
+        await server.reload_tools()
+        assert not server.registry.has("echo")
+
+        # Re-enable
+        enabled_cfg = MicromechConfig(
+            chains=server_config.chains,
+            disabled_tools=[],
+        )
+        monkeypatch.setattr(
+            "micromech.runtime.server.MicromechConfig.load",
+            classmethod(lambda cls: enabled_cfg),
+        )
+        await server.reload_tools()
+        assert server.registry.has("echo")
+        # And the re-enabled tool is actually usable via registry.get()
+        assert server.registry.get("echo") is not None
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_reload_tools_atomic_swap_preserves_registry_identity(
+        self, server_config, monkeypatch
+    ):
+        """Executor holds registry ref; the object identity must not change,
+        but the internal dict MUST be a different object after swap."""
+        server = MechServer(server_config)
+        server._load_tools()
+        registry_before = server.registry
+        tools_dict_before = server.registry._tools
+        assert server.executor.registry is registry_before
+
+        fresh_cfg = MicromechConfig(chains=server_config.chains, disabled_tools=[])
+        monkeypatch.setattr(
+            "micromech.runtime.server.MicromechConfig.load",
+            classmethod(lambda cls: fresh_cfg),
+        )
+        await server.reload_tools()
+        # Outer object identity preserved (executor ref stays valid).
+        assert server.registry is registry_before
+        assert server.executor.registry is registry_before
+        # But the internal dict was actually swapped for a new one.
+        assert server.registry._tools is not tools_dict_before
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_reload_tools_leaves_state_unchanged_on_failure(
+        self, server_config, monkeypatch
+    ):
+        """If the rebuild raises, config.disabled_tools must NOT mutate and
+        the registry must keep the previous contents."""
+        server = MechServer(server_config)
+        server._load_tools()
+        original_disabled = list(server.config.disabled_tools)
+        tools_before = dict(server.registry._tools)
+
+        def explode(self):  # noqa: ARG001
+            raise RuntimeError("simulated rebuild failure")
+
+        monkeypatch.setattr(
+            "micromech.runtime.server.MechServer._build_reloaded_registry",
+            explode,
+        )
+
+        with pytest.raises(RuntimeError, match="simulated rebuild failure"):
+            await server.reload_tools()
+
+        assert server.config.disabled_tools == original_disabled
+        assert server.registry._tools == tools_before
+        server.shutdown()
+
     def test_get_status_stopped(self, server_config):
         server = MechServer(server_config)
         server._load_tools()

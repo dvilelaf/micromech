@@ -129,6 +129,78 @@ class TestMetadataManager:
         assert status.needs_update is False
         assert status.changed_packages == []
 
+    def test_scan_all_excludes_disabled_tools(self):
+        """_scan_all must filter out packages listed in disabled_tools."""
+        from micromech.metadata_manager import MetadataManager
+
+        config = make_test_config()
+        mm = MetadataManager(config)
+
+        # Baseline — no disabled tools, count all packages.
+        all_tools = mm._scan_all()
+        all_names = {t["name"] for t in all_tools}
+        assert "echo_tool" in all_names, "fixture expects echo_tool in builtins"
+
+        # Disable echo_tool and re-scan; it must disappear.
+        config.disabled_tools = ["echo_tool"]
+        filtered = mm._scan_all()
+        filtered_names = {t["name"] for t in filtered}
+        assert "echo_tool" not in filtered_names
+        assert len(filtered) == len(all_tools) - 1
+
+    def test_disabling_a_tool_changes_computed_hash(self):
+        """Toggling a tool off MUST change the metadata computed_hash —
+        otherwise the on-chain ALLOWED_TOOLS would stay stale forever."""
+        from micromech.metadata_manager import MetadataManager
+
+        config = make_test_config()
+        mm = MetadataManager(config)
+
+        status_before = mm.get_status()
+        hash_before = status_before.computed_hash
+
+        config.disabled_tools = ["echo_tool"]
+        status_after = mm.get_status()
+        hash_after = status_after.computed_hash
+
+        assert hash_before != hash_after, (
+            "computed_hash should change when disabled_tools changes — "
+            "otherwise the metadata pipeline ignores disabled tools"
+        )
+
+    def test_scan_all_rereads_disabled_from_disk(self, tmp_path, monkeypatch):
+        """_scan_all() must honor whatever is on disk, even if the live
+        MicromechConfig instance in memory is stale (which happens because
+        POST /api/setup/tools writes to disk without touching the
+        in-memory copy held by MetadataManager)."""
+        from micromech.metadata_manager import MetadataManager
+
+        config = make_test_config()
+        mm = MetadataManager(config)
+        # In-memory is empty
+        assert config.disabled_tools == []
+
+        # Simulate POST /api/setup/tools: a DIFFERENT config instance is
+        # loaded, mutated and saved to disk. Our in-memory `config` is
+        # never touched.
+        on_disk = make_test_config()
+        on_disk.disabled_tools = ["echo_tool"]
+
+        def fake_load(cls=None):
+            return on_disk
+
+        monkeypatch.setattr(
+            "micromech.metadata_manager.MicromechConfig.load",
+            classmethod(lambda cls: on_disk),
+        )
+
+        tools = mm._scan_all()
+        names = {t["name"] for t in tools}
+        assert "echo_tool" not in names
+        # Propagation side-effect: live config was updated too, so a
+        # subsequent publish() persists the correct disabled list.
+        assert config.disabled_tools == ["echo_tool"]
+
     @pytest.mark.asyncio
     async def test_publish_ipfs_only(self):
         """Publish with skip_onchain pushes to IPFS but doesn't call changeHash."""

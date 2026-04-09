@@ -126,6 +126,18 @@ class ToolRegistry:
         """List all registered tool IDs."""
         return list(self._tools.keys())
 
+    def swap_contents(self, other: "ToolRegistry") -> None:
+        """Atomically replace this registry's contents with another's.
+
+        Used by ``MechServer.reload_tools()`` to hot-reload tools without
+        breaking executor references. The executor holds a reference to the
+        outer registry object, so we mutate the internal dict in place with
+        a single assignment — which is atomic under CPython's GIL, so an
+        in-flight ``get()`` either sees the old or the new map, never a
+        half-populated state.
+        """
+        self._tools = other._tools
+
     def _load_tool_package(
         self,
         tool_id: str,
@@ -170,12 +182,19 @@ class ToolRegistry:
         allow_override = origin == "builtin"
         loaded = 0
 
+        from micromech.ipfs.metadata import _is_safe_entry_point
+
         for tool_dir in sorted(tools_dir.iterdir()):
+            # Reject symlinked tool directories (defense in depth — same
+            # check is applied in scan_tool_packages).
+            if tool_dir.is_symlink():
+                logger.warning("Skipping symlinked tool dir: {}", tool_dir)
+                continue
             if not tool_dir.is_dir():
                 continue
 
             component_yaml = tool_dir / "component.yaml"
-            if not component_yaml.exists():
+            if not component_yaml.exists() or component_yaml.is_symlink():
                 continue
 
             try:
@@ -190,6 +209,12 @@ class ToolRegistry:
                 continue
 
             entry_point = spec.get("entry_point", f"{name}.py")
+            # Block path traversal via a crafted component.yaml.
+            if not _is_safe_entry_point(entry_point, tool_dir):
+                logger.warning(
+                    "Skipping tool {}: unsafe entry_point {!r}", name, entry_point
+                )
+                continue
             entry_module = entry_point.removesuffix(".py")
             description = spec.get("description", "")
             version = spec.get("version", "0.1.0")

@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from micromech.ipfs.metadata import (
@@ -176,6 +177,64 @@ class TestScanToolPackagesErrors:
         assert len(tools) == 1
         assert tools[0]["name"] == "broken_tool"
         assert tools[0]["allowed_tools"] == []
+
+
+class TestScanToolPackagesSecurity:
+    """Path-traversal / symlink protections in scan_tool_packages."""
+
+    @pytest.mark.parametrize(
+        "entry_point",
+        [
+            "../../etc/passwd",
+            "/etc/passwd",
+            "..\\windows\\system32",
+            "foo/bar.py",
+            ".hidden.py",
+            "not_a_python_file.sh",
+            "",
+            "foo..py",  # double dots — regression for round-2 finding
+            "..py",
+        ],
+    )
+    def test_scan_rejects_unsafe_entry_point(self, tmp_path: Path, entry_point):
+        tool_dir = tmp_path / "sneaky_tool"
+        tool_dir.mkdir()
+        spec = {"name": "sneaky", "entry_point": entry_point}
+        (tool_dir / "component.yaml").write_text(yaml.dump(spec))
+        # Create a dummy file so the test doesn't accidentally pass due to
+        # a missing-file short-circuit elsewhere.
+        (tool_dir / "sneaky.py").write_text("ALLOWED_TOOLS = ['sneaky']")
+
+        tools = scan_tool_packages(tmp_path)
+        assert tools == [], f"entry_point {entry_point!r} should be rejected"
+
+    def test_scan_rejects_symlinked_tool_dir(self, tmp_path: Path):
+        """A symlinked tool package must not be followed."""
+        real = tmp_path / "real_tool"
+        real.mkdir()
+        spec = {"name": "real", "entry_point": "real.py"}
+        (real / "component.yaml").write_text(yaml.dump(spec))
+        (real / "real.py").write_text("ALLOWED_TOOLS = ['real']")
+
+        # Scan a different directory that contains a symlink to `real`.
+        scan_dir = tmp_path / "scan_dir"
+        scan_dir.mkdir()
+        (scan_dir / "symlinked").symlink_to(real, target_is_directory=True)
+
+        tools = scan_tool_packages(scan_dir)
+        assert tools == []
+
+    def test_scan_accepts_safe_entry_point(self, tmp_path: Path):
+        """Baseline — the safe-path spec still works."""
+        tool_dir = tmp_path / "good_tool"
+        tool_dir.mkdir()
+        spec = {"name": "good", "entry_point": "good.py"}
+        (tool_dir / "component.yaml").write_text(yaml.dump(spec))
+        (tool_dir / "good.py").write_text("ALLOWED_TOOLS = ['good']")
+
+        tools = scan_tool_packages(tmp_path)
+        assert len(tools) == 1
+        assert tools[0]["name"] == "good"
 
 
 class TestComputeOnchainHash:

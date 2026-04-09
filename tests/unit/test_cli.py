@@ -192,6 +192,32 @@ class TestWebCommand:
         assert "9999" in result.output
         mock_uvicorn_run.assert_called_once()
 
+    @patch("uvicorn.run")
+    @patch("micromech.web.app.create_web_app")
+    def test_web_wires_reload_tools_callable(
+        self,
+        mock_create_web_app,
+        mock_uvicorn_run,
+        tmp_path: Path,
+        monkeypatch,
+    ):
+        """Regression: the `web` command must pass a reload_tools callable
+        through to create_web_app — otherwise the dashboard Tools tab
+        returns 501 'Hot reload not available (server not wired)'."""
+        monkeypatch.setattr("micromech.cli.DB_PATH", tmp_path / "test.db")
+        config_path = tmp_path / "config.yaml"
+        MicromechConfig().save(config_path)
+
+        runner.invoke(app, ["web", "--config", str(config_path), "--port", "9999"])
+
+        mock_create_web_app.assert_called_once()
+        _, kwargs = mock_create_web_app.call_args
+        assert "reload_tools" in kwargs, (
+            "web command must wire reload_tools through to create_web_app"
+        )
+        assert kwargs["reload_tools"] is not None
+        assert callable(kwargs["reload_tools"])
+
 
 class TestFingerprintCommand:
     @patch("micromech.ipfs.metadata.fingerprint_all_builtins")

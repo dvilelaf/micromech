@@ -99,6 +99,24 @@ class TestDashboard:
         assert "setup" in resp.text.lower()
         assert "micromech" in resp.text.lower()
 
+    @patch("micromech.web.app._needs_setup", return_value=False)
+    def test_dashboard_js_does_not_reference_undefined_auth_token(
+        self, mock_setup, web_client: TestClient
+    ):
+        """Regression: dashboard.html must use authHeaders() / authQueryParam(),
+        never a bare AUTH_TOKEN identifier (which is not declared)."""
+        resp = web_client.get(f"/?token={AUTH_TOKEN}")
+        assert resp.status_code == 200
+        # A bare AUTH_TOKEN reference would be a ReferenceError in the browser.
+        # Rule out `X-Auth-Token:` header literals and the authHeaders helper.
+        import re
+
+        matches = re.findall(r"(?<![\w-])AUTH_TOKEN(?![\w-])", resp.text)
+        assert matches == [], (
+            f"dashboard.html references undefined AUTH_TOKEN identifier "
+            f"({len(matches)} occurrences). Use authHeaders() instead."
+        )
+
 
 class TestAPIEndpoints:
     def test_api_status(self, web_client: TestClient):
@@ -382,6 +400,141 @@ class TestManagementAPI:
             headers={"X-Micromech-Action": "test"},
         )
         assert resp.status_code == 401
+
+
+class TestToolsHotReload:
+    """Tests for /api/tools/reload and /api/setup/tools save flow."""
+
+    CSRF = {"X-Micromech-Action": "tools", "X-Auth-Token": AUTH_TOKEN}
+
+    def _make_client(self, reload_tools_fn=None) -> TestClient:
+        async def on_request(req):
+            pass
+
+        app = create_web_app(
+            get_status=lambda: {"status": "running"},
+            get_recent=lambda lim, chain=None: [],
+            get_tools=lambda: [],
+            on_request=on_request,
+            reload_tools=reload_tools_fn,
+        )
+        return TestClient(app)
+
+    def test_reload_success(self):
+        called = {"n": 0}
+
+        def fake_reload():
+            called["n"] += 1
+            return ["echo", "another"]
+
+        client = self._make_client(reload_tools_fn=fake_reload)
+        resp = client.post("/api/tools/reload", headers=self.CSRF)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "reloaded"
+        assert data["tools"] == ["echo", "another"]
+        assert called["n"] == 1
+
+    def test_reload_not_wired_returns_501(self):
+        """If the server wasn't wired with reload_tools, endpoint reports 501."""
+        client = self._make_client(reload_tools_fn=None)
+        resp = client.post("/api/tools/reload", headers=self.CSRF)
+        assert resp.status_code == 501
+        assert "not available" in resp.json()["error"].lower()
+
+    def test_reload_requires_csrf(self):
+        client = self._make_client(reload_tools_fn=lambda: [])
+        resp = client.post(
+            "/api/tools/reload",
+            headers={"X-Auth-Token": AUTH_TOKEN},
+        )
+        assert resp.status_code == 403
+
+    def test_reload_requires_auth(self):
+        client = self._make_client(reload_tools_fn=lambda: [])
+        resp = client.post(
+            "/api/tools/reload",
+            headers={"X-Micromech-Action": "tools"},
+        )
+        assert resp.status_code == 401
+
+    def test_reload_sanitizes_error_response(self):
+        """The 500 response must NOT leak the raw exception message —
+        it could contain filesystem paths or stack details."""
+        def broken_reload():
+            raise RuntimeError("/opt/secret/wallet.json: permission denied")
+
+        client = self._make_client(reload_tools_fn=broken_reload)
+        resp = client.post("/api/tools/reload", headers=self.CSRF)
+        assert resp.status_code == 500
+        body = resp.json()
+        assert "/opt/secret/wallet.json" not in body["error"]
+        assert "permission denied" not in body["error"]
+        assert "reload failed" in body["error"].lower()
+
+    def test_reload_supports_async_callable(self):
+        """The endpoint must await coroutine-returning reloaders so the
+        real MechServer.reload_tools (which is async) works."""
+        async def async_reload():
+            return ["echo", "llm"]
+
+        client = self._make_client(reload_tools_fn=async_reload)
+        resp = client.post("/api/tools/reload", headers=self.CSRF)
+        assert resp.status_code == 200
+        assert resp.json()["tools"] == ["echo", "llm"]
+
+    def test_reload_is_rate_limited(self):
+        """Too many reloads from the same client get 429."""
+        from micromech.web.app import _RATE_LIMITS, _rate_counters
+
+        # Clear state so other tests don't poison the counter.
+        _rate_counters.clear()
+        max_req, _window = _RATE_LIMITS["/api/tools/reload"]
+
+        client = self._make_client(reload_tools_fn=lambda: [])
+        for _ in range(max_req):
+            resp = client.post("/api/tools/reload", headers=self.CSRF)
+            assert resp.status_code == 200
+        resp = client.post("/api/tools/reload", headers=self.CSRF)
+        assert resp.status_code == 429
+        assert "rate limit" in resp.json()["error"].lower()
+        _rate_counters.clear()
+
+    @patch("micromech.web.app.MicromechConfig")
+    def test_setup_tools_save_reports_hot_reloadable(self, mock_cfg_cls):
+        """POST /api/setup/tools returns hot_reloadable=True when wired."""
+        mock_cfg = MagicMock()
+        mock_cfg.disabled_tools = []
+        mock_cfg_cls.load.return_value = mock_cfg
+
+        client = self._make_client(reload_tools_fn=lambda: [])
+        resp = client.post(
+            "/api/setup/tools",
+            json={"disabled_tools": ["echo_tool"]},
+            headers=self.CSRF,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "saved"
+        assert data["disabled_tools"] == ["echo_tool"]
+        assert data["hot_reloadable"] is True
+        mock_cfg.save.assert_called_once()
+
+    @patch("micromech.web.app.MicromechConfig")
+    def test_setup_tools_save_without_reload_wired(self, mock_cfg_cls):
+        """When reload_tools is not wired, hot_reloadable is False."""
+        mock_cfg = MagicMock()
+        mock_cfg.disabled_tools = []
+        mock_cfg_cls.load.return_value = mock_cfg
+
+        client = self._make_client(reload_tools_fn=None)
+        resp = client.post(
+            "/api/setup/tools",
+            json={"disabled_tools": []},
+            headers=self.CSRF,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["hot_reloadable"] is False
 
 
 class TestRecordToDict:

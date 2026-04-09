@@ -6,6 +6,7 @@ This metadata is pushed to IPFS and its hash stored on-chain via changeHash().
 
 import ast
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,38 @@ import yaml
 from loguru import logger
 
 from micromech.ipfs.client import cid_hex_to_multihash_bytes, compute_cid, compute_cid_hex
+
+# Accept only simple file names: alnum / underscore / hyphen / dot, ending in .py.
+# Rejects path separators, parent refs (..), absolute paths, hidden files,
+# and consecutive dots (via negative lookahead).
+_SAFE_ENTRY_POINT_RE = re.compile(
+    r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_.\-]*\.py$"
+)
+
+
+def _is_safe_entry_point(entry_point: str, tool_dir: Path) -> bool:
+    """Return True if *entry_point* is a plain filename inside *tool_dir*.
+
+    Rejects path separators, parent refs, and symlinks that escape the tool
+    directory. This is the last line of defense against a malicious
+    ``component.yaml`` crafted to load arbitrary Python files.
+    """
+    if not entry_point or not _SAFE_ENTRY_POINT_RE.match(entry_point):
+        return False
+    candidate = (tool_dir / entry_point).resolve()
+    try:
+        tool_root = tool_dir.resolve()
+    except OSError:
+        return False
+    try:
+        candidate.relative_to(tool_root)
+    except ValueError:
+        return False
+    # Reject symlinks that point outside the tool tree even if the resolved
+    # target happens to land back inside.
+    if (tool_dir / entry_point).is_symlink():
+        return False
+    return True
 
 
 def _parse_allowed_tools(module_path: Path) -> list[str]:
@@ -63,11 +96,17 @@ def scan_tool_packages(
         return tools
 
     for tool_dir in sorted(tools_dir.iterdir()):
+        # Reject symlinked tool directories to prevent an operator (or an
+        # attacker with write access to data/tools/) from symlinking
+        # arbitrary host paths into the scan.
+        if tool_dir.is_symlink():
+            logger.warning("Skipping symlinked tool dir: {}", tool_dir)
+            continue
         if not tool_dir.is_dir():
             continue
 
         component_yaml = tool_dir / "component.yaml"
-        if not component_yaml.exists():
+        if not component_yaml.exists() or component_yaml.is_symlink():
             continue
 
         try:
@@ -80,6 +119,14 @@ def scan_tool_packages(
         description = spec.get("description", "")
         version = spec.get("version", "0.1.0")
         entry_point = spec.get("entry_point", f"{name}.py")
+
+        # Validate entry_point is a plain filename inside tool_dir (blocks
+        # crafted component.yaml with "entry_point: ../../etc/passwd").
+        if not _is_safe_entry_point(entry_point, tool_dir):
+            logger.warning(
+                "Skipping tool {}: unsafe entry_point {!r}", name, entry_point
+            )
+            continue
 
         # Extract ALLOWED_TOOLS via AST (no code execution)
         allowed_tools = []
