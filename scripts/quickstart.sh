@@ -335,17 +335,30 @@ echo -e "${GREEN}Docker is ready.${NC}"
 echo
 
 # 2. Setup Directory
-DIR_NAME="micromech"
-echo -e "${BLUE}📂 Setting up directory '$DIR_NAME'...${NC}"
-
-if [ -d "$DIR_NAME" ]; then
-    echo -e "Directory '$DIR_NAME' already exists. Updating config files..."
-    echo -e "(Your data/ and secrets.env are preserved.)"
-    cd "$DIR_NAME"
+# When run as root (e.g. via sudo), install to /opt/micromech.
+# Otherwise, create a 'micromech' subdir in the current directory.
+if [ "$(id -u)" = "0" ]; then
+    INSTALL_DIR="/opt/micromech"
+    # Keep ownership of files for the user who invoked sudo (if known)
+    REAL_USER="${SUDO_USER:-root}"
 else
-    mkdir -p "$DIR_NAME/data"
-    cd "$DIR_NAME"
+    INSTALL_DIR="$(pwd)/micromech"
+    REAL_USER="$(id -un)"
 fi
+
+echo -e "${BLUE}📂 Setting up directory '$INSTALL_DIR'...${NC}"
+
+if [ -d "$INSTALL_DIR" ]; then
+    echo -e "Directory already exists. Updating config files..."
+    echo -e "(Your data/ and secrets.env are preserved.)"
+else
+    mkdir -p "$INSTALL_DIR/data"
+    # Give ownership to the real (non-root) user so they can manage it without sudo
+    if [ "$REAL_USER" != "root" ]; then
+        chown -R "$REAL_USER":"$REAL_USER" "$INSTALL_DIR"
+    fi
+fi
+cd "$INSTALL_DIR"
 
 # Extract artifacts from Docker image
 IMAGE="$MICROMECH_IMAGE"
@@ -389,7 +402,7 @@ echo
 echo -e "${GREEN}🎉 Setup Complete!${NC}"
 echo
 echo -e "Next steps:"
-echo -e "1. Edit secrets (optional):  ${BLUE}nano $DIR_NAME/secrets.env${NC}"
-echo -e "2. Start micromech:          ${BLUE}cd $DIR_NAME && docker compose up -d${NC}"
-echo -e "3. Open the dashboard:       ${BLUE}http://localhost:8090${NC}"
+echo -e "1. Start micromech:    ${BLUE}cd $INSTALL_DIR && docker compose up -d${NC}"
+echo -e "2. Open the dashboard: ${BLUE}http://localhost:8090${NC}"
+echo -e "   (configure secrets, RPC endpoints and Telegram from the Setup tab)"
 echo
