@@ -129,12 +129,19 @@ class TestMetadataManager:
         assert status.needs_update is False
         assert status.changed_packages == []
 
-    def test_scan_all_excludes_disabled_tools(self):
+    def test_scan_all_excludes_disabled_tools(self, monkeypatch):
         """_scan_all must filter out packages listed in disabled_tools."""
         from micromech.metadata_manager import MetadataManager
 
         config = make_test_config()
         mm = MetadataManager(config)
+
+        # Make MicromechConfig.load() return our test config so that the
+        # disk re-read in _scan_all() picks up in-memory mutations.
+        monkeypatch.setattr(
+            "micromech.metadata_manager.MicromechConfig.load",
+            classmethod(lambda cls: config),
+        )
 
         # Baseline — no disabled tools, count all packages.
         all_tools = mm._scan_all()
@@ -148,13 +155,20 @@ class TestMetadataManager:
         assert "echo_tool" not in filtered_names
         assert len(filtered) == len(all_tools) - 1
 
-    def test_disabling_a_tool_changes_computed_hash(self):
+    def test_disabling_a_tool_changes_computed_hash(self, monkeypatch):
         """Toggling a tool off MUST change the metadata computed_hash —
         otherwise the on-chain ALLOWED_TOOLS would stay stale forever."""
         from micromech.metadata_manager import MetadataManager
 
         config = make_test_config()
         mm = MetadataManager(config)
+
+        # Make MicromechConfig.load() return our test config so that the
+        # disk re-read in _scan_all() picks up in-memory mutations.
+        monkeypatch.setattr(
+            "micromech.metadata_manager.MicromechConfig.load",
+            classmethod(lambda cls: config),
+        )
 
         status_before = mm.get_status()
         hash_before = status_before.computed_hash
