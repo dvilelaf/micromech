@@ -11,7 +11,7 @@ import threading
 import time
 from collections import defaultdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from fastapi import FastAPI, Header, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
@@ -232,7 +232,7 @@ def create_web_app(
     metrics: "MetricsCollector | None" = None,
     runtime_manager: "Any | None" = None,
     metadata_manager: "Any | None" = None,
-    reload_tools: Optional[Callable[[], list[str]]] = None,
+    reload_tools: Optional[Callable[[], list[str] | Awaitable[list[str]]]] = None,
 ) -> FastAPI:
     """Create the web UI FastAPI app.
 
