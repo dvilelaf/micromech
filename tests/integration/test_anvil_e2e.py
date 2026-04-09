@@ -56,7 +56,8 @@ OLAS_BALANCE_SLOT = 3  # ERC20 balanceOf mapping slot
 SUPPLY_STAKING_ADDR = "0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44"
 MECH_FACTORY = "0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF"
 TOKEN_UTILITY = "0xa45E64d13A30a51b91ae0eb182e88a40e9b18eD8"
-N_LIFECYCLE_REQUESTS = 5
+ACTIVITY_CHECKER_ADDR = "0x7ac6030aCcc7041070F8be2a83bE4f6bC4fF720f"
+_LIVENESS_RATIO_ABI = [{"inputs":[],"name":"livenessRatio","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"}]
 
 
 def _load_abi(name: str) -> list:
@@ -844,6 +845,55 @@ def _approve_olas(w3, owner, spender, amount):
     w3.eth.wait_for_transaction_receipt(tx)
 
 
+SAFE_ABI = [{
+    "inputs": [
+        {"name": "to", "type": "address"},
+        {"name": "value", "type": "uint256"},
+        {"name": "data", "type": "bytes"},
+        {"name": "operation", "type": "uint8"},
+        {"name": "safeTxGas", "type": "uint256"},
+        {"name": "baseGas", "type": "uint256"},
+        {"name": "gasPrice", "type": "uint256"},
+        {"name": "gasToken", "type": "address"},
+        {"name": "refundReceiver", "type": "address"},
+        {"name": "signatures", "type": "bytes"},
+    ],
+    "name": "execTransaction",
+    "outputs": [{"name": "success", "type": "bool"}],
+    "stateMutability": "payable",
+    "type": "function",
+}]
+
+
+def _execute_safe_tx(w3: Web3, safe_address: str, agent_address: str, to_address: str, data: bytes, value: int = 0) -> None:
+    """Execute a Safe transaction natively using Caller Signatures (v=1).
+    
+    Proves the actual Safe contract execution path instead of impersonating it.
+    Requires `agent_address` to be an Anvil-unlocked account.
+    """
+    safe = w3.eth.contract(address=w3.to_checksum_address(safe_address), abi=SAFE_ABI)
+    
+    padded_owner = agent_address.lower().replace("0x", "").rjust(64, "0")
+    # r = owner (32 bytes), s = 0 (32 bytes), v = 1 (1 byte)
+    signature = bytes.fromhex(f"{padded_owner}000000000000000000000000000000000000000000000000000000000000000001")
+    
+    tx = safe.functions.execTransaction(
+        w3.to_checksum_address(to_address),
+        value,
+        data,
+        0,  # operation: 0 = Call
+        0,  # safeTxGas
+        0,  # baseGas
+        0,  # gasPrice
+        "0x0000000000000000000000000000000000000000",  # gasToken
+        "0x0000000000000000000000000000000000000000",  # refundReceiver
+        signature
+    ).transact({"from": agent_address, "gas": 5_000_000})
+    
+    receipt = w3.eth.wait_for_transaction_receipt(tx)
+    assert receipt["status"] == 1, "Safe execTransaction reverted"
+
+
 class TestMechLifecycleE2E:
     """Full lifecycle E2E: create -> deploy -> stake -> run -> earn."""
 
@@ -1021,9 +1071,20 @@ class TestMechLifecycleE2E:
         supply_multisig = supply_svc[1]
 
         # ==============================================================
-        # Step 8: Send requests from another account
+        # Step 8: Send enough requests to satisfy liveness check
         # ==============================================================
-        print(f"\n--- Step 8: Send {N_LIFECYCLE_REQUESTS} requests ---")
+        # The activityChecker requires: deliveries >= livenessRatio * ts / 1e18
+        # where ts = elapsed seconds in the checkpoint period.
+        # We advance minStakingDuration + 120s, so ts ≈ minStakingDuration.
+        min_staking = supply_staking.functions.minStakingDuration().call()
+        ac = w3.eth.contract(
+            address=w3.to_checksum_address(ACTIVITY_CHECKER_ADDR),
+            abi=_LIVENESS_RATIO_ABI,
+        )
+        liveness_ratio = ac.functions.livenessRatio().call()
+        ts_approx = min_staking + 120
+        n_requests = max(int(liveness_ratio * ts_approx / 1e18) + 5, 10)
+        print(f"\n--- Step 8: Send {n_requests} requests (livenessRatio={liveness_ratio}, need≥{n_requests-5}) ---")
 
         requester = RICH_ACCOUNT
         w3.provider.make_request(
@@ -1044,7 +1105,7 @@ class TestMechLifecycleE2E:
         supply_info_before = supply_staking.functions.getServiceInfo(supply_svc_id).call()
         base_supply_reward = supply_info_before[4]
 
-        for i in range(N_LIFECYCLE_REQUESTS):
+        for i in range(n_requests):
             tx = marketplace.functions.request(
                 os.urandom(32),
                 MECH_DELIVERY_RATE,
@@ -1068,7 +1129,7 @@ class TestMechLifecycleE2E:
         w3.provider.make_request("anvil_stopImpersonatingAccount", [requester])
 
         new_requests = marketplace.functions.mapRequestCounts(requester).call()
-        assert new_requests == base_requests + N_LIFECYCLE_REQUESTS
+        assert new_requests == base_requests + n_requests
         print(f"  Requests: {base_requests} -> {new_requests}")
 
         # ==============================================================
@@ -1081,25 +1142,24 @@ class TestMechLifecycleE2E:
             abi=_load_abi("mech_new.json"),
         )
 
-        w3.provider.make_request("anvil_impersonateAccount", [supply_multisig])
         for i, rid in enumerate(request_ids):
-            tx = our_mech.functions.deliverToMarketplace(
+            data = our_mech.functions.deliverToMarketplace(
                 [rid],
                 [os.urandom(32)],
-            ).transact(
-                {
-                    "from": supply_multisig,
-                    "gas": 500_000,
-                }
+            ).build_transaction({"from": supply_multisig})["data"]
+
+            _execute_safe_tx(
+                w3,
+                safe_address=supply_multisig,
+                agent_address=agent_instance,
+                to_address=our_mech_addr,
+                data=data
             )
-            receipt = w3.eth.wait_for_transaction_receipt(tx)
-            assert receipt["status"] == 1, f"Delivery {i} reverted"
-        w3.provider.make_request("anvil_stopImpersonatingAccount", [supply_multisig])
 
         new_deliveries = marketplace.functions.mapMechDeliveryCounts(
             w3.to_checksum_address(our_mech_addr)
         ).call()
-        assert new_deliveries >= base_deliveries + N_LIFECYCLE_REQUESTS
+        assert new_deliveries >= base_deliveries + n_requests
         print(f"  Deliveries: {base_deliveries} -> {new_deliveries}")
 
         # ==============================================================
@@ -1109,14 +1169,18 @@ class TestMechLifecycleE2E:
 
         supply_end = supply_staking.functions.getNextRewardCheckpointTimestamp().call()
         current = w3.eth.get_block("latest")["timestamp"]
-        delta = supply_end - current + 120
+        # Must clear BOTH the next epoch checkpoint AND the minStakingDuration.
+        # If minStakingDuration > time-to-checkpoint, the contract rejects the
+        # service as "not staked long enough" and awards zero rewards.
+        # min_staking was already read in Step 8.
+        delta = max(supply_end - current + 120, min_staking + 120)
 
         w3.provider.make_request("evm_increaseTime", [delta])
         w3.provider.make_request("evm_mine", [])
 
         new_time = w3.eth.get_block("latest")["timestamp"]
         assert new_time >= supply_end
-        print(f"  Advanced {delta}s ({delta / 3600:.1f}h)")
+        print(f"  Advanced {delta}s ({delta / 3600:.1f}h, minStaking={min_staking/3600:.0f}h)")
 
         # ==============================================================
         # Step 11: Checkpoint
@@ -1146,31 +1210,18 @@ class TestMechLifecycleE2E:
         mech_reward = supply_info_after[4] / 1e18
         mech_reward_delta = mech_reward - base_supply_reward / 1e18
 
-        # NOTE: In Anvil with impersonation, deliveries don't go through
-        # the Safe's execTransaction, so the Safe's internal nonce doesn't
-        # increment. The supply activity checker requires
-        # safe_nonce_diff >= delivery_diff, which fails.
-        # In production with a real mech service, deliveries are Safe
-        # transactions and the nonce increments naturally.
-        if mech_reward_delta > 0:
-            print(f"  Mech supply reward: +{mech_reward_delta:.4f} OLAS")
-        else:
-            print(
-                "  Mech supply reward: 0 OLAS "
-                "(expected in Anvil: Safe nonce not incremented "
-                "by impersonated deliveries)"
-            )
-            # Verify the deliveries WERE counted by marketplace
-            our_deliveries = marketplace.functions.mapMechServiceDeliveryCounts(
-                supply_multisig
-            ).call()
-            print(f"  But marketplace counted {our_deliveries} deliveries for our mech")
+        assert mech_reward_delta > 0, (
+            f"Mech earned 0 rewards after {n_requests} proper Safe deliveries. "
+            f"supply_info_after={supply_info_after}. "
+            "Check staking pool OLAS balance and Safe nonce increment."
+        )
+        print(f"  Mech supply reward: +{mech_reward_delta:.4f} OLAS")
 
         # Verify deliveries were counted regardless of reward
         final_deliveries = marketplace.functions.mapMechDeliveryCounts(
             w3.to_checksum_address(our_mech_addr)
         ).call()
-        assert final_deliveries >= N_LIFECYCLE_REQUESTS
+        assert final_deliveries >= n_requests
 
         # ==============================================================
         # Summary
@@ -1180,7 +1231,7 @@ class TestMechLifecycleE2E:
         print("=" * 50)
         print(f"  Service ID:        {supply_svc_id}")
         print(f"  Mech address:      {our_mech_addr}")
-        print(f"  Requests sent:     {N_LIFECYCLE_REQUESTS}")
+        print(f"  Requests sent:     {n_requests}")
         print(f"  Deliveries made:   {len(request_ids)}")
         print(f"  Supply deliveries: {base_deliveries} -> {new_deliveries}")
         print(f"  Mech reward:       +{mech_reward_delta:.4f} OLAS")

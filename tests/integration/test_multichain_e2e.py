@@ -245,6 +245,41 @@ def _approve_olas(w3: Web3, chain_name: str, owner: str, spender: str, amount: i
     w3.eth.wait_for_transaction_receipt(tx)
 
 
+SAFE_ABI = [{
+    "inputs": [
+        {"name": "to", "type": "address"},
+        {"name": "value", "type": "uint256"},
+        {"name": "data", "type": "bytes"},
+        {"name": "operation", "type": "uint8"},
+        {"name": "safeTxGas", "type": "uint256"},
+        {"name": "baseGas", "type": "uint256"},
+        {"name": "gasPrice", "type": "uint256"},
+        {"name": "gasToken", "type": "address"},
+        {"name": "refundReceiver", "type": "address"},
+        {"name": "signatures", "type": "bytes"},
+    ],
+    "name": "execTransaction",
+    "outputs": [{"name": "success", "type": "bool"}],
+    "stateMutability": "payable",
+    "type": "function",
+}]
+
+
+def _execute_safe_tx(w3: Web3, safe_address: str, agent_address: str, to_address: str, data: bytes, value: int = 0) -> None:
+    safe = w3.eth.contract(address=w3.to_checksum_address(safe_address), abi=SAFE_ABI)
+    padded_owner = agent_address.lower().replace("0x", "").rjust(64, "0")
+    signature = bytes.fromhex(f"{padded_owner}000000000000000000000000000000000000000000000000000000000000000001")
+    
+    tx = safe.functions.execTransaction(
+        w3.to_checksum_address(to_address), value, data, 0, 0, 0, 0,
+        "0x0000000000000000000000000000000000000000",
+        "0x0000000000000000000000000000000000000000",
+        signature
+    ).transact({"from": agent_address, "gas": 5_000_000})
+    receipt = w3.eth.wait_for_transaction_receipt(tx)
+    assert receipt["status"] == 1, "Safe execTransaction reverted"
+
+
 def _olas_balance(w3: Web3, chain_name: str, account: str) -> int:
     infra = CHAIN_INFRA[chain_name]
     abi = [
@@ -539,7 +574,26 @@ class TestLifecycleMultiChain:
                 svc = registry.functions.getService(svc_id).call()
                 multisig = svc[1]
 
-                # --- Step 8: Send requests ---
+                # --- Step 8: Send enough requests to satisfy liveness check ---
+                # Read livenessRatio from the chain's activityChecker contract.
+                _liveness_abi = [
+                    {"inputs":[],"name":"activityChecker","outputs":[{"type":"address"}],"stateMutability":"view","type":"function"},
+                    {"inputs":[],"name":"livenessRatio","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"},
+                    {"inputs":[],"name":"minStakingDuration","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"},
+                ]
+                staking_for_liveness = w3.eth.contract(
+                    address=Web3.to_checksum_address(addrs["staking"]), abi=_liveness_abi
+                )
+                min_staking_dur = staking_for_liveness.functions.minStakingDuration().call()
+                ac_addr = staking_for_liveness.functions.activityChecker().call()
+                ac = w3.eth.contract(
+                    address=ac_addr,
+                    abi=[{"inputs":[],"name":"livenessRatio","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"}],
+                )
+                liveness_ratio = ac.functions.livenessRatio().call()
+                ts_approx = min_staking_dur + 120
+                n_requests = max(int(liveness_ratio * ts_approx / 1e18) + 5, 10)
+
                 requester = Web3.to_checksum_address(infra["rich_account"])
                 _fund_native(w3, requester, 10)
                 w3.provider.make_request("anvil_impersonateAccount", [requester])
@@ -548,7 +602,7 @@ class TestLifecycleMultiChain:
                 value = infra["delivery_rate"] + fee
                 request_ids = []
 
-                for i in range(N_LIFECYCLE_REQUESTS):
+                for i in range(n_requests):
                     tx = marketplace.functions.request(
                         os.urandom(32),
                         infra["delivery_rate"],
@@ -570,28 +624,35 @@ class TestLifecycleMultiChain:
                 mech_contract = w3.eth.contract(
                     address=Web3.to_checksum_address(mech_addr), abi=mech_abi
                 )
-                w3.provider.make_request("anvil_impersonateAccount", [multisig])
                 for rid in request_ids:
-                    tx = mech_contract.functions.deliverToMarketplace(
+                    data = mech_contract.functions.deliverToMarketplace(
                         [rid], [os.urandom(32)]
-                    ).transact({"from": multisig, "gas": 500_000})
-                    receipt = w3.eth.wait_for_transaction_receipt(tx)
-                    assert receipt["status"] == 1
-                w3.provider.make_request("anvil_stopImpersonatingAccount", [multisig])
+                    ).build_transaction({"from": multisig})["data"]
+                    
+                    _execute_safe_tx(
+                        w3=w3,
+                        safe_address=multisig,
+                        agent_address=agent_instance,
+                        to_address=mech_addr,
+                        data=data
+                    )
 
                 deliveries = marketplace.functions.mapMechDeliveryCounts(
                     Web3.to_checksum_address(mech_addr)
                 ).call()
-                assert deliveries >= N_LIFECYCLE_REQUESTS
+                assert deliveries >= n_requests
                 print(f"  Step 9: {deliveries} deliveries confirmed")
 
                 # --- Step 10: Advance time ---
+                base_supply_reward = staking.functions.getServiceInfo(svc_id).call()[4]
                 epoch_end = staking.functions.getNextRewardCheckpointTimestamp().call()
                 current = w3.eth.get_block("latest")["timestamp"]
-                delta = max(epoch_end - current + 120, 86400 + 120)
+                # Must clear BOTH the next epoch checkpoint AND minStakingDuration.
+                # min_staking_dur was read in Step 8.
+                delta = max(epoch_end - current + 120, min_staking_dur + 120)
                 w3.provider.make_request("evm_increaseTime", [delta])
                 w3.provider.make_request("evm_mine", [])
-                print(f"  Step 10: Advanced {delta}s ({delta / 3600:.1f}h)")
+                print(f"  Step 10: Advanced {delta}s ({delta / 3600:.1f}h, minStaking={min_staking_dur/3600:.0f}h)")
 
                 # --- Step 11: Checkpoint ---
                 caller = w3.eth.accounts[0]
@@ -601,10 +662,21 @@ class TestLifecycleMultiChain:
                 print("  Step 11: Checkpoint done")
 
                 # --- Step 12: Verify ---
+                supply_info_after = staking.functions.getServiceInfo(svc_id).call()
+                mech_reward = supply_info_after[4] / 1e18
+                mech_reward_delta = mech_reward - base_supply_reward / 1e18
+                
+                assert mech_reward_delta > 0, (
+                    f"{chain_name}: Mech earned 0 rewards after proper Safe deliveries. "
+                    f"supply_info_after={supply_info_after}. "
+                    "Check staking pool OLAS balance and Safe nonce increment."
+                )
+                print(f"  Mech supply reward: +{mech_reward_delta:.4f} OLAS")
+
                 final_deliveries = marketplace.functions.mapMechDeliveryCounts(
                     Web3.to_checksum_address(mech_addr)
                 ).call()
-                assert final_deliveries >= N_LIFECYCLE_REQUESTS
+                assert final_deliveries >= n_requests
 
                 results[chain_name] = (
                     f"OK (svc={svc_id}, mech={mech_addr[:12]}, del={final_deliveries})"
