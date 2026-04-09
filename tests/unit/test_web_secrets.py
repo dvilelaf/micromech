@@ -1,9 +1,5 @@
 """Tests for /api/setup/secrets GET and POST endpoints."""
 
-import os
-from pathlib import Path
-from unittest.mock import patch
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -94,7 +90,6 @@ class TestPostSecrets:
 
     def test_ignores_masked_values(self, client):
         c, secrets_path = client
-        original = secrets_path.read_text()
         res = c.post(
             "/api/setup/secrets",
             headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
@@ -106,7 +101,6 @@ class TestPostSecrets:
 
     def test_ignores_non_editable_keys(self, client):
         c, secrets_path = client
-        original = secrets_path.read_text()
         res = c.post(
             "/api/setup/secrets",
             headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json", "X-Micromech-Action": "save-secrets"},
