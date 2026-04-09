@@ -406,6 +406,9 @@ docker compose up -d
 echo
 echo -e "${GREEN}🎉 Micromech is running!${NC}"
 echo
-echo -e "Open the dashboard: ${BLUE}http://$(hostname -I | awk '{print $1}'):8090${NC}"
+echo -e "The dashboard is only accessible via SSH tunnel (port is bound to localhost)."
+echo -e "From your local machine, run:"
+echo -e "  ${BLUE}ssh -L 8090:localhost:8090 $(whoami)@<server-ip>${NC}"
+echo -e "Then open: ${BLUE}http://localhost:8090${NC}"
 echo -e "Configure secrets, RPC endpoints and Telegram from the Setup tab."
 echo
