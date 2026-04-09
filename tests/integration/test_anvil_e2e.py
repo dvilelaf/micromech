@@ -867,16 +867,16 @@ SAFE_ABI = [{
 
 def _execute_safe_tx(w3: Web3, safe_address: str, agent_address: str, to_address: str, data: bytes, value: int = 0) -> None:
     """Execute a Safe transaction natively using Caller Signatures (v=1).
-    
+
     Proves the actual Safe contract execution path instead of impersonating it.
     Requires `agent_address` to be an Anvil-unlocked account.
     """
     safe = w3.eth.contract(address=w3.to_checksum_address(safe_address), abi=SAFE_ABI)
-    
+
     padded_owner = agent_address.lower().replace("0x", "").rjust(64, "0")
     # r = owner (32 bytes), s = 0 (32 bytes), v = 1 (1 byte)
     signature = bytes.fromhex(f"{padded_owner}000000000000000000000000000000000000000000000000000000000000000001")
-    
+
     tx = safe.functions.execTransaction(
         w3.to_checksum_address(to_address),
         value,
@@ -889,7 +889,7 @@ def _execute_safe_tx(w3: Web3, safe_address: str, agent_address: str, to_address
         "0x0000000000000000000000000000000000000000",  # refundReceiver
         signature
     ).transact({"from": agent_address, "gas": 5_000_000})
-    
+
     receipt = w3.eth.wait_for_transaction_receipt(tx)
     assert receipt["status"] == 1, "Safe execTransaction reverted"
 

@@ -269,7 +269,7 @@ def _execute_safe_tx(w3: Web3, safe_address: str, agent_address: str, to_address
     safe = w3.eth.contract(address=w3.to_checksum_address(safe_address), abi=SAFE_ABI)
     padded_owner = agent_address.lower().replace("0x", "").rjust(64, "0")
     signature = bytes.fromhex(f"{padded_owner}000000000000000000000000000000000000000000000000000000000000000001")
-    
+
     tx = safe.functions.execTransaction(
         w3.to_checksum_address(to_address), value, data, 0, 0, 0, 0,
         "0x0000000000000000000000000000000000000000",
@@ -628,7 +628,7 @@ class TestLifecycleMultiChain:
                     data = mech_contract.functions.deliverToMarketplace(
                         [rid], [os.urandom(32)]
                     ).build_transaction({"from": multisig})["data"]
-                    
+
                     _execute_safe_tx(
                         w3=w3,
                         safe_address=multisig,
@@ -665,7 +665,7 @@ class TestLifecycleMultiChain:
                 supply_info_after = staking.functions.getServiceInfo(svc_id).call()
                 mech_reward = supply_info_after[4] / 1e18
                 mech_reward_delta = mech_reward - base_supply_reward / 1e18
-                
+
                 assert mech_reward_delta > 0, (
                     f"{chain_name}: Mech earned 0 rewards after proper Safe deliveries. "
                     f"supply_info_after={supply_info_after}. "
