@@ -16,7 +16,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-RUN uv sync --frozen --no-dev --extra web --extra cli --extra chain --extra tasks --extra llm
+# GGML_NATIVE=OFF disables CPU-specific optimizations that break QEMU-based
+# cross-compilation for arm64. The resulting binary still works on arm64 hardware.
+RUN CMAKE_ARGS="-DGGML_NATIVE=OFF" \
+    uv sync --frozen --no-dev --extra web --extra cli --extra chain --extra tasks --extra llm
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Lean image — no compiler, no cmake. Only the C++ runtime libs that

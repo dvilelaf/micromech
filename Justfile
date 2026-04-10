@@ -385,10 +385,7 @@ release: release-check
     git push origin main
     git push origin "$TAG"
     echo "Release $TAG created and pushed!"
-
-    echo "Building and publishing Docker image..."
-    just publish
-    echo "Done! Release $TAG complete."
+    echo "Next: wait for CI to go green, then run: just publish"
 
 # Build and publish docker image (requires tag at HEAD)
 publish: _validate-git-state _validate-tag-at-head
