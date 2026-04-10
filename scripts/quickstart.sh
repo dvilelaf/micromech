@@ -341,9 +341,9 @@ if ! mkdir -p "$INSTALL_DIR/data" 2>/dev/null; then
     echo -e "${RED}❌ Cannot create directory '$INSTALL_DIR'. Permission denied.${NC}"
     if [ "$(id -u)" -ne 0 ]; then
         echo -e "   To install here, run with sudo:"
-        echo -e "   ${BLUE}sudo bash <(curl -sSL ...)${NC}"
+        echo -e "   ${BLUE}curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh | sudo bash${NC}"
         echo -e "   Or install in your home directory instead:"
-        echo -e "   ${BLUE}cd ~ && bash <(curl -sSL ...)${NC}"
+        echo -e "   ${BLUE}cd ~ && bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh)${NC}"
     fi
     exit 1
 fi

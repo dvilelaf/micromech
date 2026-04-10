@@ -29,10 +29,10 @@ Open Terminal and run from the directory where you want micromech installed (you
 cd ~ && bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh)
 ```
 
-This creates a `micromech/` folder in the current directory. If you want to install in a system directory like `/opt`, run with `sudo` instead:
+This creates a `micromech/` folder in the current directory. If you want to install in a system directory like `/opt`, use `sudo` with a pipe instead (process substitution doesn't work with sudo):
 
 ```bash
-cd /opt && sudo bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh)
+cd /opt && curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh | sudo bash
 ```
 
 ### Windows
