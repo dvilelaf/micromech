@@ -1,6 +1,7 @@
 """Tests for the MechServer orchestrator."""
 
 import asyncio
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -430,4 +431,68 @@ class TestMultiChainServer:
         assert "chains" in status
         assert "gnosis" in status["chains"]
         assert "queue_by_chain" in status
+        server.shutdown()
+
+
+class TestLLMPrefetch:
+    """Tests for _prefetch_llm_model background download."""
+
+    @pytest.mark.asyncio
+    async def test_skips_if_model_already_exists(self, server_config, tmp_path, monkeypatch):
+        """If model file already exists, _get_llm is never called."""
+        monkeypatch.chdir(tmp_path)
+        model_dir = tmp_path / "data" / "models"
+        model_dir.mkdir(parents=True)
+
+        from micromech.core.constants import DEFAULT_LLM_FILE
+
+        (model_dir / DEFAULT_LLM_FILE).touch()
+
+        server = MechServer(server_config)
+        with patch("micromech.tools.local_llm.local_llm._get_llm") as mock_get:
+            await server._prefetch_llm_model()
+            mock_get.assert_not_called()
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_downloads_if_model_missing(self, server_config, tmp_path, monkeypatch):
+        """If model is absent, _get_llm is called (which handles the download)."""
+        monkeypatch.chdir(tmp_path)
+
+        server = MechServer(server_config)
+        with patch("micromech.tools.local_llm.local_llm._get_llm") as mock_get:
+            await server._prefetch_llm_model()
+            mock_get.assert_called_once()
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_silently_skips_if_llm_not_installed(self, server_config, tmp_path, monkeypatch):
+        """ImportError (llm extra not installed) is swallowed silently."""
+        monkeypatch.chdir(tmp_path)
+
+        server = MechServer(server_config)
+        with patch(
+            "micromech.runtime.server.MechServer._prefetch_llm_model",
+            wraps=server._prefetch_llm_model,
+        ):
+            with patch(
+                "micromech.tools.local_llm.local_llm._get_llm",
+                side_effect=ImportError("llama_cpp not installed"),
+            ):
+                # Should not raise
+                await server._prefetch_llm_model()
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_logs_warning_on_download_failure(self, server_config, tmp_path, monkeypatch):
+        """Download errors are caught and logged as warnings, not raised."""
+        monkeypatch.chdir(tmp_path)
+
+        server = MechServer(server_config)
+        with patch(
+            "micromech.tools.local_llm.local_llm._get_llm",
+            side_effect=RuntimeError("network error"),
+        ):
+            # Should not raise
+            await server._prefetch_llm_model()
         server.shutdown()
