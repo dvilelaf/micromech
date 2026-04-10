@@ -19,13 +19,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # independently of source code changes.
 COPY pyproject.toml uv.lock ./
 
+# Install all dependencies but not the project itself (no src/ needed yet).
 # GGML_NATIVE=OFF disables CPU-specific optimizations that break QEMU-based
 # cross-compilation for arm64. The resulting binary still works on arm64 hardware.
 RUN CMAKE_ARGS="-DGGML_NATIVE=OFF" \
-    uv sync --frozen --no-dev --extra web --extra cli --extra chain --extra tasks --extra llm
+    uv sync --frozen --no-dev --no-install-project \
+    --extra web --extra cli --extra chain --extra tasks --extra llm
 
-# Copy the rest of the source code (does NOT invalidate the uv sync cache)
+# Copy the rest of the source code (does NOT invalidate the compiled .venv cache)
 COPY . /app
+
+# Install the project itself (fast — all dependencies already cached above)
+RUN uv sync --frozen --no-dev \
+    --extra web --extra cli --extra chain --extra tasks --extra llm
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Lean image — no compiler, no cmake. Only the C++ runtime libs that
