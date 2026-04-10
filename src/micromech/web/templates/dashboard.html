@@ -1011,7 +1011,7 @@
                     </div>
                     <div class="chain-card-row">
                         <span class="label">Deliveries</span>
-                        <span class="value">${(karma.deliveries || 0).toLocaleString()}</span>
+                        <span class="value">${(karma.deliveries || 0).toLocaleString('en-US')}</span>
                     </div>`;
                 if (karma.timeouts > 0) {
                     karmaHtml += `
@@ -1220,7 +1220,7 @@
                 const sym = NATIVE_SYM[chain] || 'Native';
                 const nOk = d.native_sufficient ? '✓' : '✗';
                 const oOk = d.olas_sufficient ? '✓' : '✗';
-                lines.push(`${chain}: ${nOk} ${(d.native_balance||0).toFixed(4)} ${sym}  ${oOk} ${(d.olas_balance||0).toLocaleString()} OLAS`);
+                lines.push(`${chain}: ${nOk} ${(d.native_balance||0).toFixed(4)} ${sym}  ${oOk} ${(d.olas_balance||0).toLocaleString('en-US')} OLAS`);
                 if (!d.sufficient) allOk = false;
             } catch (e) {
                 lines.push(chain + ': error checking balance');

@@ -821,7 +821,7 @@
                 nEl.textContent = `${data.native_balance.toFixed(4)} / ${data.native_required} ${sym}`;
                 nEl.className = 'balance-value ' + (data.native_sufficient ? 'balance-ok' : 'balance-waiting');
 
-                oEl.textContent = `${data.olas_balance.toLocaleString()} / ${data.olas_required.toLocaleString()} OLAS`;
+                oEl.textContent = `${data.olas_balance.toLocaleString('en-US')} / ${data.olas_required.toLocaleString('en-US')} OLAS`;
                 oEl.className = 'balance-value ' + (data.olas_sufficient ? 'balance-ok' : 'balance-waiting');
 
                 if (!data.sufficient) allOk = false;
