@@ -264,7 +264,8 @@ def create_web_app(
     @app.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):
         if _needs_setup():
-            return RedirectResponse(url="/setup", status_code=302)
+            root = request.scope.get("root_path", "")
+            return RedirectResponse(url=f"{root}/setup", status_code=302)
         return templates.TemplateResponse(
             request=request,
             name="dashboard.html",

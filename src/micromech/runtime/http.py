@@ -184,4 +184,11 @@ def create_app(
         """Simple health check."""
         return {"status": "ok"}
 
+    @app.get("/")
+    async def root_redirect():
+        """Redirect root to the dashboard."""
+        from fastapi.responses import RedirectResponse
+
+        return RedirectResponse(url="/dashboard", status_code=302)
+
     return app
