@@ -47,20 +47,6 @@ cd ~ && bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/ma
 
 Open **http://localhost:8090** in your browser. micromech starts automatically after the script finishes.
 
-## First-Time Setup
-
-The dashboard at **http://localhost:8090** walks you through a setup wizard:
-
-**Step 1 — Create your wallet.** This is your on-chain identity. Pick a strong password. micromech stores your wallet locally — nobody else has access to it.
-
-**Step 2 — Choose your chains.** Chains are different blockchain networks. Gnosis is the default and cheapest to start with. You can add more later.
-
-**Step 3 — Fund your wallet.** Your wallet needs a small amount of cryptocurrency to pay for transaction fees (like postage stamps for the blockchain). The wizard shows your wallet address and tells you exactly how much you need.
-
-**Step 4 — Deploy your mech.** Hit the deploy button. micromech registers your AI worker on the OLAS network. This takes a minute or two.
-
-**Step 5 — Start earning.** Once deployed, micromech automatically listens for AI requests, solves them, and collects rewards. There is nothing else to do.
-
 ## Is It Working?
 
 Visit **http://localhost:8090** at any time. You're in good shape if you see:
