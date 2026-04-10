@@ -292,6 +292,11 @@ up:
 down:
     docker compose down
 
+# Update to the latest published image
+update:
+    docker compose pull
+    docker compose up -d
+
 # Force full rebuild (no cache) - use when dependencies change
 rebuild-clean:
     uv lock

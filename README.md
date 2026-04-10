@@ -89,7 +89,7 @@ Run these from inside the `micromech/` folder. If you have [`just`](https://gith
 | Start micromech | `just up` | `docker compose up -d` |
 | Stop micromech | `just down` | `docker compose down` |
 | View live logs | `just logs` | `docker compose logs -f micromech` |
-| Update to latest version | `just rebuild-clean` | `docker compose pull && docker compose up -d` |
+| Update to latest version | `just update` | `docker compose pull && docker compose up -d` |
 
 micromech restarts automatically if your computer reboots.
 
