@@ -109,6 +109,12 @@ After the quickstart, your `micromech/` folder contains:
 
 > **Backup reminder:** Copy the entire `data/` folder somewhere safe. If you lose `data/wallet.json`, you lose access to your wallet.
 
+## Staking Rewards
+
+Staking rewards are only paid if your mech receives **enough requests and delivers them successfully** within each staking epoch. Being online is not sufficient on its own — if no requests reach your mech, the staking contract will consider it inactive and withhold rewards for that epoch.
+
+If you are not receiving enough requests, coordinate with traders or other agents to route demand to your mech address.
+
 ## For Developers
 
 ```bash
