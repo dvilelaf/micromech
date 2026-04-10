@@ -47,6 +47,12 @@ cd ~ && bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/ma
 
 Open **http://localhost:8090** in your browser. The setup wizard will guide you through creating your wallet, choosing a chain, and deploying your mech.
 
+> **Running on a remote server?** Forward the dashboard to your local machine with an SSH tunnel:
+> ```bash
+> ssh -L 8090:localhost:8090 user@your-server
+> ```
+> Then open `http://localhost:8090` in your local browser.
+
 ## Day-to-Day Commands
 
 Run these from inside the `micromech/` folder. If you have [`just`](https://github.com/casey/just) installed, the shortcuts make things easier — otherwise use the `docker compose` equivalents.
