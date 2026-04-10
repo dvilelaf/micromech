@@ -335,7 +335,14 @@ echo -e "${GREEN}Docker is ready.${NC}"
 echo
 
 # 2. Setup Directory
-INSTALL_DIR="$(pwd)/micromech"
+if [ -n "${MICROMECH_DIR:-}" ]; then
+    INSTALL_DIR="$MICROMECH_DIR"
+elif [ -w "$(pwd)" ]; then
+    INSTALL_DIR="$(pwd)/micromech"
+else
+    INSTALL_DIR="$HOME/micromech"
+    echo -e "${BLUE}ℹ️  Current directory is not writable — installing in $INSTALL_DIR${NC}"
+fi
 
 echo -e "${BLUE}📂 Setting up directory '$INSTALL_DIR'...${NC}"
 
