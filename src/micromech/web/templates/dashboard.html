@@ -538,13 +538,6 @@
     <div id="toast-container" role="status" aria-live="polite"></div>
 
     <script>
-    function authHeaders(extra) {
-        return extra || {};
-    }
-    function authQueryParam() {
-        return '';
-    }
-
     /**
      * Show a transient notification in the bottom-right corner.
      *
@@ -637,7 +630,7 @@
     // --- SSE Stream ---
     function connectSSE() {
         if (state.metricsES) return;
-        const es = new EventSource('/api/metrics/stream?' + authQueryParam());
+        const es = new EventSource('/api/metrics/stream');
         state.metricsES = es;
         es.onopen = () => {
             state.sseConnected = true;
@@ -1126,7 +1119,7 @@
         try {
             const resp = await fetch('/api/management/' + action, {
                 method: 'POST',
-                headers: authHeaders({'Content-Type': 'application/json', 'X-Micromech-Action': action}),
+                headers: {'Content-Type': 'application/json', 'X-Micromech-Action': action}),
                 body: JSON.stringify({service_key: serviceKey, chain: chain}),
             });
             const data = await resp.json();
@@ -1277,7 +1270,7 @@
         try {
             const res = await fetch('/api/setup/deploy', {
                 method: 'POST',
-                headers: authHeaders({'Content-Type':'application/json','X-Micromech-Action':'deploy'}),
+                headers: {'Content-Type':'application/json','X-Micromech-Action':'deploy'}),
                 body: JSON.stringify({ chain })
             });
             const reader = res.body.getReader();
@@ -1414,7 +1407,7 @@
         try {
             const resp = await fetch('/api/runtime/' + action, {
                 method: 'POST',
-                headers: authHeaders({'X-Micromech-Action': action}),
+                headers: {'X-Micromech-Action': action}),
             });
             const data = await resp.json();
             if (data.error) {
@@ -1450,7 +1443,7 @@
 
     function connectLogStream() {
         if (logES) return;
-        logES = new EventSource('/api/logs/stream?' + authQueryParam());
+        logES = new EventSource('/api/logs/stream');
         logES.onmessage = (e) => {
             try {
                 const data = JSON.parse(e.data);
@@ -1704,7 +1697,7 @@
             // 1) Persist the disabled_tools list
             const saveRes = await fetch('/api/setup/tools', {
                 method: 'POST',
-                headers: authHeaders({
+                headers: {
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'tools-save',
                 }),
@@ -1720,7 +1713,7 @@
             btn.textContent = 'Reloading…';
             const reloadRes = await fetch('/api/tools/reload', {
                 method: 'POST',
-                headers: authHeaders({'X-Micromech-Action': 'tools-reload'}),
+                headers: {'X-Micromech-Action': 'tools-reload'}),
             });
             if (!reloadRes.ok) {
                 const err = await reloadRes.json().catch(() => ({}));
@@ -1788,7 +1781,7 @@
         try {
             const res = await fetch('/api/tools/reload', {
                 method: 'POST',
-                headers: authHeaders({'X-Micromech-Action': 'tools-reload'}),
+                headers: {'X-Micromech-Action': 'tools-reload'}),
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
@@ -1830,7 +1823,7 @@
         try {
             const res = await fetch('/api/metadata/publish', {
                 method: 'POST',
-                headers: authHeaders({'X-Micromech-Action': 'metadata'}),
+                headers: {'X-Micromech-Action': 'metadata'}),
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));

@@ -35,6 +35,7 @@ CSRF_HEADER = "X-Micromech-Action"
 _RATE_LIMITS: dict[str, tuple[int, int]] = {
     # endpoint_key: (max_requests, window_seconds)
     "/api/setup/wallet": (10, 60),  # 10 attempts per minute (brute-force protection)
+    "/api/setup/state": (30, 60),  # 30 per minute — does config + chain I/O per call
     "/request": (60, 60),  # 60 requests per minute
     "/api/metadata/publish": (3, 60),  # 3 per minute (each costs gas)
     # Hot-reload does filesystem I/O and importlib — cap to avoid DoS via
@@ -228,6 +229,14 @@ def create_web_app(
     """
     app = FastAPI(title="micromech dashboard", docs_url=None, redoc_url=None)
 
+    # Explicit CORS: deny all cross-origin requests.
+    # The CSRF header (X-Micromech-Action) relies on browsers sending a preflight
+    # for custom headers — but only if CORS is not permissively configured.
+    # This makes the protection intentional rather than accidental.
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(CORSMiddleware, allow_origins=[])
+
     # Security headers middleware
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -275,6 +284,8 @@ def create_web_app(
     @app.get("/api/setup/state")
     async def setup_state(request: Request) -> dict:
         """Get current setup state."""
+        if _rate_limited("/api/setup/state", _get_client_ip(request)):
+            return JSONResponse({"error": "Too many requests. Try again later."}, 429)
         wallet_exists = False
         wallet_address = None
         needs_password = False
@@ -365,6 +376,8 @@ def create_web_app(
         password = body.get("password", "")
         if not password or len(password) < 8:
             return JSONResponse({"error": "Password too short (min 8 characters)."}, 400)
+        if len(password) > 128:
+            return JSONResponse({"error": "Password too long (max 128 characters)."}, 400)
 
         def _create_or_unlock():
             from pathlib import Path
@@ -921,6 +934,8 @@ def create_web_app(
                 while True:
                     await asyncio.sleep(2)
                     tick += 1
+                    if await request.is_disconnected():
+                        break
 
                     payload: dict[str, Any] = {
                         "type": "tick",

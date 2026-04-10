@@ -482,10 +482,6 @@
     </div>
 
     <script>
-    function authHeaders(extra) {
-        return extra || {};
-    }
-
     document.getElementById('btn-go-dashboard').href = '/';
 
     // State
@@ -637,7 +633,7 @@
         try {
             const res = await fetch('/api/setup/wallet', {
                 method: 'POST',
-                headers: authHeaders({
+                headers: {
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'wallet',
                 }),
@@ -921,7 +917,7 @@
         try {
             const resp = await fetch('/api/setup/tools', {
                 method: 'POST',
-                headers: authHeaders({'X-Micromech-Action': 'setup'}),
+                headers: {'X-Micromech-Action': 'setup'}),
                 body: JSON.stringify({ disabled_tools: disabled }),
             });
             if (!resp.ok) {
@@ -974,7 +970,7 @@
 
         // Pre-fill from existing secrets
         try {
-            const res = await fetch('/api/setup/secrets', { headers: authHeaders() });
+            const res = await fetch('/api/setup/secrets', {});
             const data = await res.json();
             if (data.telegram_token && data.telegram_token !== '***') {
                 document.getElementById('tg-token').value = data.telegram_token;
@@ -1081,7 +1077,7 @@
                 statusEl.style.display = 'block';
                 const res = await fetch('/api/setup/secrets', {
                     method: 'POST',
-                    headers: authHeaders({
+                    headers: {
                         'Content-Type': 'application/json',
                         'X-Micromech-Action': 'save-secrets',
                     }),
@@ -1175,7 +1171,7 @@
         try {
             const res = await fetch('/api/setup/deploy', {
                 method: 'POST',
-                headers: authHeaders({
+                headers: {
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'deploy',
                 }),

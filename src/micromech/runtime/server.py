@@ -343,7 +343,7 @@ class MechServer:
         server = uvicorn.Server(config)
         logger.info(
             "HTTP server on {}:{} (dashboard at /dashboard)",
-            DEFAULT_HOST,
+            self.host,
             DEFAULT_PORT,
         )
         await server.serve()
