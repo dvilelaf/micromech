@@ -637,7 +637,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'wallet',
-                }),
+                },
                 body: JSON.stringify({ password }),
             });
             const data = await res.json();
@@ -918,7 +918,7 @@
         try {
             const resp = await fetch(API_BASE + '/api/setup/tools', {
                 method: 'POST',
-                headers: {'X-Micromech-Action': 'setup'}),
+                headers: {'X-Micromech-Action': 'setup'},
                 body: JSON.stringify({ disabled_tools: disabled }),
             });
             if (!resp.ok) {
@@ -1081,7 +1081,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                         'X-Micromech-Action': 'save-secrets',
-                    }),
+                    },
                     body: JSON.stringify(updates),
                 });
                 const data = await res.json();
@@ -1175,7 +1175,7 @@
                 headers: {
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'deploy',
-                }),
+                },
                 body: JSON.stringify({ chain })
             });
 
