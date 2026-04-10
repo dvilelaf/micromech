@@ -117,7 +117,3 @@ just check       # lint + types
 just security    # gitleaks + bandit
 just test        # pytest
 ```
-
-## License
-
-MIT
