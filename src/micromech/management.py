@@ -236,6 +236,9 @@ class MechLifecycle:
                 log_addr = (log_entry.get("address") or "").lower()
                 if log_addr == mkt and len(topics) >= 2:
                     raw = topics[1].hex() if isinstance(topics[1], bytes) else str(topics[1])
+                    if len(raw) < 40:
+                        logger.warning("Mech log topic too short ({} chars), skipping", len(raw))
+                        continue
                     from iwa.core.types import EthereumAddress
 
                     mech_addr = EthereumAddress("0x" + raw[-40:])
