@@ -82,14 +82,18 @@ Now send `/status` to your bot to check on your mech.
 
 ## Day-to-Day Commands
 
-Run these from inside the `micromech/` folder. If you have [`just`](https://github.com/casey/just) installed, use the shortcuts in the second column — otherwise use the `docker compose` equivalents.
+Run these from inside the `micromech/` folder. If you have [`just`](https://github.com/casey/just) installed, the shortcuts make things easier — otherwise use the `docker compose` equivalents.
 
-| What you want to do | With `just` | With docker compose |
+| What you want to do | `just` shortcut | docker compose equivalent |
 |---|---|---|
 | Start micromech | `just up` | `docker compose up -d` |
 | Stop micromech | `just down` | `docker compose down` |
-| View live logs | `just logs` | `docker compose logs -f micromech` |
-| Update to latest version | `just update` | `docker compose pull && docker compose up -d` |
+| View live logs | `just logs` | `docker compose logs -f` |
+| Update to latest image | `just update` | `docker compose pull && docker compose up -d` |
+| Update config files | `just update-config` | *(no equivalent)* |
+| Check container status | `just status` | `docker compose ps` |
+| Re-run setup wizard | `just init` | *(no equivalent)* |
+| Run health check | `just doctor` | *(no equivalent)* |
 
 micromech restarts automatically if your computer reboots.
 
