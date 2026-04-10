@@ -809,7 +809,7 @@
         let allOk = true;
         for (const chain of selectedChains) {
             try {
-                const res = await fetch(`/api/setup/balance?chain=${chain}`);
+                const res = await fetch(`${API_BASE}/api/setup/balance?chain=${chain}`);
                 const data = await res.json();
                 if (data.error) { allOk = false; continue; }
 

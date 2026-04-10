@@ -594,3 +594,115 @@ class TestWebWizardE2E:
         data = resp.json()
         assert "error" in data
         assert data["sufficient"] is False
+
+    # --- New test cases ---
+
+    def test_setup_page_has_no_js_syntax_errors(self, tmp_path: Path):
+        """GET /setup — extract the <script> block and validate it with node --check.
+
+        Requires ``node`` to be installed; skipped automatically if not found.
+        """
+        import shutil
+        import subprocess
+        import tempfile
+
+        node_bin = shutil.which("node")
+        if node_bin is None:
+            pytest.skip("node not found in PATH")
+
+        app = _make_web_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.get("/setup")
+        assert resp.status_code == 200, f"GET /setup failed: {resp.text}"
+
+        html = resp.text
+        # Extract everything between the first <script> and </script> tags.
+        start = html.find("<script>")
+        end = html.find("</script>", start)
+        assert start != -1 and end != -1, "No <script> block found in /setup HTML"
+        script_content = html[start + len("<script>"):end]
+
+        with tempfile.NamedTemporaryFile(suffix=".js", mode="w", delete=False) as f:
+            f.write(script_content)
+            script_path = f.name
+
+        try:
+            result = subprocess.run(
+                [node_bin, "--check", script_path],
+                capture_output=True,
+                text=True,
+            )
+            assert result.returncode == 0, (
+                f"node --check reported JS syntax errors:\n{result.stderr}"
+            )
+        finally:
+            Path(script_path).unlink(missing_ok=True)
+
+    def test_api_base_injected_in_setup_page(self, tmp_path: Path):
+        """GET /setup — verify that ``const API_BASE = "`` is present in the HTML."""
+        app = _make_web_app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.get("/setup")
+        assert resp.status_code == 200, f"GET /setup failed: {resp.text}"
+        assert 'const API_BASE = "' in resp.text, (
+            "API_BASE variable not found in /setup HTML — template injection may be broken"
+        )
+
+    def test_wallet_password_written_to_secrets_env(self, tmp_path: Path):
+        """POST /api/setup/wallet — secrets.env receives wallet_password= after wallet creation."""
+        import micromech.web.app as _app
+
+        wallet_path = str(tmp_path / "wallet.json")
+        secrets_path = tmp_path / "secrets.env"
+
+        # Reset the module-level rate counter so previous test runs don't
+        # exhaust the /api/setup/wallet bucket (10 req/min).
+        _app._rate_counters.clear()
+
+        with (
+            patch("iwa.core.constants.WALLET_PATH", wallet_path),
+            patch("micromech.core.secrets_file.SECRETS_ENV_PATH", secrets_path),
+        ):
+            app = _make_web_app(tmp_path)
+            client = TestClient(app)
+
+            resp = client.post(
+                "/api/setup/wallet",
+                headers=_auth_headers(),
+                json={"password": WIZARD_PASSWORD},
+            )
+            assert resp.status_code == 200, f"Wallet creation failed: {resp.text}"
+            assert resp.json()["created"] is True
+
+        assert secrets_path.exists(), "secrets.env was not created"
+        content = secrets_path.read_text(encoding="utf-8")
+        assert "wallet_password=" in content, (
+            f"wallet_password not found in secrets.env. Content:\n{content}"
+        )
+
+    def test_secrets_env_written_inplace_preserves_inode(self, tmp_path: Path):
+        """write_secret() must overwrite the file in-place (same inode).
+
+        Docker bind mounts track the inode, so an atomic rename-and-replace
+        strategy would silently break the host ↔ container bind mount.
+        """
+        import os
+
+        from micromech.core.secrets_file import write_secret
+
+        secrets_path = tmp_path / "secrets.env"
+        secrets_path.write_text("existing_key=existing_value\n", encoding="utf-8")
+        inode_before = os.stat(secrets_path).st_ino
+
+        write_secret("wallet_password", "newpass123", path=secrets_path)
+
+        inode_after = os.stat(secrets_path).st_ino
+        assert inode_after == inode_before, (
+            "write_secret() changed the inode — it must write in-place to "
+            "preserve Docker bind mount visibility on the host"
+        )
+        content = secrets_path.read_text(encoding="utf-8")
+        assert "wallet_password=newpass123" in content
+        assert "existing_key=existing_value" in content
