@@ -1,5 +1,7 @@
 # micromech
 
+> **Disclaimer:** micromech is open-source software provided **as is**, without warranty of any kind. Use it at your own risk. The developers are not responsible for any loss of funds, tokens, rewards, or damages arising from the use of this software. By using micromech you accept full responsibility for the security of your wallet and private keys.
+
 **A lightweight mech for the [OLAS](https://olas.network/) network.** micromech runs an autonomous AI agent (called a "mech") that listens for on-chain requests, solves them using pluggable tools, and delivers results back on-chain.
 
 No prior experience with OLAS or blockchain development is needed to get started.
@@ -126,14 +128,6 @@ just check       # lint + types
 just security    # gitleaks + bandit
 just test        # pytest
 ```
-
-## Disclaimer
-
-micromech is open-source software provided **as is**, without warranty of any kind. Use it at your own risk.
-
-The developers are not responsible for any loss of funds, tokens, rewards, or any other damages arising from the use of this software, including but not limited to bugs, misconfigurations, network failures, smart contract behaviour, or third-party service outages.
-
-By using micromech you accept full responsibility for the security of your wallet and private keys. Always keep backups of `data/wallet.json` in a secure location.
 
 ## License
 
