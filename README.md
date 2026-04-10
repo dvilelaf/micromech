@@ -6,8 +6,6 @@
 
 No prior experience with OLAS or blockchain development is needed to get started.
 
-> **Important:** micromech manages a real cryptocurrency wallet. Back up `data/wallet.json` regularly and store it in a safe place. If you lose this file and have no backup, access to your funds is permanently lost.
-
 <p align="center">
   <img width="30%" src="images/micromech.png">
 </p>
@@ -58,6 +56,9 @@ Open **http://localhost:8090** in your browser. The setup wizard will guide you 
 > ssh -L 8090:localhost:8090 user@your-server
 > ```
 > Then open `http://localhost:8090` in your local browser.
+
+> [!WARNING]
+> **Back up your wallet before doing anything else.** Once your wallet is created, copy `data/wallet.json` to a safe location outside the server. If you lose this file and have no backup, access to your funds is permanently lost and cannot be recovered.
 
 ## Day-to-Day Commands
 
