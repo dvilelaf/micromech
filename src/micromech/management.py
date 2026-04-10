@@ -108,7 +108,7 @@ class MechLifecycle:
     def create_service(
         self,
         agent_id: int = 40,
-        bond_olas: int = 10000,
+        bond_olas: int = 5000,
     ) -> Optional[int]:
         """Create a new service on-chain.
 
@@ -327,7 +327,7 @@ class MechLifecycle:
     def full_deploy(
         self,
         agent_id: int = 40,
-        bond_olas: int = 10000,
+        bond_olas: int = 5000,
         on_progress: Optional[Callable[[int, int, str, bool], None]] = None,
     ) -> dict[str, Any]:
         """Run the complete lifecycle, resuming from where a previous attempt left off.
