@@ -622,15 +622,21 @@ def create_web_app(
                     yield f"data: {json.dumps(done_evt)}\n\n"
                 except Exception:
                     logger.exception("Deploy failed for {}", chain_name)
-                    # Drain remaining events (includes rollback progress from management.py)
+                    # Drain remaining events (includes rollback progress from management.py).
+                    # Track whether rollback already succeeded so we don't overwrite rollback_done
+                    # with a generic error event (which would flip the UI from ✓ back to ⚠).
+                    flushed: list[dict] = []
                     while not progress_q.empty():
                         evt = progress_q.get_nowait()
+                        flushed.append(evt)
                         yield f"data: {json.dumps(evt)}\n\n"
-                    err = {
-                        "step": "error",
-                        "message": "Deployment failed. Funds were recovered automatically — check logs for details.",
-                    }
-                    yield f"data: {json.dumps(err)}\n\n"
+                    rollback_ok = any(e.get("step") == "rollback_done" for e in flushed)
+                    if not rollback_ok:
+                        err = {
+                            "step": "error",
+                            "message": "Deployment failed. Funds were recovered automatically — check logs for details.",
+                        }
+                        yield f"data: {json.dumps(err)}\n\n"
 
         return StreamingResponse(
             deploy_stream(),
