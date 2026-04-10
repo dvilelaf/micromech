@@ -60,7 +60,21 @@ Control your mech from your phone:
    ```
 4. Restart: `cd micromech && docker compose restart`
 
-Now send `/status` to your bot to check on your mech.
+Available commands:
+
+| Command | What it does |
+|---|---|
+| `/status` | Mech status, deliveries, and rewards |
+| `/wallet` | Wallet address and balances per chain |
+| `/queue` | Pending, executing, and failed requests |
+| `/info` | Version and runtime information |
+| `/logs` | Download last 24h logs as a zip file |
+| `/manage` | Stake, unstake, or restake per chain |
+| `/checkpoint` | Call staking checkpoint manually |
+| `/claim` | Claim staking rewards |
+| `/settings` | Toggle features (e.g. auto-checkpoint) |
+| `/update` | Pull latest image and restart |
+| `/restart` | Restart the mech runtime |
 
 ## Day-to-Day Commands
 
