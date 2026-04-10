@@ -296,3 +296,61 @@ class TestPredictionHelpers:
         result = json.loads(_validate_prediction("not json at all"))
         assert result["p_yes"] == 0.5
         assert result["p_no"] == 0.5
+
+
+class TestModelHashPinning:
+    """Tests for _verify_or_pin_hash integrity check."""
+
+    def test_pins_hash_on_first_download(self, tmp_path):
+        """First call creates manifest.json with the model's SHA-256."""
+        from micromech.tools.local_llm.local_llm import _verify_or_pin_hash
+
+        model = tmp_path / "model.gguf"
+        model.write_bytes(b"fake model weights")
+        manifest = tmp_path / "manifest.json"
+
+        assert not manifest.exists()
+        result = _verify_or_pin_hash(model)
+        assert result is True
+        assert manifest.exists()
+        data = json.loads(manifest.read_text())
+        assert "model.gguf" in data
+        assert len(data["model.gguf"]) == 64  # SHA-256 hex length
+
+    def test_verifies_correct_hash(self, tmp_path):
+        """Second call with same file content passes verification."""
+        from micromech.tools.local_llm.local_llm import _verify_or_pin_hash
+
+        model = tmp_path / "model.gguf"
+        model.write_bytes(b"fake model weights")
+
+        _verify_or_pin_hash(model)  # pin
+        result = _verify_or_pin_hash(model)  # verify
+        assert result is True
+
+    def test_rejects_tampered_model(self, tmp_path):
+        """Mismatched hash returns False and logs error."""
+        from micromech.tools.local_llm.local_llm import _verify_or_pin_hash
+
+        model = tmp_path / "model.gguf"
+        model.write_bytes(b"original weights")
+        _verify_or_pin_hash(model)  # pin original hash
+
+        model.write_bytes(b"TAMPERED weights")
+        result = _verify_or_pin_hash(model)
+        assert result is False
+
+    def test_recovers_from_corrupt_manifest(self, tmp_path):
+        """Corrupt manifest.json falls back to re-pinning (self-heals)."""
+        from micromech.tools.local_llm.local_llm import _verify_or_pin_hash
+
+        model = tmp_path / "model.gguf"
+        model.write_bytes(b"fake model weights")
+        manifest = tmp_path / "manifest.json"
+        manifest.write_text("this is not valid json {{{")
+
+        result = _verify_or_pin_hash(model)
+        assert result is True
+        # Manifest should now be repaired with correct hash
+        data = json.loads(manifest.read_text())
+        assert "model.gguf" in data
