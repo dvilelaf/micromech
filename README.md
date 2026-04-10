@@ -10,7 +10,7 @@ No prior experience with OLAS or blockchain development is needed to get started
 
 ## What You Need
 
-- **A computer** that can stay on (or a cheap cloud server). 4 GB RAM minimum (the built-in LLM model needs ~1 GB).
+- **A computer** that can stay on (or a cheap cloud server). 2 GB RAM minimum.
 - **Docker Desktop** — a free app that runs micromech in an isolated container.
   - [Download for Windows](https://docs.docker.com/desktop/setup/install/windows-install/)
   - [Download for Mac](https://docs.docker.com/desktop/setup/install/mac-install/)
