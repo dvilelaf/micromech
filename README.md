@@ -106,10 +106,12 @@ After the quickstart, your `micromech/` folder contains:
 | `secrets.env` | Passwords, API keys, Telegram token, custom RPC endpoints | **Never share.** This is the main file you'll edit. |
 | `docker-compose.yml` | Docker configuration | Leave it alone unless you need to change ports. |
 | `data/` | All persistent data (wallet, database, config, AI models) | **Back this up regularly.** |
-| `data/config.yaml` | Mech settings (created after first setup) | You can edit it, but the web dashboard is easier. |
-| `data/wallet.json` | Your encrypted wallet | **Never share. Back this up.** |
-| `data/micromech.db` | Request history database | Grows over time. No need to touch it. |
-| `updater.sh` | Auto-update script | Don't touch. |
+| `data/config.yaml` | Mech settings: chains, mech addresses, staking contracts | You can edit it, but the web dashboard is easier. |
+| `data/wallet.json` | Your encrypted wallet (private key + recovery phrase) | **Never share. Back this up.** |
+| `data/micromech.db` | SQLite database of all requests — pending, delivered, failed | Grows over time. Safe to delete if disk space is tight (history only, no funds). |
+| `data/backup/` | Automatic wallet backups created before any key change | Keep these. Delete old ones manually if needed. |
+| `data/.hf_cache/` | Cached AI model files (downloaded on first use) | Large (~300 MB). Safe to delete — re-downloads automatically. |
+| `updater.sh` | Auto-update script (called by the container on startup) | Don't touch. |
 | `Justfile` | Command shortcuts (requires `just`) | Optional convenience, safe to ignore. |
 
 > **Backup reminder:** Copy the entire `data/` folder somewhere safe. If you lose `data/wallet.json`, you lose access to your wallet.

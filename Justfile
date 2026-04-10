@@ -307,6 +307,103 @@ rebuild-clean:
 logs:
     docker compose logs -f --tail=100
 
+# Check container status
+status:
+    docker compose ps
+
+# Run health check (Docker, secrets, wallet integrity)
+doctor:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    OK=true
+    MICROMECH_IMAGE=$(grep 'image:' docker-compose.yml 2>/dev/null | head -1 | awk '{print $2}' || echo "dvilela/micromech:latest")
+
+    ok()   { echo "  OK    $1"; }
+    warn() { echo "  WARN  $1"; }
+    fail() { echo "  FAIL  $1"; OK=false; }
+
+    echo ""
+    echo "micromech doctor"
+    echo "========================================"
+
+    # Docker
+    echo ""
+    echo "Docker"
+    if ! docker info >/dev/null 2>&1; then
+        fail "Docker is not running — open Docker Desktop"
+    else
+        ok "Docker is running"
+    fi
+
+    # Image
+    if ! docker image inspect "$MICROMECH_IMAGE" >/dev/null 2>&1; then
+        fail "Image not found: $MICROMECH_IMAGE (run: just update)"
+    else
+        ok "Image found: $MICROMECH_IMAGE"
+    fi
+
+    # Container
+    if docker compose ps --status running 2>/dev/null | grep -q micromech; then
+        ok "Container is running"
+    else
+        warn "Container is not running (run: just up)"
+    fi
+
+    # Port
+    if curl -sf http://localhost:8090/api/health >/dev/null 2>&1; then
+        ok "Dashboard reachable at http://localhost:8090"
+    else
+        warn "Dashboard not reachable at http://localhost:8090"
+    fi
+
+    # secrets.env
+    echo ""
+    echo "Configuration"
+    if [ ! -f secrets.env ]; then
+        fail "secrets.env not found"
+    else
+        ok "secrets.env found"
+    fi
+
+    # data/wallet.json
+    if [ ! -f data/wallet.json ]; then
+        warn "data/wallet.json not found — run: just init"
+    else
+        ok "data/wallet.json found"
+    fi
+
+    # data/config.yaml
+    if [ ! -f data/config.yaml ]; then
+        warn "data/config.yaml not found — run: just init"
+    else
+        ok "data/config.yaml found"
+    fi
+
+    # Wallet integrity + tools check (via Docker)
+    echo ""
+    echo "Wallet & Tools"
+    if docker image inspect "$MICROMECH_IMAGE" >/dev/null 2>&1 && [ -f data/wallet.json ] && [ -f secrets.env ]; then
+        docker_out=$(docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --volume "$(pwd)/data:/app/data" \
+            --env-file "$(pwd)/secrets.env" \
+            "$MICROMECH_IMAGE" \
+            python -m micromech doctor 2>&1) && docker_exit=0 || docker_exit=$?
+        echo "$docker_out" | grep -E "^  (OK|WARN|FAIL)" || true
+        [ $docker_exit -ne 0 ] && OK=false
+    else
+        warn "Skipping wallet check (image or wallet.json not available)"
+    fi
+
+    echo ""
+    echo "========================================"
+    if [ "$OK" = "true" ]; then
+        echo "All checks passed."
+    else
+        echo "Some checks failed — see above."
+        exit 1
+    fi
+
 # --- Release ---
 
 # Validate git state (uncommitted changes, lockfile sync)

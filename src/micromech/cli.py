@@ -901,6 +901,44 @@ def doctor(
 
         wallet = Wallet()
         ok(f"Address: {wallet.master_account.address}")
+
+        # Verify key decryption and mnemonic integrity
+        try:
+            from eth_account import Account as EthAccount
+            from iwa.core.keys import KeyStorage
+            from iwa.core.models import StoredSafeAccount
+
+            storage = wallet.key_storage
+            success = 0
+            for acct in storage.accounts.values():
+                if isinstance(acct, StoredSafeAccount):
+                    continue
+                priv = acct.decrypt_private_key()
+                derived = EthAccount.from_key(priv)
+                if derived.address.lower() == acct.address.lower():
+                    success += 1
+                else:
+                    fail(f"Address mismatch: stored={acct.address} derived={derived.address}")
+            if success > 0:
+                ok(f"Key decryption verified ({success} account(s))")
+
+            if storage.encrypted_mnemonic:
+                from iwa.core.mnemonic import EncryptedMnemonic
+                from iwa.core.secrets import secrets as iwa_secrets
+
+                enc = EncryptedMnemonic(**storage.encrypted_mnemonic)
+                pwd = iwa_secrets.wallet_password.get_secret_value()
+                phrase = enc.decrypt(pwd)
+                words = len(phrase.split())
+                if words in (12, 15, 18, 21, 24):
+                    ok(f"Mnemonic decrypted ({words} words)")
+                else:
+                    warn(f"Mnemonic decrypted but unusual word count: {words}")
+            else:
+                warn("No mnemonic in wallet.json — backup not possible without it")
+        except Exception as e:
+            fail(f"Key integrity check failed: {e}")
+
     except ImportError:
         fail("iwa not installed (pip install micromech[chain])")
     except Exception as e:
