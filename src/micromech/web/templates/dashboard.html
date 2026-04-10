@@ -538,6 +538,7 @@
     <div id="toast-container" role="status" aria-live="polite"></div>
 
     <script>
+    const API_BASE = "{{ api_base }}";
     /**
      * Show a transient notification in the bottom-right corner.
      *
@@ -630,7 +631,7 @@
     // --- SSE Stream ---
     function connectSSE() {
         if (state.metricsES) return;
-        const es = new EventSource('/api/metrics/stream');
+        const es = new EventSource(API_BASE + '/api/metrics/stream');
         state.metricsES = es;
         es.onopen = () => {
             state.sseConnected = true;
@@ -675,7 +676,7 @@
 
     // --- Activity Table ---
     function loadActivityRequests() {
-        fetch('/api/requests?limit=100' + chainQueryAmp('activity')).then(r => r.json()).then(rows => {
+        fetch(API_BASE + '/api/requests?limit=100' + chainQueryAmp('activity')).then(r => r.json()).then(rows => {
             state.historyData = rows;
             filterHistory();
         });
@@ -837,7 +838,7 @@
             },
         });
         // Load data
-        fetch('/api/metrics/channels').then(r => r.json()).then(d => {
+        fetch(API_BASE + '/api/metrics/channels').then(r => r.json()).then(d => {
             state.channelChart.data.datasets[0].data = [d.onchain || 0, d.offchain || 0];
             state.channelChart.update('none');
         });
@@ -847,7 +848,7 @@
     // --- Historical Charts ---
     function loadCharts() {
         // Daily
-        fetch('/api/metrics/daily?days=30').then(r => r.json()).then(data => {
+        fetch(API_BASE + '/api/metrics/daily?days=30').then(r => r.json()).then(data => {
             if (state.dailyChart) state.dailyChart.destroy();
             const ctx = document.getElementById('dailyChart').getContext('2d');
             state.dailyChart = new Chart(ctx, {
@@ -882,7 +883,7 @@
         });
 
         // Monthly
-        fetch('/api/metrics/monthly?months=12').then(r => r.json()).then(data => {
+        fetch(API_BASE + '/api/metrics/monthly?months=12').then(r => r.json()).then(data => {
             if (state.monthlyChart) state.monthlyChart.destroy();
             const ctx = document.getElementById('monthlyChart').getContext('2d');
             state.monthlyChart = new Chart(ctx, {
@@ -909,7 +910,7 @@
         });
 
         // Tool breakdown
-        fetch('/api/metrics/tools').then(r => r.json()).then(tools => {
+        fetch(API_BASE + '/api/metrics/tools').then(r => r.json()).then(tools => {
             if (state.toolChart) state.toolChart.destroy();
             const ctx = document.getElementById('toolChart').getContext('2d');
             state.toolChart = new Chart(ctx, {
@@ -961,9 +962,9 @@
     async function loadManagementTab() {
         // Load all data in parallel
         const [stateRes, stakingRes, karmaRes] = await Promise.all([
-            fetch('/api/setup/state').then(r => r.json()).catch(() => ({})),
-            fetch('/api/staking/status').then(r => r.json()).catch(() => ({})),
-            fetch('/api/karma').then(r => r.json()).catch(() => ({})),
+            fetch(API_BASE + '/api/setup/state').then(r => r.json()).catch(() => ({})),
+            fetch(API_BASE + '/api/staking/status').then(r => r.json()).catch(() => ({})),
+            fetch(API_BASE + '/api/karma').then(r => r.json()).catch(() => ({})),
         ]);
 
         mgmtChainData = stateRes.chains || {};
@@ -1117,7 +1118,7 @@
         if (card) card.querySelectorAll('.btn').forEach(b => b.disabled = true);
 
         try {
-            const resp = await fetch('/api/management/' + action, {
+            const resp = await fetch(API_BASE + '/api/management/' + action, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json', 'X-Micromech-Action': action}),
                 body: JSON.stringify({service_key: serviceKey, chain: chain}),
@@ -1150,7 +1151,7 @@
         const desc = document.getElementById('deploy-new-desc');
         const grid = document.getElementById('deploy-new-chains');
         try {
-            const chainsRes = await fetch('/api/setup/chains').then(r => r.json());
+            const chainsRes = await fetch(API_BASE + '/api/setup/chains').then(r => r.json());
             // Exclude ALL chains already in config (complete or in-progress)
             const deployed = new Set(Object.keys(mgmtChainData));
             const available = chainsRes.filter(c => !deployed.has(c.name));
@@ -1214,7 +1215,7 @@
         let allOk = true;
         for (const chain of newDeploySelected) {
             try {
-                const r = await fetch('/api/setup/balance?chain=' + chain);
+                const r = await fetch(API_BASE + '/api/setup/balance?chain=' + chain);
                 const d = await r.json();
                 const sym = NATIVE_SYM[chain] || 'Native';
                 const nOk = d.native_sufficient ? '✓' : '✗';
@@ -1268,7 +1269,7 @@
     async function deployNewChain(chain, log) {
         addDeployLog(log, `[${chain}] Starting deployment...`);
         try {
-            const res = await fetch('/api/setup/deploy', {
+            const res = await fetch(API_BASE + '/api/setup/deploy', {
                 method: 'POST',
                 headers: {'Content-Type':'application/json','X-Micromech-Action':'deploy'}),
                 body: JSON.stringify({ chain })
@@ -1347,7 +1348,7 @@
     }
 
     async function loadChains() {
-        const chains = await fetch('/api/chains').then(r => r.json());
+        const chains = await fetch(API_BASE + '/api/chains').then(r => r.json());
         state.chains = chains;
         // Populate all inline chain filter dropdowns
         ['filter-activity'].forEach(id => {
@@ -1405,7 +1406,7 @@
         // Disable all runtime buttons during action
         document.querySelectorAll('.rt-btn').forEach(b => b.disabled = true);
         try {
-            const resp = await fetch('/api/runtime/' + action, {
+            const resp = await fetch(API_BASE + '/api/runtime/' + action, {
                 method: 'POST',
                 headers: {'X-Micromech-Action': action}),
             });
@@ -1443,7 +1444,7 @@
 
     function connectLogStream() {
         if (logES) return;
-        logES = new EventSource('/api/logs/stream');
+        logES = new EventSource(API_BASE + '/api/logs/stream');
         logES.onmessage = (e) => {
             try {
                 const data = JSON.parse(e.data);
@@ -1537,7 +1538,7 @@
     async function loadToolsTab() {
         // 1) On-chain metadata status (badge + Update metadata button)
         try {
-            const res = await fetch('/api/metadata');
+            const res = await fetch(API_BASE + '/api/metadata');
             const data = await res.json();
             if (data.error) {
                 document.getElementById('metadata-status-badge').textContent = 'Error';
@@ -1583,7 +1584,7 @@
         container.innerHTML = '';
         let tools;
         try {
-            const res = await fetch('/api/setup/tools');
+            const res = await fetch(API_BASE + '/api/setup/tools');
             tools = await res.json();
         } catch (e) {
             container.textContent = 'Failed to load tools: ' + e.message;
@@ -1695,7 +1696,7 @@
         let phase = 'save';
         try {
             // 1) Persist the disabled_tools list
-            const saveRes = await fetch('/api/setup/tools', {
+            const saveRes = await fetch(API_BASE + '/api/setup/tools', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1711,7 +1712,7 @@
             // 2) Hot-reload the registry
             phase = 'reload';
             btn.textContent = 'Reloading…';
-            const reloadRes = await fetch('/api/tools/reload', {
+            const reloadRes = await fetch(API_BASE + '/api/tools/reload', {
                 method: 'POST',
                 headers: {'X-Micromech-Action': 'tools-reload'}),
             });
@@ -1779,7 +1780,7 @@
         btn.textContent = 'Scanning…';
         updateToolsDirtyUI();
         try {
-            const res = await fetch('/api/tools/reload', {
+            const res = await fetch(API_BASE + '/api/tools/reload', {
                 method: 'POST',
                 headers: {'X-Micromech-Action': 'tools-reload'}),
             });
@@ -1821,7 +1822,7 @@
      */
     async function publishMetadataStream(onStep) {
         try {
-            const res = await fetch('/api/metadata/publish', {
+            const res = await fetch(API_BASE + '/api/metadata/publish', {
                 method: 'POST',
                 headers: {'X-Micromech-Action': 'metadata'}),
             });
@@ -1887,7 +1888,7 @@
 
     // --- History (paginated, client-side) ---
     function loadHistory() {
-        fetch('/api/requests?limit=100').then(r => r.json()).then(rows => {
+        fetch(API_BASE + '/api/requests?limit=100').then(r => r.json()).then(rows => {
             state.historyData = rows;
             state.historyPage = 0;
             filterHistory();
@@ -1940,7 +1941,7 @@
 
     // --- Overview Tool Stats table ---
     function loadOverviewToolStats() {
-        fetch('/api/metrics/tools').then(r => r.json()).then(tools => {
+        fetch(API_BASE + '/api/metrics/tools').then(r => r.json()).then(tools => {
             const tbody = document.getElementById('overview-tool-stats');
             if (!tools.length) {
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No data yet</td></tr>';

@@ -482,7 +482,8 @@
     </div>
 
     <script>
-    document.getElementById('btn-go-dashboard').href = '/';
+    const API_BASE = "{{ api_base }}";
+    document.getElementById('btn-go-dashboard').href = API_BASE + '/';
 
     // State
     let currentStep = 1;
@@ -532,7 +533,7 @@
         const form = document.getElementById('wallet-password-form');
 
         try {
-            const res = await fetch('/api/setup/state');
+            const res = await fetch(API_BASE + '/api/setup/state');
             const data = await res.json();
 
             if (data.wallet_exists) {
@@ -631,7 +632,7 @@
         btn.textContent = 'Working...';
 
         try {
-            const res = await fetch('/api/setup/wallet', {
+            const res = await fetch(API_BASE + '/api/setup/wallet', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -707,7 +708,7 @@
     // --- Step 2: Chain selection ---
     async function loadChains() {
         try {
-            const res = await fetch('/api/setup/chains');
+            const res = await fetch(API_BASE + '/api/setup/chains');
             const chains = await res.json();
             const grid = document.getElementById('chain-grid');
             grid.innerHTML = '';
@@ -850,7 +851,7 @@
     async function loadTools() {
         const container = document.getElementById('tools-list');
         try {
-            const res = await fetch('/api/setup/tools');
+            const res = await fetch(API_BASE + '/api/setup/tools');
             const tools = await res.json();
             container.innerHTML = '';
             if (tools.length === 0) {
@@ -915,7 +916,7 @@
             .filter(([_, enabled]) => !enabled)
             .map(([name]) => name);
         try {
-            const resp = await fetch('/api/setup/tools', {
+            const resp = await fetch(API_BASE + '/api/setup/tools', {
                 method: 'POST',
                 headers: {'X-Micromech-Action': 'setup'}),
                 body: JSON.stringify({ disabled_tools: disabled }),
@@ -970,7 +971,7 @@
 
         // Pre-fill from existing secrets
         try {
-            const res = await fetch('/api/setup/secrets', {});
+            const res = await fetch(API_BASE + '/api/setup/secrets', {});
             const data = await res.json();
             if (data.telegram_token && data.telegram_token !== '***') {
                 document.getElementById('tg-token').value = data.telegram_token;
@@ -1075,7 +1076,7 @@
                 statusEl.textContent = 'Saving…';
                 statusEl.style.color = 'var(--text-muted)';
                 statusEl.style.display = 'block';
-                const res = await fetch('/api/setup/secrets', {
+                const res = await fetch(API_BASE + '/api/setup/secrets', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1169,7 +1170,7 @@
         setStepState(prefix, 1, 'running');
 
         try {
-            const res = await fetch('/api/setup/deploy', {
+            const res = await fetch(API_BASE + '/api/setup/deploy', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

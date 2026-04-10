@@ -247,7 +247,7 @@ def create_web_app(
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net/npm/chart.js@4/; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net/npm/chart.js@4/; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; "
             "connect-src 'self'; "
@@ -269,7 +269,7 @@ def create_web_app(
         return templates.TemplateResponse(
             request=request,
             name="dashboard.html",
-            context={},
+            context={"api_base": request.scope.get("root_path", "")},
         )
 
     @app.get("/setup", response_class=HTMLResponse)
@@ -277,7 +277,7 @@ def create_web_app(
         return templates.TemplateResponse(
             request=request,
             name="setup.html",
-            context={},
+            context={"api_base": request.scope.get("root_path", "")},
         )
 
     # --- Setup API ---
