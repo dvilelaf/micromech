@@ -10,7 +10,7 @@ No prior experience with OLAS or blockchain development is needed to get started
 
 ## What You Need
 
-- **A computer** that can stay on (or a cheap cloud server). 2 GB RAM minimum.
+- **A computer** that can stay on (or a cheap cloud server). 4 GB RAM minimum (the built-in LLM model needs ~1 GB).
 - **Docker Desktop** — a free app that runs micromech in an isolated container.
   - [Download for Windows](https://docs.docker.com/desktop/setup/install/windows-install/)
   - [Download for Mac](https://docs.docker.com/desktop/setup/install/mac-install/)
@@ -39,14 +39,7 @@ bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scrip
 
 > If WSL is not installed, open PowerShell as Administrator and run `wsl --install`, then restart your computer. Docker Desktop must be set to use the WSL 2 backend (this is the default).
 
-Then start micromech:
-
-```bash
-cd micromech
-docker compose up -d
-```
-
-Open **http://localhost:8090** in your browser. You should see the micromech dashboard.
+Open **http://localhost:8090** in your browser. micromech starts automatically after the script finishes.
 
 ## First-Time Setup
 
@@ -109,9 +102,9 @@ After the quickstart, your `micromech/` folder contains:
 | `secrets.env` | Passwords, API keys, Telegram token, custom RPC endpoints | **Never share.** This is the main file you'll edit. |
 | `docker-compose.yml` | Docker configuration | Leave it alone unless you need to change ports. |
 | `data/` | All persistent data (wallet, database, config, AI models) | **Back this up regularly.** |
-| `data/micromech.yaml` | Mech settings (created after first setup) | You can edit it, but the web dashboard is easier. |
+| `data/config.yaml` | Mech settings (created after first setup) | You can edit it, but the web dashboard is easier. |
 | `data/wallet.json` | Your encrypted wallet | **Never share. Back this up.** |
-| `data/mech.db` | Request history database | Grows over time. No need to touch it. |
+| `data/micromech.db` | Request history database | Grows over time. No need to touch it. |
 | `updater.sh` | Auto-update script | Don't touch. |
 | `Justfile` | Command shortcuts (requires `just`) | Optional convenience, safe to ignore. |
 
