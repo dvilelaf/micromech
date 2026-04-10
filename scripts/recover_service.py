@@ -224,6 +224,10 @@ def _recover(
             print(f"      Agent  address: {agent_address}")
             break
 
+    if not agent_address:
+        print("  WARNING: no agent account found in wallet — agent_address will be None.")
+        print("  Termination and drain will still proceed if service_owner matches master.")
+
     service = Service(
         service_name="recovery",
         chain_name=chain_name,
@@ -278,8 +282,12 @@ def _recover(
         # Re-read state: if no operators registered, the service goes to
         # PRE_REGISTRATION and the activation bond is returned inside the
         # terminate TX itself — no separate unbond is needed.
+        prev_state = state
         state = mgr.registry.get_service(service_id)["state"]
         print(f"  State after terminate: {state.name}")
+        if state == prev_state:
+            print(f"  WARNING: state unchanged after terminate ({state.name}). TX may not have finalised yet.")
+            print("  Proceeding, but verify on-chain state manually if recovery seems incomplete.")
     elif state == ServiceState.TERMINATED_BONDED:
         print("\n  Already TERMINATED_BONDED — skipping terminate.")
     elif state == ServiceState.PRE_REGISTRATION:

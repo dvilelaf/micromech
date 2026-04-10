@@ -1245,7 +1245,12 @@
                             // Only mark a step if one is still running (avoid marking wrong step
                             // after rollback already marked the failed step as error).
                             const running = findRunning(prefix);
-                            if (running) setStepState(prefix, running, 'error', evt.message);
+                            if (running) {
+                                setStepState(prefix, running, 'error', evt.message);
+                            } else {
+                                // Error arrived after rollback (no step running) — surface in rollback area
+                                showRollbackStatus(chain, evt.message, 'error');
+                            }
                             return false;
                         } else if (evt.step === 'rollback') {
                             showRollbackStatus(chain, evt.message, 'progress');

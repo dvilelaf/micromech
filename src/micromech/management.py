@@ -236,9 +236,9 @@ class MechLifecycle:
                 log_addr = (log_entry.get("address") or "").lower()
                 if log_addr == mkt and len(topics) >= 2:
                     raw = topics[1].hex() if isinstance(topics[1], bytes) else str(topics[1])
-                    from web3 import Web3
+                    from iwa.core.types import EthereumAddress
 
-                    mech_addr = Web3.to_checksum_address("0x" + raw[-40:])
+                    mech_addr = EthereumAddress("0x" + raw[-40:])
                     logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
                     return mech_addr
 
@@ -424,7 +424,7 @@ class MechLifecycle:
                 on_progress(
                     "rollback_failed",
                     0,
-                    "Automatic recovery failed — check logs. Run: python scripts/recover_service.py to recover manually.",
+                    f"Automatic recovery failed — check logs. Run: python scripts/recover_service.py --service {service_key} to recover manually.",
                     False,
                 )
             return False
