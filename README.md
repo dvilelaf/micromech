@@ -59,7 +59,7 @@ Open **http://localhost:8090** in your browser. The setup wizard will guide you 
 > Then open `http://localhost:8090` in your local browser.
 
 > [!WARNING]
-> **Back up your wallet before doing anything else.** Once your wallet is created, copy `data/wallet.json` to a safe location outside the server. If you lose this file and have no backup, access to your funds is permanently lost and cannot be recovered.
+> **Back up your wallet as soon as the setup wizard is complete.** Copy `data/wallet.json` to a safe location outside the server before adding any funds. If you lose this file and have no backup, access to your funds is permanently lost and cannot be recovered.
 
 ## Day-to-Day Commands
 
