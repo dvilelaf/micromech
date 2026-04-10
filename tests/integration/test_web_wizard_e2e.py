@@ -22,9 +22,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from micromech.core.config import MicromechConfig
-from micromech.web.app import create_web_app, get_auth_token
+from micromech.web.app import create_web_app
 
-AUTH_TOKEN = get_auth_token()
 WIZARD_PASSWORD = "test-wizard-p@ss-12345"
 
 # Gnosis OLAS token address + storage slot for balanceOf mapping
@@ -34,7 +33,6 @@ OLAS_BALANCE_SLOT = 3
 
 def _auth_headers() -> dict:
     return {
-        "X-Auth-Token": AUTH_TOKEN,
         "X-Micromech-Action": "setup",
         "Content-Type": "application/json",
     }
@@ -569,7 +567,7 @@ class TestWebWizardE2E:
 
         resp = client.post(
             "/api/setup/wallet",
-            headers={"X-Auth-Token": AUTH_TOKEN, "Content-Type": "application/json"},
+            headers={"Content-Type": "application/json"},
             json={"password": WIZARD_PASSWORD},
         )
         assert resp.status_code == 403
