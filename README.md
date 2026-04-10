@@ -49,16 +49,7 @@ Open **http://localhost:8090** in your browser. The setup wizard will guide you 
 
 ## Remote Control via Telegram (Optional)
 
-Control your mech from your phone:
-
-1. Open Telegram, search for **@BotFather**, send `/newbot` and follow the prompts. Copy the **token** it gives you.
-2. Search for **@userinfobot**, send it any message. Copy your **chat ID** (a number).
-3. Open `micromech/secrets.env` in any text editor and fill in:
-   ```
-   telegram_token=your-bot-token-here
-   telegram_chat_id=your-chat-id-here
-   ```
-4. Restart: `cd micromech && docker compose restart`
+Control your mech from your phone. Configure it from the dashboard, then use these commands:
 
 Available commands:
 
