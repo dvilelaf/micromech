@@ -339,8 +339,12 @@ INSTALL_DIR="$(pwd)/micromech"
 
 if ! mkdir -p "$INSTALL_DIR/data" 2>/dev/null; then
     echo -e "${RED}❌ Cannot create directory '$INSTALL_DIR'. Permission denied.${NC}"
-    echo -e "   Run the script from a directory you own (e.g. your home directory):"
-    echo -e "   ${BLUE}cd ~ && bash <(curl -sSL ...)${NC}"
+    if [ "$(id -u)" -ne 0 ]; then
+        echo -e "   To install here, run with sudo:"
+        echo -e "   ${BLUE}sudo bash <(curl -sSL ...)${NC}"
+        echo -e "   Or install in your home directory instead:"
+        echo -e "   ${BLUE}cd ~ && bash <(curl -sSL ...)${NC}"
+    fi
     exit 1
 fi
 

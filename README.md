@@ -23,18 +23,24 @@ After installing Docker Desktop, **open it once** and make sure it's running (yo
 
 ### Mac / Linux
 
-Open Terminal and paste this command:
+Open Terminal and run from the directory where you want micromech installed (your home directory is a good default):
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh)
+cd ~ && bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh)
+```
+
+This creates a `micromech/` folder in the current directory. If you want to install in a system directory like `/opt`, run with `sudo` instead:
+
+```bash
+cd /opt && sudo bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh)
 ```
 
 ### Windows
 
-Open a WSL terminal (search "WSL" in the Start menu) and paste the same command:
+Open a WSL terminal (search "WSL" in the Start menu) and run:
 
 ```bash
-bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh)
+cd ~ && bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/main/scripts/quickstart.sh)
 ```
 
 > If WSL is not installed, open PowerShell as Administrator and run `wsl --install`, then restart your computer. Docker Desktop must be set to use the WSL 2 backend (this is the default).
