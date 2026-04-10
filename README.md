@@ -45,7 +45,7 @@ cd ~ && bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/ma
 
 > If WSL is not installed, open PowerShell as Administrator and run `wsl --install`, then restart your computer. Docker Desktop must be set to use the WSL 2 backend (this is the default).
 
-Open **http://localhost:8090** in your browser. micromech starts automatically after the script finishes.
+Open **http://localhost:8090** in your browser. The setup wizard will guide you through creating your wallet, choosing a chain, and deploying your mech.
 
 ## Is It Working?
 
