@@ -335,22 +335,20 @@ echo -e "${GREEN}Docker is ready.${NC}"
 echo
 
 # 2. Setup Directory
-if [ -n "${MICROMECH_DIR:-}" ]; then
-    INSTALL_DIR="$MICROMECH_DIR"
-elif [ -w "$(pwd)" ]; then
-    INSTALL_DIR="$(pwd)/micromech"
-else
-    INSTALL_DIR="$HOME/micromech"
-    echo -e "${BLUE}ℹ️  Current directory is not writable — installing in $INSTALL_DIR${NC}"
+INSTALL_DIR="${MICROMECH_DIR:-$(pwd)/micromech}"
+
+if ! mkdir -p "$INSTALL_DIR/data" 2>/dev/null; then
+    echo -e "${RED}❌ Cannot create directory '$INSTALL_DIR'. Permission denied.${NC}"
+    echo -e "   Run the script from a directory you own, or set MICROMECH_DIR:"
+    echo -e "   ${BLUE}MICROMECH_DIR=\$HOME/micromech bash <(curl -sSL ...)${NC}"
+    exit 1
 fi
 
 echo -e "${BLUE}📂 Setting up directory '$INSTALL_DIR'...${NC}"
 
-if [ -d "$INSTALL_DIR" ]; then
+if [ -d "$INSTALL_DIR" ] && [ "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
     echo -e "Directory already exists. Updating config files..."
     echo -e "(Your data/ and secrets.env are preserved.)"
-else
-    mkdir -p "$INSTALL_DIR/data"
 fi
 cd "$INSTALL_DIR"
 
