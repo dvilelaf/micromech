@@ -8,7 +8,6 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 
 WORKDIR /app
-COPY . /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -16,10 +15,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
+# Copy only dependency files first so the expensive uv sync layer is cached
+# independently of source code changes.
+COPY pyproject.toml uv.lock ./
+
 # GGML_NATIVE=OFF disables CPU-specific optimizations that break QEMU-based
 # cross-compilation for arm64. The resulting binary still works on arm64 hardware.
 RUN CMAKE_ARGS="-DGGML_NATIVE=OFF" \
     uv sync --frozen --no-dev --extra web --extra cli --extra chain --extra tasks --extra llm
+
+# Copy the rest of the source code (does NOT invalidate the uv sync cache)
+COPY . /app
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Lean image — no compiler, no cmake. Only the C++ runtime libs that
