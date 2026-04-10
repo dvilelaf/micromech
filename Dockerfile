@@ -30,6 +30,9 @@ ARG VERSION=unknown
 LABEL version="${VERSION}"
 
 ENV PYTHONUNBUFFERED=1
+# Redirect HuggingFace cache to /app/data so non-root users can write to it.
+# Users should mount /app/data as a volume so the model persists across restarts.
+ENV HF_HOME=/app/data/.hf_cache
 
 # libstdc++6: C++ standard library (llama.cpp compiled extension)
 # libgomp1:   OpenMP runtime (llama.cpp uses it for parallel inference)
