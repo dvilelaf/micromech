@@ -68,25 +68,18 @@ def _validate_value(key: str, value: str) -> None:
 def _secure_write(path: Path, content: str) -> None:
     """Write content to path with mode 0o600 (owner r/w only).
 
-    Uses a randomly-named tempfile in the same directory (prevents symlink
-    attacks and predictable-path races). shutil.move handles cross-device
-    renames (e.g. Docker volume mounts on separate filesystems).
+    Writes in-place (preserves the inode) so Docker file bind mounts stay
+    visible on the host after writes. A rename-based atomic write would
+    change the inode and break Docker's bind mount mapping.
     """
-    tmp_fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=".secrets_", suffix=".tmp")
-    tmp = Path(tmp_name)
-    try:
-        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
-            f.write(content)
-        tmp.chmod(0o600)
-        shutil.move(str(tmp), str(path))
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        raise
-    # Enforce permissions on the target even if it pre-existed.
+    # Create with correct permissions if it doesn't exist yet.
+    if not path.exists():
+        path.touch(mode=0o600)
     try:
         path.chmod(0o600)
     except OSError as e:
         logger.warning("Could not enforce 0o600 on %s: %s", path, e)
+    path.write_text(content, encoding="utf-8")
 
 
 def read_secrets_file(path: Path | None = None) -> dict[str, str]:
