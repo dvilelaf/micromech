@@ -47,26 +47,6 @@ cd ~ && bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/ma
 
 Open **http://localhost:8090** in your browser. The setup wizard will guide you through creating your wallet, choosing a chain, and deploying your mech.
 
-## Remote Control via Telegram (Optional)
-
-Control your mech from your phone. Configure it from the dashboard, then use these commands:
-
-Available commands:
-
-| Command | What it does |
-|---|---|
-| `/status` | Mech status, deliveries, and rewards |
-| `/wallet` | Wallet address and balances per chain |
-| `/queue` | Pending, executing, and failed requests |
-| `/info` | Version and runtime information |
-| `/logs` | Download last 24h logs as a zip file |
-| `/manage` | Stake, unstake, or restake per chain |
-| `/checkpoint` | Call staking checkpoint manually |
-| `/claim` | Claim staking rewards |
-| `/settings` | Toggle features (e.g. auto-checkpoint) |
-| `/update` | Pull latest image and restart |
-| `/restart` | Restart the mech runtime |
-
 ## Day-to-Day Commands
 
 Run these from inside the `micromech/` folder. If you have [`just`](https://github.com/casey/just) installed, the shortcuts make things easier — otherwise use the `docker compose` equivalents.
@@ -83,6 +63,24 @@ Run these from inside the `micromech/` folder. If you have [`just`](https://gith
 | Run health check | `just doctor` | *(no equivalent)* |
 
 micromech restarts automatically if your computer reboots.
+
+## Remote Control via Telegram (Optional)
+
+Control your mech from your phone. Configure it from the dashboard, then use these commands:
+
+| Command | What it does |
+|---|---|
+| `/status` | Mech status, deliveries, and rewards |
+| `/wallet` | Wallet address and balances per chain |
+| `/queue` | Pending, executing, and failed requests |
+| `/info` | Version and runtime information |
+| `/logs` | Download last 24h logs as a zip file |
+| `/manage` | Stake, unstake, or restake per chain |
+| `/checkpoint` | Call staking checkpoint manually |
+| `/claim` | Claim staking rewards |
+| `/settings` | Toggle features (e.g. auto-checkpoint) |
+| `/update` | Pull latest image and restart |
+| `/restart` | Restart the mech runtime |
 
 ## Your Files
 
