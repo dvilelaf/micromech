@@ -4,6 +4,8 @@
 
 No prior experience with OLAS or blockchain development is needed to get started.
 
+> **Important:** micromech manages a real cryptocurrency wallet. Back up `data/wallet.json` regularly and store it in a safe place. If you lose this file and have no backup, access to your funds is permanently lost.
+
 <p align="center">
   <img width="30%" src="images/micromech.png">
 </p>
@@ -124,3 +126,15 @@ just check       # lint + types
 just security    # gitleaks + bandit
 just test        # pytest
 ```
+
+## Disclaimer
+
+micromech is open-source software provided **as is**, without warranty of any kind. Use it at your own risk.
+
+The developers are not responsible for any loss of funds, tokens, rewards, or any other damages arising from the use of this software, including but not limited to bugs, misconfigurations, network failures, smart contract behaviour, or third-party service outages.
+
+By using micromech you accept full responsibility for the security of your wallet and private keys. Always keep backups of `data/wallet.json` in a secure location.
+
+## License
+
+Apache-2.0
