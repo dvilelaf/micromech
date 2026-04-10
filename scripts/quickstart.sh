@@ -394,6 +394,11 @@ generate_updater_script
 cleanup
 trap - EXIT
 
+# If running as root via sudo, give ownership to the invoking user
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    chown -R "$SUDO_USER:$(id -gn "$SUDO_USER")" "$INSTALL_DIR"
+fi
+
 # Start micromech
 echo
 echo -e "${BLUE}🚀 Starting Micromech...${NC}"
