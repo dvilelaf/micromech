@@ -1239,6 +1239,8 @@ def create_web_app(
             try:
                 while True:
                     await asyncio.sleep(0.3)
+                    if await request.is_disconnected():
+                        break
                     while not log_q.empty():
                         try:
                             data = log_q.get_nowait()
