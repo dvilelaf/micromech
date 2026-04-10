@@ -47,16 +47,6 @@ cd ~ && bash <(curl -sSL https://raw.githubusercontent.com/dvilelaf/micromech/ma
 
 Open **http://localhost:8090** in your browser. The setup wizard will guide you through creating your wallet, choosing a chain, and deploying your mech.
 
-## Is It Working?
-
-Visit **http://localhost:8090** at any time. You're in good shape if you see:
-
-- **Status: Running** — your mech is online and listening for requests
-- **Deliveries** increasing over time — your mech is solving tasks
-- **Rewards** accumulating — you're earning OLAS tokens
-
-It's normal for deliveries to come in waves. Some hours are busier than others.
-
 ## Remote Control via Telegram (Optional)
 
 Control your mech from your phone:
