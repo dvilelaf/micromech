@@ -7,6 +7,7 @@ On startup, recovers any pending/interrupted requests from the database.
 
 import asyncio
 import signal
+from pathlib import Path
 from typing import Any, Optional
 
 from loguru import logger
@@ -137,6 +138,33 @@ class MechServer:
         new_registry.load_custom(CUSTOM_TOOLS_DIR, disabled=disabled)
         return fresh, new_registry
 
+    async def _prefetch_llm_model(self) -> None:
+        """Download the default LLM model in the background on first startup.
+
+        Runs in a thread so it doesn't block the event loop. Silently skipped
+        if llama-cpp-python is not installed (non-Docker / dev environments).
+        The model is cached in data/models/ — subsequent startups are instant.
+        """
+        def _download():
+            try:
+                from micromech.tools.local_llm.local_llm import _get_llm
+
+                _get_llm()
+                logger.info("LLM model ready")
+            except ImportError:
+                pass  # llm extra not installed — skip silently
+            except Exception as e:
+                logger.warning("LLM model prefetch failed: {}", e)
+
+        from micromech.core.constants import DEFAULT_LLM_FILE
+
+        model_path = Path("data") / "models" / DEFAULT_LLM_FILE
+        if model_path.exists():
+            return  # Already downloaded
+
+        logger.info("Downloading default LLM model in background (this may take a few minutes)...")
+        await asyncio.to_thread(_download)
+
     async def _recover(self) -> None:
         """Recover interrupted requests from DB on startup.
 
@@ -240,6 +268,9 @@ class MechServer:
 
         chains = list(self.config.enabled_chains.keys())
         logger.info("MechServer starting on chains: {}", chains)
+
+        # Prefetch default LLM model in background so it's ready before first use
+        asyncio.create_task(self._prefetch_llm_model())
 
         # Start processor FIRST so recovery queue is consumed
         self._tasks = [
