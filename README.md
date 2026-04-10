@@ -108,26 +108,6 @@ After the quickstart, your `micromech/` folder contains:
 
 > **Backup reminder:** Copy the entire `data/` folder somewhere safe. If you lose `data/wallet.json`, you lose access to your wallet.
 
-## FAQ
-
-**"Docker is not running"**
-Open the Docker Desktop app. Wait until the whale icon stops animating.
-
-**"Port 8090 already in use"**
-Edit `docker-compose.yml` and change `127.0.0.1:8090:8090` to `127.0.0.1:8001:8090`, then open `http://localhost:8001`.
-
-**"I closed the terminal and it stopped"**
-Make sure you started with `docker compose up -d` (the `-d` flag makes it run in the background).
-
-**"How much can I earn?"**
-Depends on network demand. Check [staking.olas.network](https://staking.olas.network/) for current rates.
-
-**"Is my wallet safe?"**
-Your private key is encrypted with your password and stored only on your machine in `micromech/data/`. Back up this folder.
-
-**"How do I uninstall?"**
-Run `docker compose down` then delete the `micromech/` folder.
-
 ## For Developers
 
 ```bash
