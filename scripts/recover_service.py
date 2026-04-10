@@ -111,7 +111,9 @@ def main() -> None:
         print(f"ERROR: wallet not found: {wallet_path}")
         sys.exit(1)
 
-    is_anvil = bool(args.rpc and "localhost" in args.rpc)
+    from urllib.parse import urlparse as _urlparse
+    _parsed_rpc = _urlparse(args.rpc) if args.rpc else None
+    is_anvil = bool(_parsed_rpc and _parsed_rpc.hostname in ("localhost", "127.0.0.1"))
     chain_name, service_id_str = args.service.split(":", 1)
     service_id = int(service_id_str)
 

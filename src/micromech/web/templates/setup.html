@@ -1206,6 +1206,9 @@
 
     async function deployOneChain(chain) {
         const prefix = `ds-${chain}-`;
+        // Reset recovery state from any previous attempt
+        const panelEl = document.getElementById('deploy-' + chain);
+        if (panelEl) delete panelEl.dataset.fundsRecovered;
         // Mark step 1 running
         setStepState(prefix, 1, 'running');
 
@@ -1307,18 +1310,33 @@
     function showRollbackStatus(chain, message, state) {
         const area = getOrCreateRollbackArea(chain);
         if (!area) return;
+        // Use textContent (not innerHTML) for server-provided message to prevent XSS
+        area.innerHTML = '';
+        const icon = document.createElement('span');
+        const text = document.createElement('span');
+        const defaults = { done: 'Funds recovered to master wallet.', error: 'Recovery failed — check logs', progress: 'Recovering funds...' };
+        text.textContent = message || defaults[state] || defaults.progress;
         if (state === 'done') {
             area.className = 'rollback-area done';
-            area.innerHTML = `<span>&#10003; ${message || 'Funds recovered to master wallet.'}</span>`;
-            // Update the retry button to clarify funds are safe
+            icon.textContent = '\u2713'; // ✓
+            area.appendChild(icon);
+            area.append(' ');
+            area.appendChild(text);
             const panel = document.getElementById('deploy-' + chain);
             if (panel) panel.dataset.fundsRecovered = '1';
         } else if (state === 'error') {
             area.className = 'rollback-area error';
-            area.innerHTML = `<span>&#9888; ${message || 'Recovery failed — check logs'}</span>`;
+            icon.textContent = '\u26a0'; // ⚠
+            area.appendChild(icon);
+            area.append(' ');
+            area.appendChild(text);
         } else {
             area.className = 'rollback-area';
-            area.innerHTML = `<i class="rollback-spinner">&#8635;</i> <span>${message || 'Recovering funds...'}</span>`;
+            icon.className = 'rollback-spinner';
+            icon.textContent = '\u27f3'; // ⟳
+            area.appendChild(icon);
+            area.append(' ');
+            area.appendChild(text);
         }
     }
 

@@ -403,9 +403,12 @@ class MechLifecycle:
             master = wallet.master_account.address
             _rb("Draining remaining funds to master wallet...")
             logger.info("Rollback: draining service {} to {}", service_key, master)
-            mgr.drain_service(target_address=master, claim_rewards=False)
+            drained = mgr.drain_service(target_address=master, claim_rewards=False)
+            if drained:
+                logger.info("Rollback: drain completed for {} — {}", service_key, list(drained.keys()))
+            else:
+                logger.info("Rollback: drain returned empty for {} (accounts may already be empty)", service_key)
             _rb("Funds drained to master wallet")
-            logger.info("Rollback: drain completed for {}", service_key)
 
             # Cleanup config and agent key
             self._cleanup_after_rollback(service_key, mgr)
@@ -418,7 +421,12 @@ class MechLifecycle:
         except Exception as e:
             logger.error("Rollback failed for {}: {}", service_key, e)
             if on_progress:
-                on_progress("rollback_failed", 0, f"Recovery failed: {e}. Run: python scripts/recover_service.py", False)
+                on_progress(
+                    "rollback_failed",
+                    0,
+                    "Automatic recovery failed — check logs. Run: python scripts/recover_service.py to recover manually.",
+                    False,
+                )
             return False
 
     def _cleanup_after_rollback(self, service_key: str, mgr: Any) -> None:
