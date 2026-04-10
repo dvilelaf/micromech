@@ -135,7 +135,17 @@ def write_secrets(updates: dict[str, str], path: Path | None = None) -> None:
     if p.exists():
         for line in p.read_text(encoding="utf-8").splitlines():
             stripped = line.strip()
-            if not stripped or stripped.startswith("#"):
+            if not stripped:
+                lines.append(line)
+                continue
+            # Detect commented-out template placeholders like "# key=" or "# key=value"
+            if stripped.startswith("#") and "=" in stripped:
+                candidate = stripped.lstrip("#").strip()
+                k = candidate.partition("=")[0].strip()
+                if k in remaining:
+                    lines.append(f"{k}={remaining.pop(k)}")
+                    continue
+            if stripped.startswith("#"):
                 lines.append(line)
                 continue
             if "=" in stripped:

@@ -167,6 +167,34 @@ class TestWriteSecrets:
         assert p.read_text() == original
 
 
+class TestWriteSecretsCommentedTemplates:
+    def test_uncomments_template_placeholder(self, tmp_path):
+        """Commented-out template lines like '# telegram_token=' are replaced in-place."""
+        p = tmp_path / "secrets.env"
+        p.write_text(
+            "# Telegram bot\n"
+            "# telegram_token=\n"
+            "# telegram_chat_id=\n"
+        )
+        write_secrets({"telegram_token": "abc123", "telegram_chat_id": "999"}, path=p)
+        result = read_secrets_file(p)
+        assert result["telegram_token"] == "abc123"
+        assert result["telegram_chat_id"] == "999"
+        # Should not be duplicated at the end
+        content = p.read_text()
+        assert content.count("telegram_token=") == 1
+        assert content.count("telegram_chat_id=") == 1
+
+    def test_commented_template_with_existing_value_replaced(self, tmp_path):
+        """'# key=default' placeholder is replaced, not duplicated."""
+        p = tmp_path / "secrets.env"
+        p.write_text("# gnosis_rpc=https://example.com\n")
+        write_secrets({"gnosis_rpc": "https://new.rpc"}, path=p)
+        result = read_secrets_file(p)
+        assert result["gnosis_rpc"] == "https://new.rpc"
+        assert p.read_text().count("gnosis_rpc=") == 1
+
+
 class TestConstants:
     def test_editable_keys_includes_rpc_and_telegram(self):
         assert "telegram_token" in EDITABLE_KEYS
