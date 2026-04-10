@@ -594,18 +594,26 @@ def create_web_app(
             async with chain_lock:
                 loop = asyncio.get_event_loop()
                 future = loop.run_in_executor(None, _run_deploy)
+                # Track rollback_done across ALL yield points (poll loop + exception handler)
+                # so we never emit a generic error after a successful rollback.
+                rollback_done_sent = False
+
+                def _yield_progress(evt: dict) -> str:
+                    nonlocal rollback_done_sent
+                    if evt.get("step") == "rollback_done":
+                        rollback_done_sent = True
+                    return f"data: {json.dumps(evt)}\n\n"
+
                 try:
                     while not future.done():
                         await asyncio.sleep(0.5)
                         while not progress_q.empty():
-                            evt = progress_q.get_nowait()
-                            yield f"data: {json.dumps(evt)}\n\n"
+                            yield _yield_progress(progress_q.get_nowait())
 
                     result = future.result()
                     # Drain remaining events
                     while not progress_q.empty():
-                        evt = progress_q.get_nowait()
-                        yield f"data: {json.dumps(evt)}\n\n"
+                        yield _yield_progress(progress_q.get_nowait())
 
                     _clear_setup_cache()
 
@@ -622,19 +630,15 @@ def create_web_app(
                     yield f"data: {json.dumps(done_evt)}\n\n"
                 except Exception:
                     logger.exception("Deploy failed for {}", chain_name)
-                    # Drain remaining events (includes rollback progress from management.py).
-                    # Track whether rollback already succeeded so we don't overwrite rollback_done
-                    # with a generic error event (which would flip the UI from ✓ back to ⚠).
-                    flushed: list[dict] = []
+                    # Drain remaining events (rollback progress from management.py)
                     while not progress_q.empty():
-                        evt = progress_q.get_nowait()
-                        flushed.append(evt)
-                        yield f"data: {json.dumps(evt)}\n\n"
-                    rollback_ok = any(e.get("step") == "rollback_done" for e in flushed)
-                    if not rollback_ok:
+                        yield _yield_progress(progress_q.get_nowait())
+                    # Only emit generic error if rollback_done was never sent —
+                    # otherwise we'd overwrite the ✓ rollback area with ⚠.
+                    if not rollback_done_sent:
                         err = {
                             "step": "error",
-                            "message": "Deployment failed. Funds were recovered automatically — check logs for details.",
+                            "message": "Deployment failed — check logs for details.",
                         }
                         yield f"data: {json.dumps(err)}\n\n"
 
