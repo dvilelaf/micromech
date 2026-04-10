@@ -25,7 +25,6 @@ _KNOWN_TIMEOUTS: dict[str, int] = {
     "echo_tool": 5,
     "local_llm": 120,
     "prediction_request": 120,
-    "gemma4_api_tool": 60,
 }
 
 

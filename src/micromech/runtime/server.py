@@ -269,12 +269,12 @@ class MechServer:
         chains = list(self.config.enabled_chains.keys())
         logger.info("MechServer starting on chains: {}", chains)
 
-        # Prefetch default LLM model in background so it's ready before first use
-        asyncio.create_task(self._prefetch_llm_model())
-
         # Start processor FIRST so recovery queue is consumed
         self._tasks = [
             asyncio.create_task(self._processor_loop()),
+            # Prefetch default LLM model in background so it's ready before first use.
+            # Added to self._tasks so stop() cancels it cleanly on shutdown.
+            asyncio.create_task(self._prefetch_llm_model()),
         ]
 
         # Start per-chain delivery managers
