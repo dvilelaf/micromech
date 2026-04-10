@@ -128,19 +128,6 @@ Your private key is encrypted with your password and stored only on your machine
 **"How do I uninstall?"**
 Run `docker compose down` then delete the `micromech/` folder.
 
-## Glossary
-
-| Term | What it means |
-|---|---|
-| **Mech** | An AI worker on the blockchain that answers requests for a fee |
-| **OLAS** | The token (cryptocurrency) you earn as rewards |
-| **Staking** | Locking tokens to prove you're a reliable worker — micromech handles this |
-| **Checkpoint** | Periodic on-chain proof your mech is active — called automatically |
-| **Delivery** | A completed AI task your mech solved |
-| **Tool** | An AI capability (text generation, prediction, etc.) |
-| **Chain** | A blockchain network (Gnosis, Ethereum, etc.) |
-| **Gas** | A small fee for blockchain transactions, like postage |
-
 ## For Developers
 
 ```bash
