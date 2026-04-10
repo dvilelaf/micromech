@@ -611,3 +611,41 @@ class TestRecordToDictIpfsCid:
         record = RequestRecord.model_construct(request=req, result=None, response=None)
         d = _record_to_dict(record)
         assert d["request_ipfs_cid"] is None
+
+
+class TestHostBinding:
+    """Verify the server defaults to localhost (security)."""
+
+    def test_default_host_is_localhost(self):
+        from micromech.core.constants import DEFAULT_HOST
+
+        assert DEFAULT_HOST == "127.0.0.1", f"DEFAULT_HOST must be 127.0.0.1, got {DEFAULT_HOST}"
+
+    def test_default_host_is_not_all_interfaces(self):
+        from micromech.core.constants import DEFAULT_HOST
+
+        assert DEFAULT_HOST != "0.0.0.0", (
+            "DEFAULT_HOST must NOT be 0.0.0.0 — web UI must only be accessible from localhost by default"
+        )
+
+    def test_cli_run_default_host(self):
+        """CLI run command defaults to 127.0.0.1."""
+        import inspect
+
+        from micromech.cli import run
+
+        sig = inspect.signature(run)
+        host_param = sig.parameters.get("host")
+        assert host_param is not None
+        assert host_param.default.default == "127.0.0.1"
+
+    def test_cli_web_default_host(self):
+        """CLI web command defaults to 127.0.0.1."""
+        import inspect
+
+        from micromech.cli import web
+
+        sig = inspect.signature(web)
+        host_param = sig.parameters.get("host")
+        assert host_param is not None
+        assert host_param.default.default == "127.0.0.1"

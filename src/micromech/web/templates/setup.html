@@ -482,15 +482,11 @@
     </div>
 
     <script>
-    const authHeaders = (function() {
-        const _t = '{{ auth_token }}';
-        return function(extra) {
-            return Object.assign({'X-Auth-Token': _t}, extra || {});
-        };
-    })();
+    function authHeaders(extra) {
+        return extra || {};
+    }
 
-    // Set dashboard link with token
-    document.getElementById('btn-go-dashboard').href = '/?token=' + '{{ auth_token }}';
+    document.getElementById('btn-go-dashboard').href = '/';
 
     // State
     let currentStep = 1;
@@ -1158,7 +1154,7 @@
                     chains.length > 1 ? `Deployed on ${chains.length} chains!` : 'Your mech is ready!';
                 document.getElementById('success-desc').textContent = 'Starting runtime...';
                 document.getElementById('btn-go-dashboard').style.display = 'inline-block';
-                setTimeout(() => { window.location.href = '/?token=' + '{{ auth_token }}'; }, 3000);
+                setTimeout(() => { window.location.href = '/'; }, 3000);
             }, 1000);
         } else {
             // Show retry

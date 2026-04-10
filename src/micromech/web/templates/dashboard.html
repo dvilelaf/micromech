@@ -538,14 +538,11 @@
     <div id="toast-container" role="status" aria-live="polite"></div>
 
     <script>
-    const authHeaders = (function() {
-        const _t = '{{ auth_token }}';
-        return function(extra) {
-            return Object.assign({'X-Auth-Token': _t}, extra || {});
-        };
-    })();
+    function authHeaders(extra) {
+        return extra || {};
+    }
     function authQueryParam() {
-        return 'token=' + encodeURIComponent('{{ auth_token }}');
+        return '';
     }
 
     /**
