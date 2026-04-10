@@ -449,3 +449,214 @@ class TestFullDeploy:
         lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
         with pytest.raises(RuntimeError, match="Service creation failed"):
             lc.full_deploy()
+
+
+class TestRollbackDeploy:
+    """Tests for rollback_deploy and _cleanup_after_rollback."""
+
+    def _make_mgr(self, state):
+        """Build a mock ServiceManager with the given on-chain state."""
+        from iwa.plugins.olas.contracts.service import ServiceState  # noqa: F401
+
+        mock_mgr = MagicMock()
+        # Default: terminate and unbond succeed
+        mock_mgr.terminate.return_value = True
+        mock_mgr.unbond.return_value = True
+        mock_mgr.registry.get_service.return_value = {"state": state}
+        return mock_mgr
+
+    @patch("micromech.management._get_service_manager")
+    def test_rollback_terminates_active_registration(self, mock_get_mgr):
+        from iwa.plugins.olas.contracts.service import ServiceState
+
+        # After terminate, state becomes PRE_REGISTRATION (bond returned in TX)
+        mock_mgr = self._make_mgr(ServiceState.ACTIVE_REGISTRATION)
+        mock_mgr.registry.get_service.side_effect = [
+            {"state": ServiceState.ACTIVE_REGISTRATION},
+            {"state": ServiceState.PRE_REGISTRATION},
+        ]
+        mock_get_mgr.return_value = mock_mgr
+
+        with patch("micromech.core.bridge.get_wallet") as mock_get_wallet:
+            mock_wallet = MagicMock()
+            mock_wallet.master_account.address = "0x" + "aa" * 20
+            mock_get_wallet.return_value = mock_wallet
+
+            lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+            result = lc.rollback_deploy("gnosis:42")
+
+        assert result is True
+        mock_mgr.terminate.assert_called_once()
+        mock_mgr.unbond.assert_not_called()
+        mock_mgr.drain_service.assert_called_once()
+
+    @patch("micromech.management._get_service_manager")
+    def test_rollback_terminates_and_unbonds_finished_registration(self, mock_get_mgr):
+        from iwa.plugins.olas.contracts.service import ServiceState
+
+        mock_mgr = self._make_mgr(ServiceState.FINISHED_REGISTRATION)
+        mock_mgr.registry.get_service.side_effect = [
+            {"state": ServiceState.FINISHED_REGISTRATION},
+            {"state": ServiceState.TERMINATED_BONDED},
+        ]
+        mock_get_mgr.return_value = mock_mgr
+
+        with patch("micromech.core.bridge.get_wallet") as mock_get_wallet:
+            mock_wallet = MagicMock()
+            mock_wallet.master_account.address = "0x" + "aa" * 20
+            mock_get_wallet.return_value = mock_wallet
+
+            lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+            result = lc.rollback_deploy("gnosis:42")
+
+        assert result is True
+        mock_mgr.terminate.assert_called_once()
+        mock_mgr.unbond.assert_called_once()
+        mock_mgr.drain_service.assert_called_once()
+
+    @patch("micromech.management._get_service_manager")
+    def test_rollback_skips_terminate_when_pre_registration(self, mock_get_mgr):
+        from iwa.plugins.olas.contracts.service import ServiceState
+
+        mock_mgr = self._make_mgr(ServiceState.PRE_REGISTRATION)
+        mock_get_mgr.return_value = mock_mgr
+
+        with patch("micromech.core.bridge.get_wallet") as mock_get_wallet:
+            mock_wallet = MagicMock()
+            mock_wallet.master_account.address = "0x" + "aa" * 20
+            mock_get_wallet.return_value = mock_wallet
+
+            lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+            result = lc.rollback_deploy("gnosis:42")
+
+        assert result is True
+        mock_mgr.terminate.assert_not_called()
+        mock_mgr.drain_service.assert_called_once()
+
+    @patch("micromech.management._get_service_manager")
+    def test_rollback_skips_terminate_when_terminated_bonded(self, mock_get_mgr):
+        from iwa.plugins.olas.contracts.service import ServiceState
+
+        mock_mgr = self._make_mgr(ServiceState.TERMINATED_BONDED)
+        mock_get_mgr.return_value = mock_mgr
+
+        with patch("micromech.core.bridge.get_wallet") as mock_get_wallet:
+            mock_wallet = MagicMock()
+            mock_wallet.master_account.address = "0x" + "aa" * 20
+            mock_get_wallet.return_value = mock_wallet
+
+            lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+            result = lc.rollback_deploy("gnosis:42")
+
+        assert result is True
+        mock_mgr.terminate.assert_not_called()
+        mock_mgr.unbond.assert_called_once()
+        mock_mgr.drain_service.assert_called_once()
+
+    @patch("micromech.management._get_service_manager")
+    def test_rollback_returns_false_on_terminate_failure(self, mock_get_mgr):
+        from iwa.plugins.olas.contracts.service import ServiceState
+
+        mock_mgr = self._make_mgr(ServiceState.ACTIVE_REGISTRATION)
+        mock_mgr.terminate.return_value = False
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+        result = lc.rollback_deploy("gnosis:42")
+
+        assert result is False
+        mock_mgr.terminate.assert_called_once()
+        mock_mgr.drain_service.assert_not_called()
+
+    @patch("micromech.core.bridge.get_service_info", return_value={})
+    @patch("micromech.management._get_service_manager")
+    def test_full_deploy_triggers_rollback_on_step3_failure(self, mock_get_mgr, mock_svc_info):
+        """Failing at register_agent (step 3) triggers rollback with the correct service_key."""
+        mock_mgr = MagicMock()
+        mock_mgr.create.return_value = 77
+        mock_mgr.activate_registration.return_value = True
+        mock_mgr.register_agent.return_value = False  # step 3 fails
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+        with patch.object(lc, "rollback_deploy") as mock_rollback:
+            mock_rollback.return_value = True
+            with pytest.raises(RuntimeError, match="Agent registration failed"):
+                lc.full_deploy()
+
+        mock_rollback.assert_called_once()
+        called_key = mock_rollback.call_args[0][0]
+        assert called_key == "gnosis:77"
+
+    @patch("micromech.core.bridge.get_service_info", return_value={})
+    @patch("micromech.management._get_service_manager")
+    def test_full_deploy_no_rollback_on_step1_failure(self, mock_get_mgr, mock_svc_info):
+        """Failing at create_service (step 1) does NOT trigger rollback (no service_key yet)."""
+        mock_mgr = MagicMock()
+        mock_mgr.create.return_value = None  # step 1 fails
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+        with patch.object(lc, "rollback_deploy") as mock_rollback:
+            mock_rollback.return_value = True
+            with pytest.raises(RuntimeError, match="Service creation failed"):
+                lc.full_deploy()
+
+        # rollback IS called but with service_key=None (nothing to do)
+        mock_rollback.assert_called_once()
+        called_key = mock_rollback.call_args[0][0]
+        assert called_key is None
+
+    @patch("micromech.core.bridge.get_wallet")
+    def test_cleanup_removes_empty_agent_key(self, mock_get_wallet):
+        """Agent key with zero balance is removed after rollback."""
+        agent_addr = "0x" + "bb" * 20
+        master_addr = "0x" + "cc" * 20
+
+        mock_agent = MagicMock()
+        mock_agent.tag = "micromech_agent"
+        mock_agent.address = agent_addr
+
+        mock_master = MagicMock()
+        mock_master.address = master_addr
+
+        mock_wallet = MagicMock()
+        mock_wallet.master_account = mock_master
+        mock_wallet.key_storage.accounts = {agent_addr: mock_agent}
+        mock_wallet.get_native_balance_eth.return_value = 0.0  # empty
+        mock_get_wallet.return_value = mock_wallet
+
+        lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+        mock_mgr = MagicMock()
+
+        with patch("iwa.core.models.Config"):
+            lc._cleanup_after_rollback("gnosis:42", mock_mgr)
+
+        mock_wallet.key_storage.remove_account.assert_called_once_with(agent_addr)
+
+    @patch("micromech.core.bridge.get_wallet")
+    def test_cleanup_keeps_agent_key_with_funds(self, mock_get_wallet):
+        """Agent key with non-zero balance is NOT removed."""
+        agent_addr = "0x" + "bb" * 20
+        master_addr = "0x" + "cc" * 20
+
+        mock_agent = MagicMock()
+        mock_agent.tag = "micromech_agent"
+        mock_agent.address = agent_addr
+
+        mock_master = MagicMock()
+        mock_master.address = master_addr
+
+        mock_wallet = MagicMock()
+        mock_wallet.master_account = mock_master
+        mock_wallet.key_storage.accounts = {agent_addr: mock_agent}
+        mock_wallet.get_native_balance_eth.return_value = 0.5  # has funds
+        mock_get_wallet.return_value = mock_wallet
+
+        lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+        mock_mgr = MagicMock()
+
+        with patch("iwa.core.models.Config"):
+            lc._cleanup_after_rollback("gnosis:42", mock_mgr)
+
+        mock_wallet.key_storage.remove_account.assert_not_called()

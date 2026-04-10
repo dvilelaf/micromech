@@ -216,6 +216,36 @@
         .deploy-msg { font-size: 0.9rem; }
         .deploy-msg.muted { color: var(--text-muted); }
 
+        /* Rollback status area */
+        .rollback-area {
+            margin-top: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            background: rgba(241,196,15,0.08);
+            border: 1px solid rgba(241,196,15,0.2);
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--warning);
+        }
+        .rollback-area.error {
+            background: rgba(231,76,60,0.08);
+            border-color: rgba(231,76,60,0.2);
+            color: var(--error);
+        }
+        .rollback-area.done {
+            background: rgba(46,204,113,0.08);
+            border-color: rgba(46,204,113,0.2);
+            color: var(--success);
+        }
+        .rollback-spinner {
+            display: inline-block;
+            animation: spin 1s linear infinite;
+            font-style: normal;
+        }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
         /* Buttons */
         .btn {
             display: inline-block;
@@ -1201,6 +1231,8 @@
                         } else if (evt.step === 'error') {
                             setStepState(prefix, findRunning(prefix) || 6, 'error', evt.message);
                             return false;
+                        } else if (evt.step === 'rollback') {
+                            showRollbackStatus(chain, evt.message, evt.success !== false);
                         } else if (typeof evt.step === 'number') {
                             for (let i = 1; i < evt.step; i++) setStepState(prefix, i, 'done');
                             if (evt.success === false) {
@@ -1240,6 +1272,31 @@
             if (el && el.classList.contains('running')) return i;
         }
         return null;
+    }
+
+    function getOrCreateRollbackArea(chain) {
+        const panelId = 'deploy-' + chain;
+        const panel = document.getElementById(panelId);
+        if (!panel) return null;
+        let area = panel.querySelector('.rollback-area');
+        if (!area) {
+            area = document.createElement('div');
+            area.className = 'rollback-area';
+            panel.appendChild(area);
+        }
+        return area;
+    }
+
+    function showRollbackStatus(chain, message, isOk) {
+        const area = getOrCreateRollbackArea(chain);
+        if (!area) return;
+        if (isOk) {
+            area.className = 'rollback-area';
+            area.innerHTML = `<i class="rollback-spinner">&#8635;</i> <span>Recovering funds... ${message || ''}</span>`;
+        } else {
+            area.className = 'rollback-area error';
+            area.innerHTML = `<span>&#9888; Rollback issue: ${message || 'check logs'}</span>`;
+        }
     }
 
     // --- Init ---
