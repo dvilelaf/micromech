@@ -409,13 +409,16 @@ class MechLifecycle:
 
             # Cleanup config and agent key
             self._cleanup_after_rollback(service_key, mgr)
-            _rb("Rollback complete. Funds recovered.", True)
+            # Use "rollback_done" so the frontend can close the spinner with a ✓
+            if on_progress:
+                on_progress("rollback_done", 0, "Funds recovered to master wallet.", True)
             logger.info("Rollback completed successfully for {}", service_key)
             return True
 
         except Exception as e:
             logger.error("Rollback failed for {}: {}", service_key, e)
-            _rb(f"Rollback error: {e}", False)
+            if on_progress:
+                on_progress("rollback_failed", 0, f"Recovery failed: {e}. Run: python scripts/recover_service.py", False)
             return False
 
     def _cleanup_after_rollback(self, service_key: str, mgr: Any) -> None:
