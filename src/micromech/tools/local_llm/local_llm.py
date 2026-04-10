@@ -3,8 +3,14 @@
 Valory-compatible: ALLOWED_TOOLS + run(**kwargs) -> MechResponse.
 Supports multiple models via presets (qwen, gemma4) or custom repo/file.
 Default model: Qwen2.5-0.5B-Instruct (Q4_K_M). Runs on CPU, ~400MB RAM.
+
+Model integrity: on first download the SHA-256 hash is stored in
+data/models/manifest.json.  On every subsequent load the file is re-hashed
+and compared against the manifest.  A mismatch aborts loading and logs an
+error so the operator can investigate before running untrusted model weights.
 """
 
+import hashlib
 import json
 import threading
 from pathlib import Path
@@ -25,6 +31,54 @@ ALLOWED_TOOLS = ["local-llm"]
 _llm_instances: dict[str, Any] = {}
 _init_lock = threading.Lock()  # For thread-safe model loading
 _llm_lock = threading.Lock()  # For serializing inference (llama-cpp not thread-safe)
+
+_MANIFEST_FILE = "manifest.json"
+
+
+def _sha256(path: Path) -> str:
+    """Compute SHA-256 hex digest of a file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _verify_or_pin_hash(model_path: Path) -> bool:
+    """Verify model file integrity against manifest; pin hash on first download.
+
+    Returns True if the file is trustworthy, False if a hash mismatch is detected.
+    On first download the hash is stored — subsequent loads verify against it.
+    """
+    manifest_path = model_path.parent / _MANIFEST_FILE
+    actual = _sha256(model_path)
+
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text())
+        except Exception:
+            manifest = {}
+        expected = manifest.get(model_path.name)
+        if expected and expected != actual:
+            logger.error(
+                "Model integrity check FAILED for {} — hash mismatch "
+                "(expected {}, got {}). Possible tampering. Refusing to load.",
+                model_path.name,
+                expected[:16] + "...",
+                actual[:16] + "...",
+            )
+            return False
+        if not expected:
+            # Hash not yet in manifest — add it
+            manifest[model_path.name] = actual
+            manifest_path.write_text(json.dumps(manifest, indent=2))
+            logger.debug("Model hash added to manifest: {}", model_path.name)
+    else:
+        # First download — create manifest
+        manifest_path.write_text(json.dumps({model_path.name: actual}, indent=2))
+        logger.info("Model hash pinned in manifest: {}", model_path.name)
+
+    return True
 
 
 def _get_llm(
@@ -57,6 +111,8 @@ def _get_llm(
                 filename=model_file,
                 local_dir=str(mdir),
             )
+        if not _verify_or_pin_hash(model_path):
+            raise RuntimeError(f"Model integrity check failed for {model_file}")
         logger.info("Loading LLM from {}", model_path)
         instance = Llama(
             model_path=str(model_path),
