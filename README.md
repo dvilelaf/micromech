@@ -90,7 +90,7 @@ Run these from inside the `micromech/` folder. If you have [`just`](https://gith
 | Stop micromech | `just down` | `docker compose down` |
 | View live logs | `just logs` | `docker compose logs -f` |
 | Update to latest image | `just update` | `docker compose pull && docker compose up -d` |
-| Update config files | `just update-config` | *(no equivalent)* |
+| Update `Justfile` + `docker-compose.yml` | `just update-config` | *(no equivalent)* |
 | Check container status | `just status` | `docker compose ps` |
 | Re-run setup wizard | `just init` | *(no equivalent)* |
 | Run health check | `just doctor` | *(no equivalent)* |
