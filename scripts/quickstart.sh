@@ -335,12 +335,12 @@ echo -e "${GREEN}Docker is ready.${NC}"
 echo
 
 # 2. Setup Directory
-INSTALL_DIR="${MICROMECH_DIR:-$(pwd)/micromech}"
+INSTALL_DIR="$(pwd)/micromech"
 
 if ! mkdir -p "$INSTALL_DIR/data" 2>/dev/null; then
     echo -e "${RED}❌ Cannot create directory '$INSTALL_DIR'. Permission denied.${NC}"
-    echo -e "   Run the script from a directory you own, or set MICROMECH_DIR:"
-    echo -e "   ${BLUE}MICROMECH_DIR=\$HOME/micromech bash <(curl -sSL ...)${NC}"
+    echo -e "   Run the script from a directory you own (e.g. your home directory):"
+    echo -e "   ${BLUE}cd ~ && bash <(curl -sSL ...)${NC}"
     exit 1
 fi
 
