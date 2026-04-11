@@ -239,8 +239,6 @@ class MechLifecycle:
                     if len(raw) < 40:
                         logger.warning("Mech log topic too short ({} chars), skipping", len(raw))
                         continue
-                    from iwa.core.types import EthereumAddress
-
                     mech_addr = EthereumAddress("0x" + raw[-40:])
                     logger.info("Mech created on {}: {}", self.chain_name, mech_addr)
                     return mech_addr
@@ -427,7 +425,7 @@ class MechLifecycle:
                 on_progress(
                     "rollback_failed",
                     0,
-                    f"Automatic recovery failed — check logs. Run: python scripts/recover_service.py --service {service_key} to recover manually.",
+                    f"Automatic recovery failed — check logs. Run: python scripts/recover_service.py --service '{service_key}' to recover manually.",
                     False,
                 )
             return False
