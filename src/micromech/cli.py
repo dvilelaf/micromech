@@ -232,7 +232,7 @@ def init(
     if state != "needs_create":
         typer.echo(f"  Resuming from state: {state}")
 
-    def _on_progress(step: int, total: int, msg: str, success: bool = True) -> None:
+    def _on_progress(step: int | str, total: int, msg: str, success: bool = True) -> None:
         icon = "+" if success else "!"
         typer.echo(f"  [{icon}] [{step}/{total}] {msg}")
 
