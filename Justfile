@@ -497,7 +497,7 @@ publish: _validate-git-state _validate-tag-at-head
     VERSION=$(grep -m1 'version = ' pyproject.toml | cut -d '"' -f2)
 
     echo "Publishing version $VERSION to DockerHub (multi-arch)..."
-    docker buildx build --no-cache --platform linux/amd64,linux/arm64 \
+    docker buildx build --platform linux/amd64,linux/arm64 \
         --build-arg VERSION=$VERSION \
         -t dvilela/micromech:latest -t dvilela/micromech:$VERSION \
         -f Dockerfile --push .
