@@ -375,7 +375,10 @@ class MechLifecycle:
                 ok = mgr.terminate()
                 if not ok:
                     logger.error("Rollback: terminate() returned False for {}", service_key)
-                    _rb("Failed to terminate service", False)
+                    if on_progress:
+                        on_progress("rollback_failed", 0,
+                            f"Failed to terminate service. Run: python scripts/recover_service.py --service '{service_key}' to recover manually.",
+                            False)
                     return False
                 _rb("Service terminated")
                 logger.info("Rollback: terminate succeeded for {}", service_key)
@@ -392,7 +395,10 @@ class MechLifecycle:
                 ok = mgr.unbond()
                 if not ok:
                     logger.error("Rollback: unbond() returned False for {}", service_key)
-                    _rb("Failed to unbond service", False)
+                    if on_progress:
+                        on_progress("rollback_failed", 0,
+                            f"Failed to unbond service. Run: python scripts/recover_service.py --service '{service_key}' to recover manually.",
+                            False)
                     return False
                 _rb("Unbonded successfully")
                 logger.info("Rollback: unbond succeeded for {}", service_key)
