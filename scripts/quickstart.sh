@@ -258,8 +258,8 @@ while true; do
                     # Wait for complete shutdown
                     sleep 2
 
-                    # Ensure data directory has correct permissions for container user (1000:1000)
-                    chown -R 1000:1000 data/ 2>/dev/null || true
+                    # Ensure data directory has correct permissions for container user
+                    chown -R ${user_uid}:${user_gid} data/ 2>/dev/null || true
 
                     # Generate temporary docker-compose.yml with absolute paths for volumes
                     sed "s|- \\./data|- $PROJECT_DIR/data|g; s|- \\./secrets\\.env|- $PROJECT_DIR/secrets.env|g" docker-compose.yml > /tmp/docker-compose-abs.yml
