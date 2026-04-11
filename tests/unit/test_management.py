@@ -373,13 +373,11 @@ class TestFullDeploy:
     def test_full_deploy_from_scratch(self, mock_get_mgr, mock_svc_info):
         mock_mgr = MagicMock()
         mock_mgr.create.return_value = 99
-        mock_mgr.activate_registration.return_value = True
-        mock_mgr.register_agent.return_value = True
-        mock_mgr.deploy.return_value = "0x" + "aa" * 20
+        mock_mgr.spin_up.return_value = True
+        mock_mgr.service.multisig_address = "0x" + "aa" * 20
         mock_mgr.stake.return_value = True
         mock_get_mgr.return_value = mock_mgr
 
-        # Mock create_mech path
         cfg = make_test_config()
         lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
         with patch.object(lc, "create_mech", return_value="0x" + "bb" * 20):
@@ -391,15 +389,15 @@ class TestFullDeploy:
         assert result["mech_address"] == "0x" + "bb" * 20
         assert result["staked"] is True
         assert len(progress) >= 6
+        mock_mgr.spin_up.assert_called_once()
 
     @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
     def test_full_deploy_no_mech_runs_full_flow(self, mock_get_mgr, mock_svc_info):
         mock_mgr = MagicMock()
         mock_mgr.create.return_value = 42
-        mock_mgr.activate_registration.return_value = True
-        mock_mgr.register_agent.return_value = True
-        mock_mgr.deploy.return_value = "0x" + "cc" * 20
+        mock_mgr.spin_up.return_value = True
+        mock_mgr.service.multisig_address = "0x" + "cc" * 20
         mock_mgr.stake.return_value = True
         mock_get_mgr.return_value = mock_mgr
 
@@ -412,6 +410,7 @@ class TestFullDeploy:
         assert result["mech_address"] == "0x" + "dd" * 20
         assert result["service_id"] == 42
         mock_mgr.create.assert_called_once()
+        mock_mgr.spin_up.assert_called_once()
 
     @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
@@ -459,22 +458,15 @@ class TestRollbackDeploy:
         from iwa.plugins.olas.contracts.service import ServiceState  # noqa: F401
 
         mock_mgr = MagicMock()
-        # Default: terminate and unbond succeed
-        mock_mgr.terminate.return_value = True
-        mock_mgr.unbond.return_value = True
+        mock_mgr.wind_down.return_value = True
         mock_mgr.registry.get_service.return_value = {"state": state}
         return mock_mgr
 
     @patch("micromech.management._get_service_manager")
-    def test_rollback_terminates_active_registration(self, mock_get_mgr):
+    def test_rollback_calls_wind_down(self, mock_get_mgr):
         from iwa.plugins.olas.contracts.service import ServiceState
 
-        # After terminate, state becomes PRE_REGISTRATION (bond returned in TX)
         mock_mgr = self._make_mgr(ServiceState.ACTIVE_REGISTRATION)
-        mock_mgr.registry.get_service.side_effect = [
-            {"state": ServiceState.ACTIVE_REGISTRATION},
-            {"state": ServiceState.PRE_REGISTRATION},
-        ]
         mock_get_mgr.return_value = mock_mgr
 
         with patch("micromech.core.bridge.get_wallet") as mock_get_wallet:
@@ -486,8 +478,26 @@ class TestRollbackDeploy:
             result = lc.rollback_deploy("gnosis:42")
 
         assert result is True
-        mock_mgr.terminate.assert_called_once()
-        mock_mgr.unbond.assert_not_called()
+        mock_mgr.wind_down.assert_called_once()
+        mock_mgr.drain_service.assert_called_once()
+
+    @patch("micromech.management._get_service_manager")
+    def test_rollback_terminates_active_registration(self, mock_get_mgr):
+        from iwa.plugins.olas.contracts.service import ServiceState
+
+        mock_mgr = self._make_mgr(ServiceState.ACTIVE_REGISTRATION)
+        mock_get_mgr.return_value = mock_mgr
+
+        with patch("micromech.core.bridge.get_wallet") as mock_get_wallet:
+            mock_wallet = MagicMock()
+            mock_wallet.master_account.address = "0x" + "aa" * 20
+            mock_get_wallet.return_value = mock_wallet
+
+            lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+            result = lc.rollback_deploy("gnosis:42")
+
+        assert result is True
+        mock_mgr.wind_down.assert_called_once()
         mock_mgr.drain_service.assert_called_once()
 
     @patch("micromech.management._get_service_manager")
@@ -495,10 +505,6 @@ class TestRollbackDeploy:
         from iwa.plugins.olas.contracts.service import ServiceState
 
         mock_mgr = self._make_mgr(ServiceState.FINISHED_REGISTRATION)
-        mock_mgr.registry.get_service.side_effect = [
-            {"state": ServiceState.FINISHED_REGISTRATION},
-            {"state": ServiceState.TERMINATED_BONDED},
-        ]
         mock_get_mgr.return_value = mock_mgr
 
         with patch("micromech.core.bridge.get_wallet") as mock_get_wallet:
@@ -510,8 +516,7 @@ class TestRollbackDeploy:
             result = lc.rollback_deploy("gnosis:42")
 
         assert result is True
-        mock_mgr.terminate.assert_called_once()
-        mock_mgr.unbond.assert_called_once()
+        mock_mgr.wind_down.assert_called_once()
         mock_mgr.drain_service.assert_called_once()
 
     @patch("micromech.management._get_service_manager")
@@ -530,7 +535,7 @@ class TestRollbackDeploy:
             result = lc.rollback_deploy("gnosis:42")
 
         assert result is True
-        mock_mgr.terminate.assert_not_called()
+        mock_mgr.wind_down.assert_called_once()
         mock_mgr.drain_service.assert_called_once()
 
     @patch("micromech.management._get_service_manager")
@@ -549,39 +554,37 @@ class TestRollbackDeploy:
             result = lc.rollback_deploy("gnosis:42")
 
         assert result is True
-        mock_mgr.terminate.assert_not_called()
-        mock_mgr.unbond.assert_called_once()
+        mock_mgr.wind_down.assert_called_once()
         mock_mgr.drain_service.assert_called_once()
 
     @patch("micromech.management._get_service_manager")
-    def test_rollback_returns_false_on_terminate_failure(self, mock_get_mgr):
+    def test_rollback_returns_false_on_wind_down_failure(self, mock_get_mgr):
         from iwa.plugins.olas.contracts.service import ServiceState
 
         mock_mgr = self._make_mgr(ServiceState.ACTIVE_REGISTRATION)
-        mock_mgr.terminate.return_value = False
+        mock_mgr.wind_down.return_value = False
         mock_get_mgr.return_value = mock_mgr
 
         lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
         result = lc.rollback_deploy("gnosis:42")
 
         assert result is False
-        mock_mgr.terminate.assert_called_once()
+        mock_mgr.wind_down.assert_called_once()
         mock_mgr.drain_service.assert_not_called()
 
     @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
-    def test_full_deploy_triggers_rollback_on_step3_failure(self, mock_get_mgr, mock_svc_info):
-        """Failing at register_agent (step 3) triggers rollback with the correct service_key."""
+    def test_full_deploy_triggers_rollback_on_spinup_failure(self, mock_get_mgr, mock_svc_info):
+        """Failing at spin_up triggers rollback with the correct service_key."""
         mock_mgr = MagicMock()
         mock_mgr.create.return_value = 77
-        mock_mgr.activate_registration.return_value = True
-        mock_mgr.register_agent.return_value = False  # step 3 fails
+        mock_mgr.spin_up.return_value = False  # spin_up fails
         mock_get_mgr.return_value = mock_mgr
 
         lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
         with patch.object(lc, "rollback_deploy") as mock_rollback:
             mock_rollback.return_value = True
-            with pytest.raises(RuntimeError, match="Agent registration failed"):
+            with pytest.raises(RuntimeError, match="Service spin-up failed"):
                 lc.full_deploy()
 
         mock_rollback.assert_called_once()

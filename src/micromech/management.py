@@ -352,56 +352,25 @@ class MechLifecycle:
         _rb(f"Starting rollback for {service_key}...")
 
         try:
-            from iwa.plugins.olas.contracts.service import ServiceState
-
             mgr = _get_service_manager(self.config, service_key)
-            service_id = int(service_key.split(":")[-1])
 
-            # Check on-chain state
+            service_id = int(service_key.split(":")[-1])
             svc_data = mgr.registry.get_service(service_id)
             state = svc_data["state"]
             logger.info("Rollback: service {} on-chain state = {}", service_key, state)
-            _rb(f"Service state: {state}")
+            _rb(f"Recovering funds (service state: {state.name})...")
 
-            # Terminate if still active
-            needs_terminate = state in {
-                ServiceState.ACTIVE_REGISTRATION,
-                ServiceState.FINISHED_REGISTRATION,
-                ServiceState.DEPLOYED,
-            }
-            if needs_terminate:
-                _rb("Terminating service to recover bond...")
-                logger.info("Rollback: terminating service {}", service_key)
-                ok = mgr.terminate()
-                if not ok:
-                    logger.error("Rollback: terminate() returned False for {}", service_key)
-                    if on_progress:
-                        on_progress("rollback_failed", 0,
-                            f"Failed to terminate service. Run: python scripts/recover_service.py --service '{service_key}' to recover manually.",
-                            False)
-                    return False
-                _rb("Service terminated")
-                logger.info("Rollback: terminate succeeded for {}", service_key)
-
-                # Re-read state after terminate
-                svc_data = mgr.registry.get_service(service_id)
-                state = svc_data["state"]
-                logger.info("Rollback: state after terminate = {}", state)
-
-            # Unbond if in TERMINATED_BONDED
-            if state == ServiceState.TERMINATED_BONDED:
-                _rb("Unbonding to recover OLAS bond...")
-                logger.info("Rollback: unbonding service {}", service_key)
-                ok = mgr.unbond()
-                if not ok:
-                    logger.error("Rollback: unbond() returned False for {}", service_key)
-                    if on_progress:
-                        on_progress("rollback_failed", 0,
-                            f"Failed to unbond service. Run: python scripts/recover_service.py --service '{service_key}' to recover manually.",
-                            False)
-                    return False
-                _rb("Unbonded successfully")
-                logger.info("Rollback: unbond succeeded for {}", service_key)
+            ok = mgr.wind_down()
+            if not ok:
+                logger.error("Rollback: wind_down() returned False for {}", service_key)
+                if on_progress:
+                    on_progress(
+                        "rollback_failed", 0,
+                        f"Failed to wind down service. Run: python scripts/recover_service.py --service '{service_key}' to recover manually.",
+                        False,
+                    )
+                return False
+            logger.info("Rollback: wind_down succeeded for {}", service_key)
 
             # Drain remaining funds to master
             from micromech.core.bridge import get_wallet
@@ -415,11 +384,9 @@ class MechLifecycle:
                 logger.info("Rollback: drain completed for {} — {}", service_key, list(drained.keys()))
             else:
                 logger.info("Rollback: drain returned empty for {} (accounts may already be empty)", service_key)
-            _rb("Funds drained to master wallet")
 
             # Cleanup config and agent key
             self._cleanup_after_rollback(service_key, mgr)
-            # Use "rollback_done" so the frontend can close the spinner with a ✓
             if on_progress:
                 on_progress("rollback_done", 0, "Funds recovered to master wallet.", True)
             logger.info("Rollback completed successfully for {}", service_key)
@@ -444,10 +411,21 @@ class MechLifecycle:
         try:
             from iwa.core.models import Config
 
-            olas_cfg = Config().plugins["olas"]
-            removed = olas_cfg.remove_service(service_key)
+            cfg = Config()
+            olas_cfg = cfg.plugins.get("olas")
+            removed = False
+            if olas_cfg is not None:
+                # OlasConfig instance (Pydantic model)
+                if hasattr(olas_cfg, "remove_service"):
+                    removed = olas_cfg.remove_service(service_key)
+                # Raw CommentedMap (when Config reloads from disk without plugin registry)
+                elif hasattr(olas_cfg, "get"):
+                    services = olas_cfg.get("services") or {}
+                    if service_key in services:
+                        del services[service_key]
+                        removed = True
             if removed:
-                Config().save_config()
+                cfg.save_config()
                 logger.info("Rollback cleanup: removed service {} from iwa config", service_key)
             else:
                 logger.warning(
@@ -564,29 +542,24 @@ class MechLifecycle:
                 result["service_key"] = service_key
                 _progress(1, f"Service created: #{service_id}")
 
-            # Steps 2-4: activate → register → deploy Safe (skip if multisig exists)
+            # Steps 2-4: activate → register → deploy Safe via iwa spin_up (skip if multisig exists)
             if has_multisig:
                 result["multisig_address"] = svc_info["multisig_address"]
                 _progress(2, "Already activated")
                 _progress(3, "Already registered")
                 _progress(4, f"Safe exists: {svc_info['multisig_address'][:16]}...")
             else:
-                _progress(2, "Activating registration...")
-                if not self.activate(service_key):
-                    _progress(2, "Failed to activate registration", False)
-                    msg = "Activation failed"
+                _progress(2, "Activating, registering and deploying Safe...")
+                mgr = _get_service_manager(self.config, service_key)
+                ok = mgr.spin_up()
+                if not ok:
+                    _progress(2, "Failed to spin up service", False)
+                    msg = "Service spin-up failed (activate/register/deploy)"
                     raise RuntimeError(msg)
                 _progress(2, "Registration activated")
-
-                _progress(3, "Registering agent...")
-                if not self.register_agent(service_key):
-                    _progress(3, "Failed to register agent", False)
-                    msg = "Agent registration failed"
-                    raise RuntimeError(msg)
                 _progress(3, "Agent registered")
 
-                _progress(4, "Deploying Safe multisig...")
-                multisig = self.deploy(service_key)
+                multisig = str(mgr.service.multisig_address) if mgr.service.multisig_address else None
                 if not multisig:
                     _progress(4, "Failed to deploy Safe", False)
                     msg = "Safe deployment failed"
