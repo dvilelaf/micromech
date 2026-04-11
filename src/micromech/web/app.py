@@ -594,14 +594,15 @@ def create_web_app(
             async with chain_lock:
                 loop = asyncio.get_event_loop()
                 future = loop.run_in_executor(None, _run_deploy)
-                # Track rollback_done across ALL yield points (poll loop + exception handler)
-                # so we never emit a generic error after a successful rollback.
-                rollback_done_sent = False
+                # Track rollback events across ALL yield points (poll loop + exception handler)
+                # so we never emit a redundant generic error after rollback already reported its
+                # own outcome (done ✓ or failed ⚠ with actionable recovery command).
+                rollback_concluded = False
 
                 def _yield_progress(evt: dict) -> str:
-                    nonlocal rollback_done_sent
-                    if evt.get("step") == "rollback_done":
-                        rollback_done_sent = True
+                    nonlocal rollback_concluded
+                    if evt.get("step") in ("rollback_done", "rollback_failed"):
+                        rollback_concluded = True
                     return f"data: {json.dumps(evt)}\n\n"
 
                 try:
@@ -633,9 +634,10 @@ def create_web_app(
                     # Drain remaining events (rollback progress from management.py)
                     while not progress_q.empty():
                         yield _yield_progress(progress_q.get_nowait())
-                    # Only emit generic error if rollback_done was never sent —
-                    # otherwise we'd overwrite the ✓ rollback area with ⚠.
-                    if not rollback_done_sent:
+                    # Only emit generic error if rollback never concluded —
+                    # rollback_done already shows ✓, rollback_failed already shows ⚠
+                    # with the actionable recovery command; the generic error would overwrite both.
+                    if not rollback_concluded:
                         err = {
                             "step": "error",
                             "message": "Deployment failed — check logs for details.",
