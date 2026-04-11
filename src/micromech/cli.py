@@ -905,7 +905,6 @@ def doctor(
         # Verify key decryption and mnemonic integrity
         try:
             from eth_account import Account as EthAccount
-            from iwa.core.keys import KeyStorage
             from iwa.core.models import StoredSafeAccount
 
             storage = wallet.key_storage
