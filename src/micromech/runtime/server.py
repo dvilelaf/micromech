@@ -326,6 +326,20 @@ class MechServer:
         )
 
         try:
+            from micromech import __version__
+
+            chain_list = ", ".join(chains) if chains else "none"
+            startup_task = asyncio.create_task(
+                notification.send(
+                    "Micromech started",
+                    f"v{__version__} | chains: {chain_list} | tools: {len(self.registry.tool_ids)}",
+                )
+            )
+            self._tasks.append(startup_task)
+        except Exception as e:
+            logger.warning("Startup notification failed: {}", e)
+
+        try:
             await asyncio.gather(*self._tasks)
         except asyncio.CancelledError:
             logger.info("Server tasks cancelled")
