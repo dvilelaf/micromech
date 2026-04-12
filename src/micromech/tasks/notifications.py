@@ -4,14 +4,15 @@ import asyncio
 from typing import TYPE_CHECKING, List, Optional
 
 from loguru import logger
-from telegram.constants import ParseMode
-from telegram.error import NetworkError, TimedOut
 
 if TYPE_CHECKING:
     from telegram import Bot
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_BASE = 2  # seconds: 2, 4
+
+# Telegram parse modes (avoid top-level import of optional telegram package)
+_PARSE_MODE_HTML = "HTML"
 
 
 class NotificationService:
@@ -36,9 +37,9 @@ class NotificationService:
 
         if self.telegram_enabled:
             text = f"<b>{_escape_html(title)}</b>\n{_escape_html(message)}"
-            await self.notify(text, parse_mode=ParseMode.HTML)  # type: ignore[arg-type]
+            await self.notify(text)
 
-    async def notify(self, message: str, parse_mode: str = ParseMode.HTML) -> None:
+    async def notify(self, message: str, parse_mode: str = _PARSE_MODE_HTML) -> None:
         """Send a Telegram message with retry on network errors. Always logs."""
         logger.info(message)
         if not self.telegram_enabled:
@@ -52,11 +53,20 @@ class NotificationService:
                     parse_mode=parse_mode,
                 )
                 return
-            except (TimedOut, NetworkError) as e:
-                if attempt < MAX_RETRIES:
+            except Exception as e:
+                # Lazy import so telegram package is optional at module level
+                try:
+                    from telegram.error import NetworkError, TimedOut
+
+                    is_transient = isinstance(e, (TimedOut, NetworkError))
+                except ImportError:
+                    is_transient = False
+
+                if is_transient and attempt < MAX_RETRIES:
                     delay = RETRY_BACKOFF_BASE * attempt
                     logger.warning(
-                        "Telegram send failed (attempt {}/{}): {}. Retrying in {}s...",
+                        "Telegram send failed (attempt {}/{}): {}."
+                        " Retrying in {}s...",
                         attempt,
                         MAX_RETRIES,
                         e,
@@ -64,21 +74,30 @@ class NotificationService:
                     )
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(
-                        "Failed to send notification after {} attempts: {}", MAX_RETRIES, e
-                    )
-            except Exception as e:
-                logger.error("Failed to send notification to chat {}: {}", self.chat_id, e)
-                return
+                    if attempt == MAX_RETRIES and is_transient:
+                        logger.error(
+                            "Failed to send notification after {} attempts: {}",
+                            MAX_RETRIES,
+                            e,
+                        )
+                    else:
+                        logger.error(
+                            "Failed to send notification to chat {}: {}",
+                            self.chat_id,
+                            e,
+                        )
+                    return
 
     async def send_messages(
-        self, messages: List[str], parse_mode: str = ParseMode.HTML
+        self, messages: List[str], parse_mode: str = _PARSE_MODE_HTML
     ) -> None:
         """Send multiple messages sequentially."""
         for msg in messages:
             await self.notify(msg, parse_mode)
 
-    async def send_message(self, text: str, parse_mode: str = ParseMode.HTML) -> None:
+    async def send_message(
+        self, text: str, parse_mode: str = _PARSE_MODE_HTML
+    ) -> None:
         """Alias for notify — matches triton interface."""
         await self.notify(text, parse_mode)
 
