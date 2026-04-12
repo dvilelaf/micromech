@@ -24,14 +24,14 @@ COPY pyproject.toml uv.lock ./
 # cross-compilation for arm64. The resulting binary still works on arm64 hardware.
 RUN CMAKE_ARGS="-DGGML_NATIVE=OFF" \
     uv sync --frozen --no-dev --no-install-project \
-    --extra web --extra cli --extra chain --extra tasks --extra llm
+    --extra web --extra cli --extra chain --extra tasks --extra llm --extra telegram
 
 # Copy the rest of the source code (does NOT invalidate the compiled .venv cache)
 COPY . /app
 
 # Install the project itself (fast — all dependencies already cached above)
 RUN uv sync --frozen --no-dev \
-    --extra web --extra cli --extra chain --extra tasks --extra llm
+    --extra web --extra cli --extra chain --extra tasks --extra llm --extra telegram
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Lean image — no compiler, no cmake. Only the C++ runtime libs that
