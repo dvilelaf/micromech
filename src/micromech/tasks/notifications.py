@@ -47,7 +47,7 @@ class NotificationService:
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 await self.bot.send_message(  # type: ignore[union-attr]
-                    chat_id=self.chat_id,
+                    chat_id=self.chat_id,  # type: ignore[arg-type]
                     text=message,
                     parse_mode=parse_mode,
                 )
