@@ -630,7 +630,7 @@ def metadata_publish(
 @app.command(name="create-service")
 def create_service(
     agent_id: int = typer.Option(40, help="Agent ID for the service"),
-    bond: int = typer.Option(10000, help="Bond amount in OLAS"),
+    bond: int = typer.Option(5000, help="Bond amount in OLAS (= minStakingDeposit for Supply Alpha)"),
     chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:

@@ -1105,6 +1105,10 @@ class TestMechLifecycleE2E:
         supply_info_before = supply_staking.functions.getServiceInfo(supply_svc_id).call()
         base_supply_reward = supply_info_before[4]
 
+        import time as _time_mod
+
+        import time as _time_mod
+
         for i in range(n_requests):
             tx = marketplace.functions.request(
                 os.urandom(32),
@@ -1125,6 +1129,9 @@ class TestMechLifecycleE2E:
             logs = marketplace.events.MarketplaceRequest().process_receipt(receipt)
             for log in logs:
                 request_ids.extend(log["args"]["requestIds"])
+            # Throttle to avoid 429 from upstream Gnosis RPC: each tx with a unique
+            # requestId (os.urandom) hits a new storage slot that must be fetched.
+            _time_mod.sleep(0.5)
 
         w3.provider.make_request("anvil_stopImpersonatingAccount", [requester])
 
@@ -1155,6 +1162,8 @@ class TestMechLifecycleE2E:
                 to_address=our_mech_addr,
                 data=data
             )
+            # Throttle delivery loop same reason as request loop (upstream RPC 429).
+            _time_mod.sleep(0.3)
 
         new_deliveries = marketplace.functions.mapMechDeliveryCounts(
             w3.to_checksum_address(our_mech_addr)
@@ -1335,10 +1344,7 @@ class TestOffchainHTTPE2E:
             print("  HTTP server ready")
 
             # --- Step 1: Submit requests via HTTP POST ---
-            from micromech.web.app import get_auth_token
-
             auth_headers = {
-                "X-Auth-Token": get_auth_token(),
                 "X-Micromech-Action": "request",
             }
 
@@ -1533,15 +1539,13 @@ class TestWizardWalletAndLifecycle:
 
         from fastapi.testclient import TestClient
 
-        from micromech.web.app import create_web_app, get_auth_token
+        from micromech.web.app import create_web_app
 
         wallet_path = str(tmp_path / "wallet.json")
         tmp_path / "config.yaml"
-        auth_token = get_auth_token()
 
         def auth_headers():
             return {
-                "X-Auth-Token": auth_token,
                 "X-Micromech-Action": "setup",
                 "Content-Type": "application/json",
             }
