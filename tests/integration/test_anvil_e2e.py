@@ -1107,8 +1107,6 @@ class TestMechLifecycleE2E:
 
         import time as _time_mod
 
-        import time as _time_mod
-
         for i in range(n_requests):
             tx = marketplace.functions.request(
                 os.urandom(32),
