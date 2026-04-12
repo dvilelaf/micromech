@@ -294,9 +294,14 @@ def run(
 
     async def _run_all():
         """Run server + optionally Telegram bot."""
-        bot_app = None
+        from micromech.tasks.notifications import NotificationService
 
-        # Start Telegram bot if configured
+        bot_app = None
+        notification = NotificationService()
+
+        # Start Telegram bot first — same pattern as triton.
+        # Bot is initialized here so notification_service shares the same
+        # bot instance used for polling (not a separate standalone Bot).
         try:
             from micromech.secrets import secrets
 
@@ -305,21 +310,28 @@ def run(
 
                 bot_app = create_application(
                     config=cfg,
-                    runtime_manager=None,  # Direct server mode, no RuntimeManager
+                    runtime_manager=None,
                     queue=server.queue,
                     metrics=server.metrics,
                 )
                 await bot_app.initialize()
                 await bot_app.start()
                 await bot_app.updater.start_polling(drop_pending_updates=True)
+                # Wire the initialized bot into the notification service
+                notification = NotificationService(
+                    bot=bot_app.bot,
+                    chat_id=secrets.telegram_chat_id,
+                )
                 logger.info("Telegram bot started")
         except ImportError:
-            logger.debug("Telegram bot not available (python-telegram-bot not installed)")
+            logger.debug(
+                "Telegram bot not available (python-telegram-bot not installed)"
+            )
         except Exception as e:
             logger.warning("Telegram bot failed to start: {}", e)
 
         try:
-            await server.run(with_http=not no_http)
+            await server.run(with_http=not no_http, notification=notification)
         finally:
             if bot_app:
                 await bot_app.updater.stop()

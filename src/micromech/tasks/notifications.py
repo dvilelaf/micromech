@@ -1,55 +1,33 @@
 """Notification service — Telegram when configured, always logs."""
 
 import asyncio
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from loguru import logger
+from telegram.constants import ParseMode
+from telegram.error import NetworkError, TimedOut
 
 if TYPE_CHECKING:
     from telegram import Bot
+
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 2  # seconds: 2, 4
 
 
 class NotificationService:
     """Send notifications via Telegram and/or log.
 
-    If bot/chat_id are not passed, lazily resolves from secrets
-    when first needed (allows scheduler to send Telegram notifications
-    even when created before the bot starts).
+    Mirrors triton's NotificationService: takes a Bot instance and chat_id
+    directly. If not provided, notifications are logged only (no Telegram).
     """
 
     def __init__(self, bot: Optional["Bot"] = None, chat_id: Optional[int] = None):
-        self._bot = bot
-        self._chat_id = chat_id
-        self._resolve_attempts = 0
-        self._max_resolve_attempts = 10
-
-    def _resolve(self) -> None:
-        """Try to resolve bot from the running Application (if any).
-
-        Retries up to _max_resolve_attempts to handle the case where
-        the scheduler fires before the Telegram bot has fully started.
-        """
-        if self._bot is not None or self._resolve_attempts >= self._max_resolve_attempts:
-            return
-        self._resolve_attempts += 1
-        try:
-            from micromech.secrets import secrets
-
-            if not (secrets.telegram_token and secrets.telegram_chat_id):
-                self._resolve_attempts = self._max_resolve_attempts
-                return
-            from micromech.bot import _application
-
-            if _application is not None:
-                self._bot = _application.bot
-                self._chat_id = secrets.telegram_chat_id
-        except Exception:
-            pass
+        self.bot = bot
+        self.chat_id = chat_id
 
     @property
     def telegram_enabled(self) -> bool:
-        self._resolve()
-        return self._bot is not None and self._chat_id is not None
+        return self.bot is not None and self.chat_id is not None
 
     async def send(self, title: str, message: str, level: str = "info") -> None:
         """Send notification. Always logs, optionally sends to Telegram."""
@@ -57,18 +35,55 @@ class NotificationService:
         getattr(logger, level.lower(), logger.info)(log_msg)
 
         if self.telegram_enabled:
+            text = f"<b>{_escape_html(title)}</b>\n{_escape_html(message)}"
+            await self.notify(text, parse_mode=ParseMode.HTML)  # type: ignore[arg-type]
+
+    async def notify(self, message: str, parse_mode: str = ParseMode.HTML) -> None:
+        """Send a Telegram message with retry on network errors. Always logs."""
+        logger.info(message)
+        if not self.telegram_enabled:
+            return
+
+        for attempt in range(1, MAX_RETRIES + 1):
             try:
-                text = f"<b>{_escape_html(title)}</b>\n{_escape_html(message)}"
-                await self._bot.send_message(
-                    chat_id=self._chat_id,  # type: ignore[arg-type]
-                    text=text,
-                    parse_mode="HTML",
+                await self.bot.send_message(  # type: ignore[union-attr]
+                    chat_id=self.chat_id,
+                    text=message,
+                    parse_mode=parse_mode,
                 )
+                return
+            except (TimedOut, NetworkError) as e:
+                if attempt < MAX_RETRIES:
+                    delay = RETRY_BACKOFF_BASE * attempt
+                    logger.warning(
+                        "Telegram send failed (attempt {}/{}): {}. Retrying in {}s...",
+                        attempt,
+                        MAX_RETRIES,
+                        e,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error(
+                        "Failed to send notification after {} attempts: {}", MAX_RETRIES, e
+                    )
             except Exception as e:
-                logger.warning("Telegram notification failed: {}", e)
+                logger.error("Failed to send notification to chat {}: {}", self.chat_id, e)
+                return
+
+    async def send_messages(
+        self, messages: List[str], parse_mode: str = ParseMode.HTML
+    ) -> None:
+        """Send multiple messages sequentially."""
+        for msg in messages:
+            await self.notify(msg, parse_mode)
+
+    async def send_message(self, text: str, parse_mode: str = ParseMode.HTML) -> None:
+        """Alias for notify — matches triton interface."""
+        await self.notify(text, parse_mode)
 
     def send_sync(self, title: str, message: str, level: str = "info") -> None:
-        """Sync wrapper for use in threaded tasks."""
+        """Sync wrapper for use in threaded tasks (scheduler callbacks)."""
         try:
             loop = asyncio.get_running_loop()
             task = loop.create_task(self.send(title, message, level))
@@ -76,11 +91,10 @@ class NotificationService:
             task.add_done_callback(_pending_tasks.discard)
         except RuntimeError:
             # No event loop — just log
-            getattr(logger, level.lower(), logger.info)(f"[{title}] {message}")
+            getattr(logger, level.lower(), logger.info)("[%s] %s", title, message)
 
     def _skip_resolve(self) -> None:
-        """Mark resolve as exhausted (for tests)."""
-        self._resolve_attempts = self._max_resolve_attempts
+        """No-op — kept for test compatibility."""
 
 
 # Prevent GC of fire-and-forget notification tasks
@@ -88,5 +102,4 @@ _pending_tasks: set[asyncio.Task] = set()
 
 
 def _escape_html(text: str) -> str:
-    """Escape HTML special chars for Telegram."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

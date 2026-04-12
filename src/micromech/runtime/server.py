@@ -255,6 +255,7 @@ class MechServer:
         self,
         with_http: bool = True,
         register_signals: bool = True,
+        notification: "Optional[Any]" = None,
     ) -> None:
         """Run the server with all components."""
         self._running = True
@@ -302,19 +303,11 @@ class MechServer:
             from micromech.tasks.notifications import NotificationService
             from micromech.tasks.scheduler import TaskScheduler
 
-            _bot = None
-            _chat_id = None
-            try:
-                from micromech.secrets import secrets
-                from telegram import Bot
+            # Use the injected notification service (wired with the Telegram bot
+            # from cli.py, same pattern as triton). Fall back to log-only if none.
+            if notification is None:
+                notification = NotificationService()
 
-                if secrets.telegram_token and secrets.telegram_chat_id:
-                    _bot = Bot(token=secrets.telegram_token.get_secret_value())
-                    _chat_id = secrets.telegram_chat_id
-            except Exception:
-                pass
-
-            notification = NotificationService(bot=_bot, chat_id=_chat_id)
             self._task_scheduler = TaskScheduler(
                 self.config,
                 self.bridges,
