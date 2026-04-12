@@ -302,7 +302,19 @@ class MechServer:
             from micromech.tasks.notifications import NotificationService
             from micromech.tasks.scheduler import TaskScheduler
 
-            notification = NotificationService()
+            _bot = None
+            _chat_id = None
+            try:
+                from micromech.secrets import secrets
+                from telegram import Bot
+
+                if secrets.telegram_token and secrets.telegram_chat_id:
+                    _bot = Bot(token=secrets.telegram_token.get_secret_value())
+                    _chat_id = secrets.telegram_chat_id
+            except Exception:
+                pass
+
+            notification = NotificationService(bot=_bot, chat_id=_chat_id)
             self._task_scheduler = TaskScheduler(
                 self.config,
                 self.bridges,
