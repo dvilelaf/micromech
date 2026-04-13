@@ -250,7 +250,7 @@ class MechServer:
             "queue_by_chain": self.queue.count_by_chain(),
             "chains": list(self.config.enabled_chains.keys()),
             "tools": self.registry.tool_ids,
-            "delivered_total": sum(d.delivered_count for d in self.deliveries.values()),
+            "delivered_total": self.queue.count_by_status().get("delivered", 0),
             "metrics": self.metrics.get_live_snapshot(),
         }
 
