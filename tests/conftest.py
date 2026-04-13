@@ -49,6 +49,21 @@ def _reset_global_sessions():
 
 
 @pytest.fixture(autouse=True)
+def _reset_webui_password():
+    """Reset secrets.webui_password to None after each test.
+
+    The /api/setup/wallet endpoint sets webui_password on the global singleton
+    when it creates a wallet.  Without this reset, that side-effect leaks into
+    subsequent tests and causes 401 responses on unprotected test clients.
+    """
+    from micromech.secrets import secrets as _s
+
+    original = _s.webui_password
+    yield
+    _s.webui_password = original
+
+
+@pytest.fixture(autouse=True)
 def _protect_real_data(tmp_path: Path):
     """CRITICAL: Prevent ALL tests from touching real wallet or config.
 
