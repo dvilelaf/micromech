@@ -19,6 +19,9 @@ from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import (
     DEFAULT_DELIVERY_BATCH_SIZE,
     DEFAULT_DELIVERY_INTERVAL,
+    GAS_ESTIMATION_BUFFER,
+    GAS_FALLBACK,
+    GAS_FLOOR_DELIVERY,
     IPFS_API_URL,
 )
 from micromech.core.models import RequestRecord
@@ -351,9 +354,9 @@ class DeliveryManager:
         """
         try:
             estimated = fn_call.estimate_gas({"from": from_addr})
-            gas = max(int(estimated * 1.2), 100_000)
+            gas = max(int(estimated * GAS_ESTIMATION_BUFFER), GAS_FLOOR_DELIVERY)
         except Exception:
-            gas = 500_000
+            gas = GAS_FALLBACK
         tx_hash = fn_call.transact({"from": from_addr, "gas": gas})
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
 

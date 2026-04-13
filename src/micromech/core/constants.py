@@ -95,6 +95,12 @@ STATUS_FAILED: Final = "failed"
 DELIVERY_MARKETPLACE: Final = "marketplace"
 DELIVERY_LEGACY: Final = "legacy"
 
+# Gas limits
+GAS_FLOOR_CREATE2 = 2_000_000   # floor for CREATE2 operations (mech creation)
+GAS_FLOOR_DELIVERY = 100_000    # floor for delivery transactions
+GAS_FALLBACK = 500_000          # fallback when gas estimation fails
+GAS_ESTIMATION_BUFFER = 1.2     # 20% buffer on top of estimated gas
+
 # Minimum funding requirements per chain (native token in wei, OLAS in whole units)
 # These cover gas for the full lifecycle + some buffer
 MIN_NATIVE_WEI: dict[str, int] = {

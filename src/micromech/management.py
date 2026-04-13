@@ -57,6 +57,7 @@ def _with_retries(fn: Callable, label: str, retries: int = MAX_RETRIES) -> Any:
 
 
 from micromech.core.config import ChainConfig, MicromechConfig
+from micromech.core.constants import GAS_FLOOR_CREATE2
 
 
 def _get_service_manager(
@@ -220,8 +221,8 @@ class MechLifecycle:
 
             fn = marketplace.functions.create(service_id, EthereumAddress(factory), payload)
             # Use iwa's chain_interface.estimate_gas() — includes 10% buffer,
-            # falls back to 500_000 on failure. Floor at 2M for CREATE2 safety.
-            gas_limit = max(ci.estimate_gas(fn, {"from": EthereumAddress(owner)}), 2_000_000)
+            # falls back to GAS_FALLBACK on failure. Floor at GAS_FLOOR_CREATE2.
+            gas_limit = max(ci.estimate_gas(fn, {"from": EthereumAddress(owner)}), GAS_FLOOR_CREATE2)
 
             # Build and sign+send as owner EOA via iwa (eth_sendRawTransaction)
             tx = fn.build_transaction({"from": EthereumAddress(owner), "gas": gas_limit})
