@@ -15,7 +15,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
 from fastapi import FastAPI, Header, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
@@ -242,9 +248,7 @@ def create_web_app(
     # HTTP Basic Auth middleware (only when WEBUI_PASSWORD secret is set)
     from micromech.secrets import secrets as _secrets
 
-    _webui_password = (
-        _secrets.webui_password.get_secret_value() if _secrets.webui_password else ""
-    )
+    _webui_password = _secrets.webui_password.get_secret_value() if _secrets.webui_password else ""
     if _webui_password:
         _password_bytes = _webui_password.encode()
 
@@ -253,9 +257,7 @@ def create_web_app(
             auth_header = request.headers.get("Authorization", "")
             if auth_header.startswith("Basic "):
                 try:
-                    decoded = base64.b64decode(auth_header[6:]).decode(
-                        "utf-8", errors="replace"
-                    )
+                    decoded = base64.b64decode(auth_header[6:]).decode("utf-8", errors="replace")
                     _, _, provided = decoded.partition(":")
                     if secrets.compare_digest(provided.encode(), _password_bytes):
                         return await call_next(request)
