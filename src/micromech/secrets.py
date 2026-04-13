@@ -18,6 +18,9 @@ class MicromechSecrets(BaseSettings):
     telegram_token: Optional[SecretStr] = None
     telegram_chat_id: Optional[int] = None
 
+    # Web UI password (if set, HTTP Basic Auth is required)
+    webui_password: Optional[SecretStr] = None
+
     # Health monitor URL (e.g. Uptime Kuma, Healthchecks.io)
     health_url: Optional[str] = None
 

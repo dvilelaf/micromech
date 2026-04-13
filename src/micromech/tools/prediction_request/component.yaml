@@ -7,6 +7,7 @@ description: Prediction market tool with web search + local LLM. Searches for re
 license: Apache-2.0
 aea_version: '>=1.0.0, <2.0.0'
 entry_point: prediction_request.py
+serialized: true
 callable: run
 params:
   default_model: Qwen/Qwen2.5-0.5B-Instruct-GGUF

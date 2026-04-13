@@ -218,6 +218,7 @@ class ToolRegistry:
             description = spec.get("description", "")
             version = spec.get("version", "0.1.0")
             timeout = spec.get("timeout", _KNOWN_TIMEOUTS.get(tool_dir.name, _DEFAULT_TIMEOUT))
+            serialized = spec.get("serialized", False)
 
             # Get ALLOWED_TOOLS via AST (safe, no code execution)
             module_file = tool_dir / entry_point
@@ -261,6 +262,7 @@ class ToolRegistry:
                 description=description,
                 version=version,
                 timeout=timeout,
+                serialized=serialized,
                 origin=origin,
             )
             if success:

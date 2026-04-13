@@ -9,6 +9,8 @@ micromech wraps these as Tool instances for the async runtime.
 """
 
 import asyncio
+import concurrent.futures
+import functools
 import re
 from typing import Any
 
@@ -17,6 +19,19 @@ from pydantic import BaseModel, Field, field_validator
 from micromech.core.errors import ToolExecutionError
 
 TOOL_ID_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
+
+# Single-worker process pool for serialized (GIL-heavy) tools like LLMs.
+# A separate process has its own GIL, so the asyncio event loop stays
+# responsive while LLM inference is running.
+_LLM_EXECUTOR: concurrent.futures.ProcessPoolExecutor | None = None
+
+
+def _get_llm_executor() -> concurrent.futures.ProcessPoolExecutor:
+    """Lazy-initialize the global single-worker process pool."""
+    global _LLM_EXECUTOR
+    if _LLM_EXECUTOR is None:
+        _LLM_EXECUTOR = concurrent.futures.ProcessPoolExecutor(max_workers=1)
+    return _LLM_EXECUTOR
 
 
 class ToolMetadata(BaseModel):
@@ -27,6 +42,7 @@ class ToolMetadata(BaseModel):
     description: str = ""
     version: str = "0.1.0"
     timeout: int = Field(default=60, ge=1, le=3600)
+    serialized: bool = False
     origin: str = "builtin"  # "builtin" or "custom"
 
     @field_validator("id")
@@ -70,9 +86,22 @@ class Tool:
         # Strip reserved keys to prevent parameter injection
         safe_kwargs = {k: v for k, v in kwargs.items() if k not in self._RESERVED_KWARGS}
         try:
-            result = await asyncio.to_thread(
-                self._run_fn, prompt=prompt, tool=self.metadata.id, **safe_kwargs
-            )
+            if self.metadata.serialized:
+                loop = asyncio.get_running_loop()
+                fn = functools.partial(
+                    self._run_fn, prompt=prompt, tool=self.metadata.id, **safe_kwargs
+                )
+                result = await loop.run_in_executor(_get_llm_executor(), fn)
+            else:
+                result = await asyncio.to_thread(
+                    self._run_fn, prompt=prompt, tool=self.metadata.id, **safe_kwargs
+                )
+        except concurrent.futures.process.BrokenProcessPool:
+            # Worker process crashed (e.g. OOM). Reset the executor so the
+            # next request spawns a fresh one.
+            global _LLM_EXECUTOR
+            _LLM_EXECUTOR = None
+            raise ToolExecutionError(self.metadata.id, "LLM worker process crashed")
         except Exception as e:
             raise ToolExecutionError(self.metadata.id, str(e)) from e
 
