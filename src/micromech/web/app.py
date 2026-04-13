@@ -553,6 +553,13 @@ def create_web_app(
                     continue
                 updates[k] = v
             write_secrets(updates)
+            # Hot-reload webui_password into the in-memory singleton so auth
+            # takes effect immediately without a restart.
+            if "webui_password" in updates:
+                from micromech.secrets import secrets as _live_secrets
+                from pydantic import SecretStr as _SecretStr
+                new_pw = updates["webui_password"]
+                _live_secrets.webui_password = _SecretStr(new_pw) if new_pw else None
             return JSONResponse({"status": "ok", "saved": list(updates.keys())})
         except ValueError as e:
             return JSONResponse({"error": str(e)}, 400)

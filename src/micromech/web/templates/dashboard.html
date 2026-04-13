@@ -2031,19 +2031,42 @@
     }
 
     // --- Init ---
-    loadChains();
-    initQueueChart();
-    initChannelChart();
-    loadActivityRequests();
-    loadCharts();
-    loadOverviewToolStats();
-    loadKarma();
-    connectSSE();
-    connectLogStream();
+    function initPage() {
+        loadChains();
+        initQueueChart();
+        initChannelChart();
+        loadActivityRequests();
+        loadCharts();
+        loadOverviewToolStats();
+        loadKarma();
+        connectSSE();
+        connectLogStream();
 
-    // Refresh activity table every 15s, karma every 60s
-    setInterval(loadActivityRequests, 15000);
-    setInterval(loadKarma, 60000);
+        // Refresh activity table every 15s, karma every 60s
+        setInterval(loadActivityRequests, 15000);
+        setInterval(loadKarma, 60000);
+    }
+
+    // Check auth before loading any data. If a password is configured on
+    // the server and we don't have a valid token, show the login modal
+    // immediately instead of waiting for the first API call to fail.
+    (async function checkAuthAndInit() {
+        const token = _getToken();
+        const headers = token ? { 'Authorization': 'Bearer ' + token } : {};
+        try {
+            const resp = await fetch(API_BASE + '/api/status', { headers });
+            if (resp.status === 401) {
+                // Password required — show modal before loading anything.
+                // initPage runs after successful login via _loginCallback.
+                showLoginModal(initPage);
+                return;
+            }
+        } catch (_) {
+            // Network error — proceed anyway; individual authFetch calls
+            // will handle 401s if they occur.
+        }
+        initPage();
+    })();
     </script>
 
     <!-- Auth modal -->

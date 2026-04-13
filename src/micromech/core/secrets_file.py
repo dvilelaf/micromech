@@ -36,10 +36,11 @@ EDITABLE_KEYS = {
     "arbitrum_rpc",
     "celo_rpc",
     "health_url",
+    "webui_password",
 }
 
 # Keys whose values are masked (shown as *** in GET responses).
-SENSITIVE_KEYS = {"wallet_password", "telegram_token"}
+SENSITIVE_KEYS = {"wallet_password", "telegram_token", "webui_password"}
 
 _FORBIDDEN_CHARS = frozenset("\n\r\x00")
 
