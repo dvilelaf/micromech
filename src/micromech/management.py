@@ -182,22 +182,22 @@ class MechLifecycle:
         factory_address: Optional[str] = None,
         delivery_rate: Optional[int] = None,
     ) -> Optional[str]:
-        """Create a mech on the marketplace. Delegates to iwa's MechSupplyMixin."""
+        """Create a mech on the marketplace."""
         mgr = _get_service_manager(self.config, service_key)
         factory = factory_address or self.chain_config.factory_address
         rate = delivery_rate if delivery_rate is not None else self.chain_config.delivery_rate
         try:
-            # Call create on marketplace directly (iwa 0.6.0 compat)
+            import json
+
+            from eth_abi import encode
+
+            from iwa.core.types import EthereumAddress
+            from iwa.plugins.olas.contracts.base import OLAS_ABI_PATH
             from micromech.core.bridge import get_wallet
 
             wallet = get_wallet()
             ci = wallet.chain_interfaces.get(self.chain_name)
             web3 = ci.web3
-
-            import json
-
-            from iwa.core.types import EthereumAddress
-            from iwa.plugins.olas.contracts.base import OLAS_ABI_PATH
 
             abi = json.loads((OLAS_ABI_PATH / "mech_marketplace.json").read_text())
             marketplace = web3.eth.contract(
@@ -208,21 +208,30 @@ class MechLifecycle:
             owner = mgr.service.service_owner_eoa_address
 
             # Third arg is bytes: ABI-encode the delivery rate
-            from eth_abi import encode
-
             payload = encode(["uint256"], [rate])
 
+            # Build transaction and sign+send via iwa (uses eth_sendRawTransaction,
+            # not eth_sendTransaction which is rejected by public RPCs with -32002).
             tx = marketplace.functions.create(
                 service_id,
                 EthereumAddress(factory),
                 payload,
-            ).transact({"from": EthereumAddress(owner), "gas": 10_000_000})
-
-            receipt = web3.eth.wait_for_transaction_receipt(
-                tx,
-                timeout=120,
+            ).build_transaction(
+                {
+                    "from": EthereumAddress(owner),
+                    "gas": 500_000,
+                }
             )
-            if receipt["status"] != 1:
+
+            success, receipt = wallet.transaction_service.sign_and_send(
+                transaction=tx,
+                signer_address_or_tag=owner,
+                chain_name=self.chain_name,
+            )
+            if not success or not receipt:
+                logger.error("Mech creation TX failed")
+                return None
+            if receipt.get("status") != 1:
                 logger.error("Mech creation TX reverted")
                 return None
 
@@ -244,9 +253,6 @@ class MechLifecycle:
                     return mech_addr
 
             logger.warning("Mech created but address not found in logs")
-            return None
-        except ImportError:
-            logger.error("iwa MechSupplyMixin not available")
             return None
         except Exception as e:
             logger.error("Failed to create mech on {}: {}", self.chain_name, e)
