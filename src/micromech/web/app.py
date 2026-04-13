@@ -1347,11 +1347,13 @@ def _record_to_dict(record: Any) -> dict:
     r = record.request
     # Convert requestData multihash to IPFS CID for linking
     request_ipfs_cid = None
-    if r.data and len(r.data) == 34 and r.data[:2] == b"\x12\x20":
+    if r.data:
         try:
-            from micromech.ipfs.client import multihash_to_cid
+            from micromech.ipfs.client import multihash_to_cid, normalize_to_multihash
 
-            request_ipfs_cid = multihash_to_cid(r.data)
+            mh = normalize_to_multihash(r.data)
+            if mh is not None:
+                request_ipfs_cid = multihash_to_cid(mh)
         except Exception:
             pass
     result = {

@@ -60,6 +60,21 @@ def is_ipfs_multihash(data: bytes) -> bool:
     return len(data) == 34 and data[:2] == _SHA256_MULTIHASH_PREFIX
 
 
+def normalize_to_multihash(data: bytes) -> Optional[bytes]:
+    """Normalize on-chain requestData to a 34-byte sha2-256 multihash, or None.
+
+    Handles two formats emitted by different OLAS clients:
+    - 34 bytes (0x12 0x20 + sha256): our test script / standard format.
+    - 32 bytes (sha256 only): iwa/triton truncates cid_hex[9:] which drops the
+      multihash prefix, producing a bare 32-byte sha256 digest.
+    """
+    if len(data) == 34 and data[:2] == _SHA256_MULTIHASH_PREFIX:
+        return data
+    if len(data) == 32:
+        return _SHA256_MULTIHASH_PREFIX + data
+    return None
+
+
 def multihash_to_cid(data: bytes) -> str:
     """Convert raw multihash bytes (0x12 0x20 <digest>) back to a CID string.
 

@@ -113,16 +113,17 @@ class EventListener:
         """Resolve IPFS CID in request data if needed."""
         from micromech.ipfs.client import (
             fetch_json_from_ipfs,
-            is_ipfs_multihash,
             multihash_to_cid,
+            normalize_to_multihash,
         )
 
         if not req.data or req.prompt:
             return req  # Already has prompt (raw JSON) or no data
 
-        if is_ipfs_multihash(req.data):
+        multihash = normalize_to_multihash(req.data)
+        if multihash is not None:
             try:
-                cid = multihash_to_cid(req.data)
+                cid = multihash_to_cid(multihash)
                 payload = await fetch_json_from_ipfs(cid, gateway=IPFS_GATEWAY)
                 return MechRequest(
                     request_id=req.request_id,
