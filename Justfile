@@ -26,7 +26,7 @@ security:
 
 # Run tests with coverage
 test:
-    uv run pytest --cov=src/micromech --cov-report=term-missing tests/
+    uv run pytest tests/
 
 # Run unit tests only
 test-unit:

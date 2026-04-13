@@ -80,6 +80,14 @@ asyncio_mode = "auto"
 markers = [
     "timeout: mark test with a timeout in seconds",
 ]
+addopts = "--cov=src/micromech --cov-report=term-missing"
+
+[tool.coverage.run]
+source = ["src/micromech"]
+omit = ["*/tests/*"]
+
+[tool.coverage.report]
+fail_under = 84
 
 [tool.ruff]
 line-length = 100
