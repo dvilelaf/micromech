@@ -21,6 +21,7 @@ from micromech.tasks.low_balance_alert import low_balance_alert_task
 from micromech.tasks.metadata_check import metadata_check_task
 from micromech.tasks.notifications import NotificationService
 from micromech.tasks.profitability_check import profitability_check_task
+from micromech.tasks.payment_withdraw import payment_withdraw_task
 from micromech.tasks.rewards import rewards_task
 from micromech.tasks.update_check import (
     AUTO_UPDATE_POLL_MINUTES,
@@ -105,6 +106,22 @@ class TaskScheduler:
             next_run_time=datetime.now(tz=timezone.utc) + timedelta(seconds=startup_delay),
         )
         startup_delay += 20
+
+        # Payment Withdraw Task
+        if cfg.payment_withdraw_enabled:
+            self.scheduler.add_job(
+                payment_withdraw_task,
+                "interval",
+                hours=cfg.payment_withdraw_interval_hours,
+                args=[self.bridges, self.notification_service, cfg],
+                id="payment_withdraw_task",
+                replace_existing=True,
+                misfire_grace_time=misfire_grace_time,
+                max_instances=1,
+                coalesce=True,
+                next_run_time=datetime.now(tz=timezone.utc) + timedelta(seconds=startup_delay),
+            )
+            startup_delay += 20
 
         # Fund Task
         if cfg.fund_enabled:

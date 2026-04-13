@@ -70,6 +70,9 @@ class MicromechConfig(BaseModel):
     fund_target_native: float = Field(default=0.5, ge=0, le=50)
     auto_sell_enabled: bool = False
     auto_sell_min_olas: float = Field(default=1.0, ge=0)
+    payment_withdraw_enabled: bool = True
+    payment_withdraw_threshold_xdai: float = Field(default=0.01, ge=0)
+    payment_withdraw_interval_hours: int = Field(default=6, ge=1, le=168)
     low_balance_alert_enabled: bool = True
     low_balance_alert_interval_hours: int = Field(default=6, ge=1, le=48)
     update_check_enabled: bool = True
