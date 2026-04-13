@@ -1,6 +1,9 @@
 """
-Test on-chain: envía 1 request por cada tool builtin usando la cuenta master,
-espera la entrega on-chain (evento Deliver del mech), y verifica el resultado.
+Test on-chain: envía requests simultáneas por cada tool builtin usando la cuenta
+master, espera la entrega on-chain (evento Deliver del mech), y verifica el resultado.
+
+Todas las requests se envían en paralelo (threading) para verificar que el mech
+procesa múltiples requests concurrentes sin congelarse.
 
 Usage:
     MICROMECH_WALLET_PASSWORD=<password> uv run python scripts/test_tools_onchain.py
@@ -8,6 +11,7 @@ Usage:
 import json
 import os
 import sys
+import threading
 import time
 import uuid
 
@@ -125,17 +129,53 @@ def send_request(tool: str, prompt: str) -> tuple[str | None, int]:
     return rid_hex, receipt["blockNumber"]
 
 
-# Send all requests
-sent: list[dict] = []
-for tool, prompt in TOOLS.items():
-    print(f"[SEND] {tool}: '{prompt[:50]}'")
+def _health_check() -> str:
+    """Check mech HTTP health endpoint. Returns status string."""
+    try:
+        import requests as req_lib
+        resp = req_lib.get("http://localhost:8090/api/health", timeout=5)
+        if resp.status_code == 200:
+            return f"OK ({resp.json().get('state', '?')})"
+        return f"HTTP {resp.status_code}"
+    except Exception as e:
+        return f"UNREACHABLE ({e})"
+
+
+def _send_worker(tool: str, prompt: str, result_list: list, lock: threading.Lock) -> None:
+    """Thread worker: sends one request and appends result to result_list."""
+    t0 = time.time()
     req_id, block = send_request(tool, prompt)
-    if req_id:
-        print(f"       → request_id: 0x{req_id[:16]}...  block: {block}")
-        sent.append({"tool": tool, "prompt": prompt, "id": req_id, "block": block, "done": False})
-    else:
-        print("       → FAILED to send")
-    time.sleep(2)  # brief gap between txs
+    elapsed = time.time() - t0
+    with lock:
+        if req_id:
+            print(f"  [SENT {elapsed:.1f}s] {tool}: 0x{req_id[:16]}...  block {block}")
+            result_list.append({
+                "tool": tool, "prompt": prompt,
+                "id": req_id, "block": block,
+                "done": False, "t_send": elapsed,
+            })
+        else:
+            print(f"  [FAIL  {elapsed:.1f}s] {tool}: send failed")
+
+
+# Check mech health before sending
+print(f"\n[HEALTH] mech before test: {_health_check()}")
+
+# Send all requests in parallel
+print(f"\n[SEND] Firing {len(TOOLS)} requests simultaneously...")
+sent: list[dict] = []
+lock = threading.Lock()
+threads = [
+    threading.Thread(target=_send_worker, args=(tool, prompt, sent, lock))
+    for tool, prompt in TOOLS.items()
+]
+t_burst_start = time.time()
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+t_burst = time.time() - t_burst_start
+print(f"  → All {len(sent)} requests submitted in {t_burst:.1f}s")
 
 if not sent:
     print("\nNo requests sent. Aborting.")
@@ -201,13 +241,23 @@ while True:
     except Exception as e:
         print(f"  [poll error: {e}]")
 
+    # Periodic health check every ~30s
+    if int(elapsed) % 30 == 0 and int(elapsed) > 0:
+        print(f"  [HEALTH +{elapsed:.0f}s] mech: {_health_check()}")
+
     time.sleep(5)
 
 # Summary
+total_time = time.time() - t_burst_start
+n_ok = sum(1 for s in sent if s.get("done"))
+
 print("\n=== RESULTS ===")
 for s in sent:
     status = "OK" if s.get("done") else "PENDING/TIMEOUT"
     result = s.get("result", "-")[:120]
     print(f"  [{status}] {s['tool']}: {result}")
 
-print(f"\nmaster balance after: {w3.eth.get_balance(master)/1e18:.4f} xDAI")
+print(f"\n  {n_ok}/{len(sent)} delivered in {total_time:.1f}s total")
+print(f"  burst send time: {t_burst:.1f}s")
+print(f"\n[HEALTH] mech after test:  {_health_check()}")
+print(f"master balance after: {w3.eth.get_balance(master)/1e18:.4f} xDAI")
