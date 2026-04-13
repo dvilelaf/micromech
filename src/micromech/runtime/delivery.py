@@ -19,7 +19,6 @@ from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import (
     DEFAULT_DELIVERY_BATCH_SIZE,
     DEFAULT_DELIVERY_INTERVAL,
-    GAS_ESTIMATION_BUFFER,
     GAS_FALLBACK,
     GAS_FLOOR_DELIVERY,
     IPFS_API_URL,
@@ -350,12 +349,14 @@ class DeliveryManager:
         """Submit via direct transact() — only works on Anvil (auto-impersonate).
 
         Used in tests where the bridge has no safe_service. Not valid on real nodes.
-        Gas is estimated with a 20% buffer; falls back to 500_000 if estimation fails.
+        Gas is estimated via iwa's chain_interface (10% buffer, 500_000 on failure);
+        floors at GAS_FLOOR_DELIVERY.
         """
         try:
-            estimated = fn_call.estimate_gas({"from": from_addr})
-            gas = max(int(estimated * GAS_ESTIMATION_BUFFER), GAS_FLOOR_DELIVERY)
-        except Exception:
+            ci = self.bridge.wallet.chain_interfaces.get(self._chain_name)
+            gas = max(ci.estimate_gas(fn_call, {"from": from_addr}), GAS_FLOOR_DELIVERY)
+        except Exception as e:
+            logger.warning("Gas estimation failed ({}), using fallback {}", type(e).__name__, GAS_FALLBACK)
             gas = GAS_FALLBACK
         tx_hash = fn_call.transact({"from": from_addr, "gas": gas})
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)

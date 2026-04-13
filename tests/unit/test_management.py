@@ -135,12 +135,12 @@ class TestCreateMech:
         mock_mgr.service.service_id = 42
         mock_mgr.service.service_owner_eoa_address = "0x" + "aa" * 20
 
-        # Mock web3 via get_wallet().chain_interfaces
+        # Mock web3 and chain_interface via get_wallet()
         mock_web3 = MagicMock()
         mock_wallet = MagicMock()
         mock_ci = mock_wallet.chain_interfaces.get.return_value
         mock_ci.web3 = mock_web3
-        mock_ci.estimate_gas.return_value = 3_000_000
+        mock_ci.estimate_gas.return_value = 3_000_000  # > GAS_FLOOR_CREATE2 (2M)
         mock_get_wallet.return_value = mock_wallet
 
         # Receipt with log containing mech address — returned by sign_and_send
@@ -166,6 +166,48 @@ class TestCreateMech:
         result = lc.create_mech("svc-1")
         assert result is not None
         assert mech_addr_hex in result.lower()
+        mock_ci.estimate_gas.assert_called_once()
+
+    @patch("micromech.core.bridge.get_wallet")
+    @patch("micromech.management._get_service_manager")
+    def test_create_mech_gas_floor_applied(self, mock_get_mgr, mock_get_wallet):
+        """When estimate_gas returns < GAS_FLOOR_CREATE2, the floor (2M) is used."""
+        mock_mgr = MagicMock()
+        mock_mgr.service.service_id = 42
+        mock_mgr.service.service_owner_eoa_address = "0x" + "aa" * 20
+
+        mock_web3 = MagicMock()
+        mock_wallet = MagicMock()
+        mock_ci = mock_wallet.chain_interfaces.get.return_value
+        mock_ci.web3 = mock_web3
+        mock_ci.estimate_gas.return_value = 500_000  # below GAS_FLOOR_CREATE2 (2M)
+        mock_get_wallet.return_value = mock_wallet
+
+        mech_addr_hex = "cd" * 20
+        mock_wallet.transaction_service.sign_and_send.return_value = (
+            True,
+            {
+                "status": 1,
+                "logs": [
+                    {
+                        "address": MARKETPLACE,
+                        "topics": [
+                            bytes(32),
+                            bytes.fromhex("00" * 12 + mech_addr_hex),
+                        ],
+                    }
+                ],
+            },
+        )
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+        result = lc.create_mech("svc-1")
+        assert result is not None
+        # Verify build_transaction was called with gas = 2_000_000 (the floor)
+        fn_call = mock_ci.web3.eth.contract.return_value.functions.create.return_value
+        call_kwargs = fn_call.build_transaction.call_args[0][0]
+        assert call_kwargs["gas"] == 2_000_000
 
     @patch("micromech.core.bridge.get_wallet")
     @patch("micromech.management._get_service_manager")

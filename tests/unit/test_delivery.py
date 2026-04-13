@@ -136,6 +136,7 @@ class TestViaImpersonation:
         config = MicromechConfig()
         bridge = MagicMock()
         bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 1}
+        bridge.wallet.chain_interfaces.get.return_value.estimate_gas.return_value = 200_000
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
         fn_call = MagicMock()
@@ -147,9 +148,10 @@ class TestViaImpersonation:
 
     def test_impersonated_reverted(self, queue: PersistentQueue):
         """Reverted transaction raises RuntimeError."""
-        config = MicromechConfig()
+        config = MagicMock()
         bridge = MagicMock()
         bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 0}
+        bridge.wallet.chain_interfaces.get.return_value.estimate_gas.return_value = 200_000
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
         fn_call = MagicMock()

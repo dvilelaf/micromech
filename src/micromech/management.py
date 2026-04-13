@@ -221,8 +221,10 @@ class MechLifecycle:
 
             fn = marketplace.functions.create(service_id, EthereumAddress(factory), payload)
             # Use iwa's chain_interface.estimate_gas() — includes 10% buffer,
-            # falls back to GAS_FALLBACK on failure. Floor at GAS_FLOOR_CREATE2.
-            gas_limit = max(ci.estimate_gas(fn, {"from": EthereumAddress(owner)}), GAS_FLOOR_CREATE2)
+            # returns GAS_FALLBACK (500k) on failure. Floor at GAS_FLOOR_CREATE2 (2M)
+            # ensures CREATE2 operations have sufficient gas even if estimation fails.
+            estimated = ci.estimate_gas(fn, {"from": EthereumAddress(owner)})
+            gas_limit = max(estimated, GAS_FLOOR_CREATE2)
 
             # Build and sign+send as owner EOA via iwa (eth_sendRawTransaction)
             tx = fn.build_transaction({"from": EthereumAddress(owner), "gas": gas_limit})
