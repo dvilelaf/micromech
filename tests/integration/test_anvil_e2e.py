@@ -847,7 +847,7 @@ def _approve_olas(w3, owner, spender, amount):
 def _setup_iwa_for_anvil(tmp_path, w3):
     """Wire iwa wallet + ChainInterfaces to Anvil for E2E tests.
 
-    Uses Anvil's account[0] (known private key) as master wallet.
+    Generates a fresh random EOA as master wallet.
     Returns (master_address, key_storage, restore_fn).
     Call restore_fn() in finally to clean up bridge and chain state.
     """
@@ -869,13 +869,17 @@ def _setup_iwa_for_anvil(tmp_path, w3):
 
     import micromech.core.bridge as _bridge
 
-    # Anvil's deterministic account[0] — never use with real funds
-    ANVIL_KEY = "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
-    master_addr = Account.from_key(ANVIL_KEY).address  # 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+    # Generate a fresh random EOA — guaranteed to have no code on any chain,
+    # including the Gnosis fork. Anvil's well-known account[0] (0xf39Fd6...)
+    # has code on Gnosis mainnet, causing is_contract() to return True and
+    # estimate_gas() to return 0 → intrinsic gas too low.
+    account = Account.create()
+    raw_key = account.key.hex()  # without 0x prefix
+    master_addr = account.address
 
-    # Create wallet.json in tmp_path with the known private key
+    # Create wallet.json in tmp_path with the generated private key
     wallet_path = tmp_path / "wallet.json"
-    encrypted = EncryptedAccount.encrypt_private_key(ANVIL_KEY[2:], "test", "master")
+    encrypted = EncryptedAccount.encrypt_private_key(raw_key, "test", "master")
     wallet_data = {
         "accounts": {encrypted.address: encrypted.model_dump()},
         "encrypted_mnemonic": None,
@@ -910,6 +914,10 @@ def _setup_iwa_for_anvil(tmp_path, w3):
     orig_gnosis_rpcs = list(ci.gnosis.chain.rpcs)
     ci.gnosis.chain.rpcs = [ANVIL_URL]
     ci.gnosis._current_rpc_index = 0
+    # Force web3 re-init: the existing web3 is cached on the production RPC.
+    # If we only change rpcs[], is_contract() / estimate_gas() would still
+    # query the real Gnosis chain — where 0xf39Fd6... has code — and return 0.
+    ci.gnosis._init_web3()
 
     # Inject into bridge (path A: build wallet from key_storage)
     _bridge._cached_key_storage = key_storage
@@ -918,6 +926,8 @@ def _setup_iwa_for_anvil(tmp_path, w3):
 
     def restore():
         ci.gnosis.chain.rpcs = orig_gnosis_rpcs
+        ci.gnosis._current_rpc_index = 0
+        ci.gnosis._init_web3()
         _bridge._cached_wallet = None
         _bridge._cached_key_storage = None
         _bridge._service_info_cache.clear()
@@ -984,11 +994,26 @@ class TestMechLifecycleE2E:
             }
         )
 
+        _iwa_cfg = None
+        _orig_olas = None
         try:
             with (
                 patch("iwa.core.constants.WALLET_PATH", tmp_path / "wallet.json"),
                 patch("iwa.core.constants.CONFIG_PATH", tmp_path / "config.yaml"),
             ):
+                # Isolate Config singleton from production data.
+                # Without this, get_service_info("gnosis") returns the production
+                # service, full_deploy() skips creation, and tries to sign with
+                # the production owner address (which is not in the test wallet).
+                from iwa.core.models import Config as _IwaConfig
+                from iwa.plugins.olas.models import OlasConfig as _OlasConfig
+                import micromech.core.bridge as _bridge_mod
+
+                _iwa_cfg = _IwaConfig()
+                _orig_olas = _iwa_cfg.plugins.get("olas")
+                _iwa_cfg.plugins["olas"] = _OlasConfig()  # empty: no services
+                _bridge_mod._service_info_cache.clear()
+
                 # ==============================================================
                 # Steps 2-6: create_service → spin_up → create_mech
                 # (100% real production code via MechLifecycle.full_deploy)
@@ -1005,19 +1030,24 @@ class TestMechLifecycleE2E:
                 print(f"  Service {supply_svc_id} deployed, mech {our_mech_addr[:12]}...")
 
                 # ==============================================================
-                # Step 7: Stake (100% real production code via MechLifecycle.stake)
+                # Step 7: Verify staking (full_deploy includes stake as Step 6)
                 # ==============================================================
-                print("\n--- Step 7: stake() ---")
+                print("\n--- Step 7: verify staking ---")
 
                 service_key = result["service_key"]
-                staked = lc.stake(service_key, staking_contract=SUPPLY_STAKING_ADDR)
-                assert staked, "MechLifecycle.stake() returned False"
+                assert result.get("staked"), f"full_deploy did not stake: {result}"
 
                 supply_state = supply_staking.functions.getStakingState(supply_svc_id).call()
                 assert supply_state == 1, f"Expected STAKED(1), got {supply_state}"
                 print(f"  Service {supply_svc_id} staked in Supply Alpha")
 
         finally:
+            # Restore olas plugin so we don't leak test state into other tests
+            if _iwa_cfg is not None:
+                if _orig_olas is not None:
+                    _iwa_cfg.plugins["olas"] = _orig_olas
+                else:
+                    _iwa_cfg.plugins.pop("olas", None)
             restore()
 
         # ==============================================================
@@ -1103,6 +1133,25 @@ class TestMechLifecycleE2E:
         assert new_deliveries >= base_deliveries + n_requests
         print(f"  Deliveries: {base_deliveries} -> {new_deliveries}")
 
+        # Activity checker for Supply Alpha staking requires BOTH:
+        #   nonces[0] = safe.nonce()  (Gnosis Safe tx count)
+        #   nonces[1] = mapMechServiceDeliveryCounts(multisig)
+        # to increase by >= livenessRatio * ts / 1e18 ≈ 59.8 for isRatioPass=True.
+        # Anvil impersonation above bumps nonces[1] but NOT nonces[0], because
+        # Safe.nonce() only increments via execTransaction — not direct calls.
+        # We use anvil_setStorageAt on Gnosis Safe storage slot 5 (nonce) to
+        # match the delivery count so isRatioPass() returns True at checkpoint.
+        safe_nonce_slot = "0x" + "0" * 63 + "5"  # slot 5 = Gnosis Safe nonce
+        safe_nonce_value = "0x" + hex(n_requests)[2:].zfill(64)
+        w3.provider.make_request(
+            "anvil_setStorageAt", [supply_multisig, safe_nonce_slot, safe_nonce_value]
+        )
+        actual_safe_nonce = int(
+            w3.eth.get_storage_at(w3.to_checksum_address(supply_multisig), 5).hex(), 16
+        )
+        assert actual_safe_nonce == n_requests, f"Safe nonce not set: {actual_safe_nonce}"
+        print(f"  Safe nonce set to {n_requests} to satisfy activity checker")
+
         # ==============================================================
         # Step 10: Advance time past epoch end
         # ==============================================================
@@ -1162,6 +1211,12 @@ class TestOffchainHTTPE2E:
       2. Server executes the tool
       3. Server delivers on-chain via deliverMarketplaceWithSignatures
       4. Verify delivery count on marketplace contract increased
+
+    NOTE — delivery transport used here: AnvilBridge has no safe_service, so
+    DeliveryManager._has_safe is False and deliveries go through _via_impersonation
+    (Anvil auto-impersonate). In production, _via_safe (Gnosis Safe execTransaction)
+    is used. The _via_safe path is NOT covered by this test suite — a separate
+    integration test with a real iwa Wallet + safe_service would be needed.
     """
 
     @pytest.mark.asyncio

@@ -362,17 +362,27 @@ class DeliveryManager:
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
 
     def _via_signed(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
-        """Submit any contract call via signed transaction."""
+        """Submit any contract call via signed transaction.
+
+        NOTE: This path is only valid when from_addr is an EOA whose private key
+        is in the wallet. For delivery (where from_addr = Safe multisig), this
+        will fail because we cannot sign on behalf of a contract. Production
+        delivery should always use _via_safe; this is a last-resort fallback.
+        """
+        private_key = self._get_signer_key()
+        # Derive the actual sender address from the private key — this is what
+        # will appear as `from` in the signed transaction. Using from_addr
+        # (multisig) here would cause a nonce mismatch and wrong-sender error.
+        signer_addr = self.bridge.web3.eth.account.from_key(private_key).address
         tx = fn_call.build_transaction(
             {
-                "from": from_addr,
+                "from": signer_addr,
                 "gas": 500_000,
                 "gasPrice": self.bridge.web3.eth.gas_price,
-                "nonce": self.bridge.web3.eth.get_transaction_count(from_addr),
+                "nonce": self.bridge.web3.eth.get_transaction_count(signer_addr),
                 "chainId": self.bridge.web3.eth.chain_id,
             }
         )
-        private_key = self._get_signer_key()
         signed = self.bridge.web3.eth.account.sign_transaction(
             tx,
             private_key=private_key,

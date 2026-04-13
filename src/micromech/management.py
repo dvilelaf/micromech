@@ -184,9 +184,11 @@ class MechLifecycle:
     ) -> Optional[str]:
         """Create a mech on the marketplace.
 
-        marketplace.create() must be called FROM the service's Safe multisig
-        (not the owner EOA). Uses iwa's execute_safe_transaction so the Safe
-        transaction is signed by the agent instance private key.
+        marketplace.create() must be called by the SERVICE OWNER EOA (the
+        account that created the service on ServiceRegistry). Calling from the
+        Safe multisig is rejected with UnauthorizedAccount. Uses iwa's
+        TransactionService.sign_and_send() which uses eth_sendRawTransaction
+        (public RPCs reject eth_sendTransaction with -32002).
         """
         mgr = _get_service_manager(self.config, service_key)
         factory = factory_address or self.chain_config.factory_address
@@ -209,33 +211,28 @@ class MechLifecycle:
             marketplace = web3.eth.contract(address=marketplace_addr, abi=abi)
 
             service_id = mgr.service.service_id
-            # marketplace.create() must originate from the service multisig (Safe),
-            # not the owner EOA. The Safe executes the call via the agent instance key.
-            multisig = str(mgr.service.multisig_address)
+            # marketplace.create() must be called by the service owner EOA,
+            # not the multisig. UnauthorizedAccount is raised if wrong caller.
+            owner = str(mgr.service.service_owner_eoa_address)
 
             # Third arg is bytes: ABI-encode the delivery rate
             payload = encode(["uint256"], [rate])
 
-            # Build call data for marketplace.create()
-            call_data = marketplace.functions.create(
+            # Build and sign+send as owner EOA via iwa (eth_sendRawTransaction)
+            tx = marketplace.functions.create(
                 service_id,
                 EthereumAddress(factory),
                 payload,
-            ).build_transaction({"from": EthereumAddress(multisig)})["data"]
+            ).build_transaction({"from": EthereumAddress(owner), "gas": 5_000_000})
 
-            # Execute as Safe transaction from the multisig (signed by agent instance)
-            multisig_tag = f"service_{service_id}_multisig"
-            tx_hash = wallet.safe_service.execute_safe_transaction(
-                safe_address_or_tag=multisig_tag,
-                to=str(marketplace_addr),
-                value=0,
+            success, receipt = wallet.transaction_service.sign_and_send(
+                transaction=tx,
+                signer_address_or_tag=owner,
                 chain_name=self.chain_name,
-                data=call_data,
             )
-
-            # Wait for receipt
-            tx_bytes = bytes.fromhex(tx_hash[2:] if tx_hash.startswith("0x") else tx_hash)
-            receipt = web3.eth.wait_for_transaction_receipt(tx_bytes)
+            if not success or not receipt:
+                logger.error("Mech creation TX failed")
+                return None
             if receipt.get("status") != 1:
                 logger.error("Mech creation TX reverted")
                 return None
