@@ -218,12 +218,13 @@ class MechLifecycle:
             # Third arg is bytes: ABI-encode the delivery rate
             payload = encode(["uint256"], [rate])
 
+            fn = marketplace.functions.create(service_id, EthereumAddress(factory), payload)
+            # Use iwa's chain_interface.estimate_gas() — includes 10% buffer,
+            # falls back to 500_000 on failure. Floor at 2M for CREATE2 safety.
+            gas_limit = max(ci.estimate_gas(fn, {"from": EthereumAddress(owner)}), 2_000_000)
+
             # Build and sign+send as owner EOA via iwa (eth_sendRawTransaction)
-            tx = marketplace.functions.create(
-                service_id,
-                EthereumAddress(factory),
-                payload,
-            ).build_transaction({"from": EthereumAddress(owner), "gas": 5_000_000})
+            tx = fn.build_transaction({"from": EthereumAddress(owner), "gas": gas_limit})
 
             success, receipt = wallet.transaction_service.sign_and_send(
                 transaction=tx,

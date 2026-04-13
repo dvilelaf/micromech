@@ -347,8 +347,14 @@ class DeliveryManager:
         """Submit via direct transact() — only works on Anvil (auto-impersonate).
 
         Used in tests where the bridge has no safe_service. Not valid on real nodes.
+        Gas is estimated with a 20% buffer; falls back to 500_000 if estimation fails.
         """
-        tx_hash = fn_call.transact({"from": from_addr, "gas": 500_000})
+        try:
+            estimated = fn_call.estimate_gas({"from": from_addr})
+            gas = max(int(estimated * 1.2), 100_000)
+        except Exception:
+            gas = 500_000
+        tx_hash = fn_call.transact({"from": from_addr, "gas": gas})
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
 
     async def run(self) -> None:

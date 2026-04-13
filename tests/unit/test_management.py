@@ -138,7 +138,9 @@ class TestCreateMech:
         # Mock web3 via get_wallet().chain_interfaces
         mock_web3 = MagicMock()
         mock_wallet = MagicMock()
-        mock_wallet.chain_interfaces.get.return_value.web3 = mock_web3
+        mock_ci = mock_wallet.chain_interfaces.get.return_value
+        mock_ci.web3 = mock_web3
+        mock_ci.estimate_gas.return_value = 3_000_000
         mock_get_wallet.return_value = mock_wallet
 
         # Receipt with log containing mech address — returned by sign_and_send
