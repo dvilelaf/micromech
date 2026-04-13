@@ -8,7 +8,10 @@ On startup, recovers any pending/interrupted requests from the database.
 import asyncio
 import signal
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from micromech.tasks.notifications import NotificationService
 
 from loguru import logger
 
@@ -255,7 +258,7 @@ class MechServer:
         self,
         with_http: bool = True,
         register_signals: bool = True,
-        notification: "Optional[Any]" = None,
+        notification: "Optional[NotificationService]" = None,
     ) -> None:
         """Run the server with all components."""
         self._running = True
@@ -330,17 +333,27 @@ class MechServer:
             DEFAULT_MAX_CONCURRENT,
         )
 
+        # Fire-and-forget startup notification — must NOT be in self._tasks because
+        # a notification failure would propagate through asyncio.gather and crash
+        # the server. Exceptions are caught inside notification.send() already.
         try:
             from micromech import __version__
+            from micromech.core.bridge import get_service_info
 
-            chain_list = ", ".join(chains) if chains else "none"
-            startup_task = asyncio.create_task(
+            chain_lines = []
+            for chain_name in chains:
+                svc = get_service_info(chain_name)
+                chain_cfg = self.config.chains.get(chain_name)
+                mech = (chain_cfg.mech_address or "?") if chain_cfg else "?"
+                svc_id = svc.get("service_id", "?")
+                chain_lines.append(f"  {chain_name}: svc={svc_id} mech={str(mech)[:12]}…")
+            details = "\n".join(chain_lines) if chain_lines else "  (no chains)"
+            asyncio.ensure_future(
                 notification.send(
                     "Micromech started",
-                    f"v{__version__} | chains: {chain_list} | tools: {len(self.registry.tool_ids)}",
+                    f"v{__version__} | tools: {len(self.registry.tool_ids)}\n{details}",
                 )
             )
-            self._tasks.append(startup_task)
         except Exception as e:
             logger.warning("Startup notification failed: {}", e)
 

@@ -140,21 +140,6 @@ class TestNotificationServiceNotify:
         assert bot.send_message.call_count == 3
 
 
-class TestNotificationServiceSendSync:
-    def test_send_sync_without_loop_just_logs(self):
-        ns = NotificationService()
-        # No event loop — just logs, no crash
-        ns.send_sync("Title", "msg")
-
-    @pytest.mark.asyncio
-    async def test_send_sync_with_running_loop(self):
-        bot = AsyncMock()
-        ns = NotificationService(bot=bot, chat_id=1)
-        # Inside an async test there IS a running loop
-        ns.send_sync("Title", "msg")
-        # Task is created but may not have run yet — just verify no crash
-
-
 class TestNotificationServiceSendMessage:
     @pytest.mark.asyncio
     async def test_send_message_is_alias_for_notify(self):

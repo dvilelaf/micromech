@@ -59,7 +59,6 @@ class TestRewardsTask:
 
         lifecycle = _make_lifecycle(rewards=5.0)
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config(claim_threshold_olas=1.0)
@@ -79,7 +78,6 @@ class TestRewardsTask:
 
         lifecycle = _make_lifecycle(rewards=0.5)
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config(claim_threshold_olas=1.0)
@@ -98,7 +96,6 @@ class TestRewardsTask:
 
         lifecycle = _make_lifecycle(service_key=None)
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config()
@@ -116,7 +113,6 @@ class TestRewardsTask:
 
         lifecycle = _make_lifecycle(is_staked=False)
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config()
@@ -135,7 +131,6 @@ class TestRewardsTask:
         lifecycle = _make_lifecycle()
         lifecycle.get_status.side_effect = Exception("rpc fail")
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config()
@@ -156,7 +151,6 @@ class TestFundTask:
         from micromech.tasks.fund import fund_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config(fund_threshold_native=0.1)
@@ -181,7 +175,6 @@ class TestFundTask:
         from micromech.tasks.fund import fund_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         bridge = MagicMock()
@@ -220,7 +213,6 @@ class TestFundTask:
         from micromech.tasks.fund import fund_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config(fund_threshold_native=0.01)
@@ -238,7 +230,6 @@ class TestFundTask:
         from micromech.tasks.fund import fund_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config(fund_enabled=False)
@@ -251,7 +242,6 @@ class TestFundTask:
         from micromech.tasks.fund import fund_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config()
@@ -268,7 +258,6 @@ class TestFundTask:
         from micromech.tasks.fund import fund_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         bridge = MagicMock()
@@ -309,7 +298,6 @@ class TestCheckpointTask:
 
         lifecycle = _make_lifecycle(service_key=None)
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config()
@@ -327,7 +315,6 @@ class TestCheckpointTask:
 
         lifecycle = _make_lifecycle(is_staked=False)
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config()
@@ -344,7 +331,6 @@ class TestCheckpointTask:
         lifecycle = _make_lifecycle()
         lifecycle.get_status.side_effect = Exception("rpc fail")
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config()
@@ -365,7 +351,6 @@ class TestAutoSellTask:
         from micromech.tasks.auto_sell import auto_sell_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         bridge = MagicMock()
@@ -397,7 +382,6 @@ class TestAutoSellTask:
         from micromech.tasks.auto_sell import auto_sell_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         bridge = MagicMock()
@@ -425,7 +409,6 @@ class TestAutoSellTask:
         from micromech.tasks.auto_sell import auto_sell_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         config = _make_config(auto_sell_enabled=False)
@@ -437,7 +420,6 @@ class TestAutoSellTask:
         from micromech.tasks.auto_sell import auto_sell_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         bridge = MagicMock()
@@ -461,7 +443,6 @@ class TestAutoSellTask:
         from micromech.tasks.auto_sell import auto_sell_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         bridge = MagicMock()
@@ -493,7 +474,6 @@ class TestProfitabilityCheckTask:
         from micromech.tasks.profitability_check import profitability_check_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         queue = MagicMock()
@@ -522,7 +502,6 @@ class TestProfitabilityCheckTask:
         from micromech.tasks.profitability_check import profitability_check_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         queue = MagicMock()
@@ -550,7 +529,6 @@ class TestProfitabilityCheckTask:
         from micromech.tasks.profitability_check import profitability_check_task
 
         notification = NotificationService()
-        notification._skip_resolve()
         notification.send = AsyncMock()
 
         queue = MagicMock()

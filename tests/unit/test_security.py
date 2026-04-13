@@ -264,7 +264,8 @@ class TestDeliveryChainId:
     def test_tx_receipt_timeout_value(self):
         assert TX_RECEIPT_TIMEOUT == 120
 
-    def test_via_signed_includes_chain_id(self):
+    def test_via_impersonation_uses_gas_limit(self):
+        """_via_impersonation passes gas=500_000 to transact()."""
         from micromech.core.config import ChainConfig
 
         chain_cfg = ChainConfig(
@@ -274,28 +275,23 @@ class TestDeliveryChainId:
             factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
             staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
         )
-        bridge = MagicMock()
-        bridge.web3.eth.chain_id = 100
-        bridge.web3.eth.gas_price = 1000
-        bridge.web3.eth.get_transaction_count.return_value = 0
-        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 1}
+        bridge = MagicMock(spec=["web3"])
         tx_hash = b"\xca\xfe" + b"\x00" * 30
-        bridge.web3.eth.send_raw_transaction.return_value = tx_hash
-        bridge.web3.eth.account.sign_transaction.return_value = MagicMock(raw_transaction=b"tx")
+        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 1}
+
+        fn_call = MagicMock()
+        fn_call.transact.return_value = tx_hash
 
         queue = MagicMock()
         config = make_test_config()
         dm = DeliveryManager(config=config, chain_config=chain_cfg, queue=queue, bridge=bridge)
-        dm._get_signer_key = MagicMock(return_value="0x" + "ff" * 32)
+        dm._via_impersonation(fn_call, "0x" + "ab" * 20)
 
-        fn_call = MagicMock()
-        dm._via_signed(fn_call, "0x" + "ab" * 20)
-
-        # Verify chainId was passed to build_transaction
-        call_args = fn_call.build_transaction.call_args
+        # Verify gas was passed
+        call_args = fn_call.transact.call_args
         tx_params = call_args[0][0]
-        assert "chainId" in tx_params
-        assert tx_params["chainId"] == 100
+        assert "gas" in tx_params
+        assert tx_params["gas"] == 500_000
 
 
 # ============================================================
@@ -322,22 +318,9 @@ class TestCreateMechEventMatching:
         mock_wallet.chain_interfaces.get.return_value.web3 = mock_web3
         mock_get_wallet.return_value = mock_wallet
 
-        tx_hash = b"\xde\xad" + b"\x00" * 30
-        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = (
-            tx_hash
+        mock_wallet.transaction_service.sign_and_send.return_value = (
+            False, {"status": 0, "logs": []}
         )
-        mock_web3.eth.wait_for_transaction_receipt.return_value = {
-            "status": 1,
-            "logs": [
-                {
-                    "address": "0x" + "ff" * 20,  # wrong address
-                    "topics": [
-                        bytes(32),
-                        bytes.fromhex("00" * 12 + "cd" * 20),
-                    ],
-                }
-            ],
-        }
 
         lc = MechLifecycle(make_test_config(), chain_name="gnosis")
         result = lc.create_mech("svc-1")
@@ -359,23 +342,22 @@ class TestCreateMechEventMatching:
         mock_wallet.chain_interfaces.get.return_value.web3 = mock_web3
         mock_get_wallet.return_value = mock_wallet
 
-        tx_hash = b"\xde\xad" + b"\x00" * 30
-        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = (
-            tx_hash
-        )
         mech_hex = "cd" * 20
-        mock_web3.eth.wait_for_transaction_receipt.return_value = {
-            "status": 1,
-            "logs": [
-                {
-                    "address": self.MARKETPLACE,
-                    "topics": [
-                        bytes(32),  # any event topic
-                        bytes.fromhex("00" * 12 + mech_hex),
-                    ],
-                }
-            ],
-        }
+        mock_wallet.transaction_service.sign_and_send.return_value = (
+            True,
+            {
+                "status": 1,
+                "logs": [
+                    {
+                        "address": self.MARKETPLACE,
+                        "topics": [
+                            bytes(32),  # any event topic
+                            bytes.fromhex("00" * 12 + mech_hex),
+                        ],
+                    }
+                ],
+            },
+        )
 
         lc = MechLifecycle(make_test_config(), chain_name="gnosis")
         result = lc.create_mech("svc-1")

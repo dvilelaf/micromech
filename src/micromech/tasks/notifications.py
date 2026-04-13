@@ -20,6 +20,12 @@ class NotificationService:
 
     Mirrors triton's NotificationService: takes a Bot instance and chat_id
     directly. If not provided, notifications are logged only (no Telegram).
+
+    Methods:
+      send(title, message, level)  — structured notification (logs + Telegram HTML)
+      notify(message, parse_mode) — raw Telegram message with retry
+      send_message(text)          — alias for notify (triton interface compat)
+      send_messages(list)         — send multiple raw messages sequentially
     """
 
     def __init__(self, bot: Optional["Bot"] = None, chat_id: Optional[int] = None):
@@ -31,7 +37,7 @@ class NotificationService:
         return self.bot is not None and self.chat_id is not None
 
     async def send(self, title: str, message: str, level: str = "info") -> None:
-        """Send notification. Always logs, optionally sends to Telegram."""
+        """Send structured notification. Always logs, optionally sends to Telegram."""
         log_msg = f"[{title}] {message}"
         getattr(logger, level.lower(), logger.info)(log_msg)
 
@@ -40,8 +46,7 @@ class NotificationService:
             await self.notify(text)
 
     async def notify(self, message: str, parse_mode: str = _PARSE_MODE_HTML) -> None:
-        """Send a Telegram message with retry on network errors. Always logs."""
-        logger.info(message)
+        """Send a raw Telegram message with retry on transient network errors."""
         if not self.telegram_enabled:
             return
 
@@ -100,24 +105,6 @@ class NotificationService:
     ) -> None:
         """Alias for notify — matches triton interface."""
         await self.notify(text, parse_mode)
-
-    def send_sync(self, title: str, message: str, level: str = "info") -> None:
-        """Sync wrapper for use in threaded tasks (scheduler callbacks)."""
-        try:
-            loop = asyncio.get_running_loop()
-            task = loop.create_task(self.send(title, message, level))
-            _pending_tasks.add(task)
-            task.add_done_callback(_pending_tasks.discard)
-        except RuntimeError:
-            # No event loop — just log
-            getattr(logger, level.lower(), logger.info)("[%s] %s", title, message)
-
-    def _skip_resolve(self) -> None:
-        """No-op — kept for test compatibility."""
-
-
-# Prevent GC of fire-and-forget notification tasks
-_pending_tasks: set[asyncio.Task] = set()
 
 
 def _escape_html(text: str) -> str:

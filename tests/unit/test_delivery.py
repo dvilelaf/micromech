@@ -160,69 +160,34 @@ class TestViaImpersonation:
             dm._via_impersonation(fn_call, "0x" + "ab" * 20)
 
 
-class TestViaSigned:
-    def test_signed_success(self, queue: PersistentQueue):
-        """_via_signed builds, signs, and sends transaction."""
+class TestViaImpersonationDirect:
+    def test_impersonation_success(self, queue: PersistentQueue):
+        """_via_impersonation transacts and returns hex hash."""
         config = MicromechConfig()
-        bridge = MagicMock()
-        bridge.web3.eth.gas_price = 1000
-        bridge.web3.eth.chain_id = 100
-        bridge.web3.eth.get_transaction_count.return_value = 5
-        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 1}
+        bridge = MagicMock(spec=["web3"])
         tx_hash_bytes = b"\xca\xfe" + b"\x00" * 30
-        bridge.web3.eth.send_raw_transaction.return_value = tx_hash_bytes
-        mock_signed = MagicMock()
-        mock_signed.raw_transaction = b"signed_tx"
-        bridge.web3.eth.account.sign_transaction.return_value = mock_signed
-
-        dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
-        dm._get_signer_key = MagicMock(return_value="0x" + "ff" * 32)
+        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 1}
 
         fn_call = MagicMock()
-        result = dm._via_signed(fn_call, "0x" + "ab" * 20)
+        fn_call.transact.return_value = tx_hash_bytes
+
+        dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
+        result = dm._via_impersonation(fn_call, "0x" + "ab" * 20)
         assert result == tx_hash_bytes.hex()
 
-    def test_signed_reverted(self, queue: PersistentQueue):
-        """Reverted signed transaction raises RuntimeError."""
+    def test_impersonation_reverted(self, queue: PersistentQueue):
+        """Reverted impersonation transaction raises RuntimeError."""
         config = MicromechConfig()
-        bridge = MagicMock()
-        bridge.web3.eth.gas_price = 1000
-        bridge.web3.eth.chain_id = 100
-        bridge.web3.eth.get_transaction_count.return_value = 0
-        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 0}
+        bridge = MagicMock(spec=["web3"])
         tx_hash_bytes = b"\xca\xfe" + b"\x00" * 30
-        bridge.web3.eth.send_raw_transaction.return_value = tx_hash_bytes
-        mock_signed = MagicMock()
-        mock_signed.raw_transaction = b"signed_tx"
-        bridge.web3.eth.account.sign_transaction.return_value = mock_signed
-
-        dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
-        dm._get_signer_key = MagicMock(return_value="0x" + "ff" * 32)
+        bridge.web3.eth.wait_for_transaction_receipt.return_value = {"status": 0}
 
         fn_call = MagicMock()
+        fn_call.transact.return_value = tx_hash_bytes
+
+        dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
         with pytest.raises(RuntimeError, match="reverted"):
-            dm._via_signed(fn_call, "0x" + "ab" * 20)
-
-
-class TestGetSignerKey:
-    def test_get_signer_key_success(self, queue: PersistentQueue):
-        config = MicromechConfig()
-        bridge = MagicMock()
-        bridge.wallet.key_storage.get_address_by_tag.return_value = "0x" + "ab" * 20
-        bridge.wallet.key_storage._get_private_key.return_value = "deadbeef" * 8
-
-        dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
-        key = dm._get_signer_key()
-        assert key == "deadbeef" * 8
-
-    def test_get_signer_key_failure(self, queue: PersistentQueue):
-        config = MicromechConfig()
-        bridge = MagicMock()
-        bridge.wallet.key_storage.get_address_by_tag.return_value = None
-
-        dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
-        with pytest.raises(ValueError, match="Cannot resolve signer key"):
-            dm._get_signer_key()
+            dm._via_impersonation(fn_call, "0x" + "ab" * 20)
 
 
 class TestGetMechContract:
@@ -265,18 +230,17 @@ class TestSubmitDelivery:
         assert result == "0xdeadbeef"
         dm._via_signed.assert_not_called()
 
-    def test_fallback_to_signed(self, queue: PersistentQueue):
-        """When impersonation fails (no Safe), falls back to signed."""
+    def test_impersonation_failure_propagates(self, queue: PersistentQueue):
+        """When impersonation fails (no Safe), the error propagates — no silent fallback."""
         config = MicromechConfig()
         bridge = MagicMock(spec=["web3"])  # No wallet → _has_safe=False
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
         dm._via_impersonation = MagicMock(side_effect=RuntimeError("not Anvil"))
-        dm._via_signed = MagicMock(return_value="0xcafebabe")
 
-        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
-        assert result == "0xcafebabe"
+        with pytest.raises(RuntimeError, match="not Anvil"):
+            dm._submit_delivery("0x" + "aa" * 32, b"data")
 
     def test_request_id_hex_prefix(self, queue: PersistentQueue):
         """Request IDs with 0x prefix are handled correctly."""
@@ -308,20 +272,19 @@ class TestSubmitViaSafe:
         dm._via_impersonation.assert_not_called()
         dm._via_signed.assert_not_called()
 
-    def test_safe_fallback_to_impersonation(self, queue: PersistentQueue):
-        """When Safe fails, falls back to impersonation."""
+    def test_safe_failure_propagates(self, queue: PersistentQueue):
+        """When Safe fails, the error propagates — no silent fallback to impersonation."""
         config = MicromechConfig()
         bridge = MagicMock()
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
         dm._get_mech_contract = MagicMock()
-        dm._via_safe = MagicMock(side_effect=RuntimeError("no safe"))
-        dm._via_impersonation = MagicMock(return_value="0ximpersonated")
-        dm._via_signed = MagicMock()
+        dm._via_safe = MagicMock(side_effect=RuntimeError("safe tx failed"))
+        dm._via_impersonation = MagicMock()
 
-        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
-        assert result == "0ximpersonated"
-        dm._via_signed.assert_not_called()
+        with pytest.raises(RuntimeError, match="safe tx failed"):
+            dm._submit_delivery("0x" + "aa" * 32, b"data")
+        dm._via_impersonation.assert_not_called()
 
     def test_no_safe_skips_to_impersonation(self, queue: PersistentQueue):
         """When bridge has no Safe service, skips directly to impersonation."""
@@ -391,58 +354,47 @@ class TestDeliveryLifecycle:
         await asyncio.wait_for(dm.run(), timeout=3.0)
 
 
-class TestTrySubmit:
-    """Tests for the _try_submit fallback chain."""
+class TestSubmitTxRouting:
+    """Tests for _submit_tx routing: Safe when available, impersonation otherwise."""
 
-    def test_safe_success_skips_others(self):
-        from micromech.runtime.delivery import _try_submit
+    def test_has_safe_uses_safe(self, queue: PersistentQueue):
+        """When _has_safe is True, _submit_tx calls _via_safe."""
+        config = MicromechConfig()
+        bridge = MagicMock()  # has wallet → _has_safe=True
+        dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
-        result = _try_submit(
-            safe_fn=lambda: "safe_hash",
-            impersonated_fn=lambda: "imp_hash",
-            signed_fn=lambda: "signed_hash",
-        )
-        assert result == "safe_hash"
+        dm._via_safe = MagicMock(return_value="0xsafe")
+        dm._via_impersonation = MagicMock()
 
-    def test_safe_none_tries_impersonation(self):
-        from micromech.runtime.delivery import _try_submit
+        fn_call = MagicMock()
+        result = dm._submit_tx(fn_call, "0x" + "ab" * 20)
+        assert result == "0xsafe"
+        dm._via_impersonation.assert_not_called()
 
-        result = _try_submit(
-            safe_fn=None,
-            impersonated_fn=lambda: "imp_hash",
-            signed_fn=lambda: "signed_hash",
-        )
-        assert result == "imp_hash"
+    def test_no_safe_uses_impersonation(self, queue: PersistentQueue):
+        """When _has_safe is False, _submit_tx calls _via_impersonation."""
+        config = MicromechConfig()
+        bridge = MagicMock(spec=["web3"])  # no wallet → _has_safe=False
+        dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
-    def test_safe_fails_tries_impersonation(self):
-        from micromech.runtime.delivery import _try_submit
+        dm._via_safe = MagicMock()
+        dm._via_impersonation = MagicMock(return_value="0ximp")
 
-        result = _try_submit(
-            safe_fn=lambda: (_ for _ in ()).throw(RuntimeError("no safe")),
-            impersonated_fn=lambda: "imp_hash",
-            signed_fn=lambda: "signed_hash",
-        )
-        assert result == "imp_hash"
+        fn_call = MagicMock()
+        result = dm._submit_tx(fn_call, "0x" + "ab" * 20)
+        assert result == "0ximp"
+        dm._via_safe.assert_not_called()
 
-    def test_safe_and_imp_fail_uses_signed(self):
-        from micromech.runtime.delivery import _try_submit
+    def test_safe_failure_propagates(self, queue: PersistentQueue):
+        """Safe failure raises — no silent fallback."""
+        config = MicromechConfig()
+        bridge = MagicMock()
+        dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
 
-        result = _try_submit(
-            safe_fn=lambda: (_ for _ in ()).throw(RuntimeError("a")),
-            impersonated_fn=lambda: (_ for _ in ()).throw(RuntimeError("b")),
-            signed_fn=lambda: "signed_hash",
-        )
-        assert result == "signed_hash"
+        dm._via_safe = MagicMock(side_effect=RuntimeError("safe failed"))
 
-    def test_all_fail_raises(self):
-        from micromech.runtime.delivery import _try_submit
-
-        with pytest.raises(RuntimeError):
-            _try_submit(
-                safe_fn=lambda: (_ for _ in ()).throw(RuntimeError("a")),
-                impersonated_fn=lambda: (_ for _ in ()).throw(RuntimeError("b")),
-                signed_fn=lambda: (_ for _ in ()).throw(RuntimeError("c")),
-            )
+        with pytest.raises(RuntimeError, match="safe failed"):
+            dm._submit_tx(MagicMock(), "0x" + "ab" * 20)
 
 
 class TestNonHexRequestId:

@@ -2,11 +2,16 @@
 
 Calls deliverToMarketplace(requestIds[], datas[]) on the mech contract
 via the mech service's Safe multisig.
+
+Delivery transport strategy:
+- Production (bridge has safe_service): _via_safe — Gnosis Safe execTransaction.
+- Test/local (Anvil, bridge without safe_service): _via_impersonation — direct
+  transact() via Anvil auto-impersonate. This path does NOT work on real nodes.
 """
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
 
@@ -36,24 +41,6 @@ def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
         msg = f"{error_prefix} transaction reverted: {tx_hash.hex()}"
         raise RuntimeError(msg)
     return tx_hash.hex()
-
-
-def _try_submit(
-    safe_fn: Optional[Callable[[], str]],
-    impersonated_fn: Callable[[], str],
-    signed_fn: Callable[[], str],
-) -> str:
-    """Try Safe TX first (production), then impersonation (Anvil), then signed."""
-    if safe_fn is not None:
-        try:
-            return safe_fn()
-        except Exception as safe_err:
-            logger.debug("Safe TX failed ({}), trying impersonation", safe_err)
-    try:
-        return impersonated_fn()
-    except Exception as imp_err:
-        logger.debug("Impersonation failed ({}), trying signed tx", imp_err)
-    return signed_fn()
 
 
 class DeliveryManager:
@@ -330,18 +317,18 @@ class DeliveryManager:
         return self._submit_tx(fn_call, from_addr, "Offchain delivery")
 
     def _submit_tx(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
-        """Submit a contract call via Safe → impersonation → signed fallback."""
-        safe_fn = (lambda: self._via_safe(fn_call, from_addr, label)) if self._has_safe else None
-        return _try_submit(
-            safe_fn,
-            lambda: self._via_impersonation(fn_call, from_addr, label),
-            lambda: self._via_signed(fn_call, from_addr, label),
-        )
+        """Submit a contract call via Safe (prod) or impersonation (local/test).
 
-    # --- Generic transport methods (Safe / impersonated / signed) ---
+        Production: bridge has safe_service → _via_safe (Gnosis Safe execTransaction).
+        Local/test: bridge without safe_service → _via_impersonation (Anvil only).
+        Any failure propagates as an exception — no silent fallbacks.
+        """
+        if self._has_safe:
+            return self._via_safe(fn_call, from_addr, label)
+        return self._via_impersonation(fn_call, from_addr, label)
 
     def _via_safe(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
-        """Submit any contract call via Gnosis Safe (production path)."""
+        """Submit via Gnosis Safe execTransaction (production path)."""
         mech_address = self.bridge.web3.to_checksum_address(
             self.chain_config.mech_address,
         )
@@ -357,65 +344,12 @@ class DeliveryManager:
         return tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
 
     def _via_impersonation(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
-        """Submit any contract call via impersonation (Anvil)."""
+        """Submit via direct transact() — only works on Anvil (auto-impersonate).
+
+        Used in tests where the bridge has no safe_service. Not valid on real nodes.
+        """
         tx_hash = fn_call.transact({"from": from_addr, "gas": 500_000})
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
-
-    def _via_signed(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
-        """Submit any contract call via signed transaction.
-
-        NOTE: This path is only valid when from_addr is an EOA whose private key
-        is in the wallet. For delivery (where from_addr = Safe multisig), this
-        will fail because we cannot sign on behalf of a contract. Production
-        delivery should always use _via_safe; this is a last-resort fallback.
-        """
-        private_key = self._get_signer_key()
-        # Derive the actual sender address from the private key — this is what
-        # will appear as `from` in the signed transaction. Using from_addr
-        # (multisig) here would cause a nonce mismatch and wrong-sender error.
-        signer_addr = self.bridge.web3.eth.account.from_key(private_key).address
-        tx = fn_call.build_transaction(
-            {
-                "from": signer_addr,
-                "gas": 500_000,
-                "gasPrice": self.bridge.web3.eth.gas_price,
-                "nonce": self.bridge.web3.eth.get_transaction_count(signer_addr),
-                "chainId": self.bridge.web3.eth.chain_id,
-            }
-        )
-        signed = self.bridge.web3.eth.account.sign_transaction(
-            tx,
-            private_key=private_key,
-        )
-        tx_hash = self.bridge.web3.eth.send_raw_transaction(signed.raw_transaction)
-        return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
-
-    def _get_signer_key(self) -> str:
-        """Get the private key for signing delivery transactions.
-
-        Tries account_tag from config first, then falls back to
-        service_{id}_agent tag (created by iwa during deploy).
-        Uses key_storage._get_private_key for proper decryption.
-        """
-        ks = self.bridge.wallet.key_storage
-        tags_to_try = [self.chain_config.account_tag]
-        from micromech.core.bridge import get_service_info
-
-        svc_info = get_service_info(self.chain_config.chain)
-        if svc_info.get("service_id"):
-            tags_to_try.append(f"service_{svc_info['service_id']}_agent")
-        tags_to_try.append("master")
-
-        for tag in tags_to_try:
-            try:
-                addr = ks.get_address_by_tag(tag)
-                if addr:
-                    return ks._get_private_key(str(addr))
-            except Exception:
-                continue
-
-        msg = f"Cannot resolve signer key (tried: {tags_to_try})"
-        raise ValueError(msg)
 
     async def run(self) -> None:
         """Run the delivery loop."""

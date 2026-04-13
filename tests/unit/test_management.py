@@ -141,24 +141,23 @@ class TestCreateMech:
         mock_wallet.chain_interfaces.get.return_value.web3 = mock_web3
         mock_get_wallet.return_value = mock_wallet
 
-        tx_hash = b"\xde\xad" + b"\x00" * 30
-        mock_web3.eth.contract.return_value.functions.create.return_value.transact.return_value = (
-            tx_hash
-        )
-        # Receipt with log containing mech address
+        # Receipt with log containing mech address — returned by sign_and_send
         mech_addr_hex = "cd" * 20
-        mock_web3.eth.wait_for_transaction_receipt.return_value = {
-            "status": 1,
-            "logs": [
-                {
-                    "address": MARKETPLACE,
-                    "topics": [
-                        bytes(32),  # any event topic
-                        bytes.fromhex("00" * 12 + mech_addr_hex),
-                    ],
-                }
-            ],
-        }
+        mock_wallet.transaction_service.sign_and_send.return_value = (
+            True,
+            {
+                "status": 1,
+                "logs": [
+                    {
+                        "address": MARKETPLACE,
+                        "topics": [
+                            bytes(32),  # any event topic
+                            bytes.fromhex("00" * 12 + mech_addr_hex),
+                        ],
+                    }
+                ],
+            },
+        )
         mock_get_mgr.return_value = mock_mgr
 
         lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
