@@ -235,8 +235,8 @@ class TestClaimCallbacks:
     @pytest.mark.asyncio
     async def test_claim_command_multi_chain_shows_keyboard(self):
         from micromech.bot.commands.claim import claim_command
-        from tests.conftest import make_test_config
         from micromech.core.config import ChainConfig
+        from tests.conftest import make_test_config
 
         # Add a second chain so multi-chain keyboard appears
         config = make_test_config()

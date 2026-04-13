@@ -7,10 +7,8 @@ Covers:
 - Root redirect (lines 190-192)
 """
 
-import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from micromech.core.models import MechRequest, RequestRecord, ToolResult

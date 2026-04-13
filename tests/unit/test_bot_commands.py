@@ -13,10 +13,7 @@ All external I/O (bridge calls, wallet, filesystem) is mocked so tests run
 without real credentials or network access.
 """
 
-import asyncio
-import io
 import zipfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -37,7 +34,6 @@ def _make_update(has_message=True):
     update.effective_chat.id = AUTHORIZED_CHAT_ID
     update.effective_user.id = AUTHORIZED_USER_ID
     if has_message:
-        reply_mock = AsyncMock()
         # reply_text returns an object we can call edit_text on
         sent_msg = AsyncMock()
         update.message = AsyncMock()
@@ -258,8 +254,9 @@ class TestInfoCommand:
 
     @pytest.mark.asyncio
     async def test_package_not_found_shows_unknown(self):
-        from micromech.bot.commands.info import info_command
         from importlib.metadata import PackageNotFoundError
+
+        from micromech.bot.commands.info import info_command
 
         update = _make_update()
         ctx = _make_context()
@@ -593,7 +590,7 @@ class TestLogsCommand:
 
     @pytest.mark.asyncio
     async def test_zip_too_large(self):
-        from micromech.bot.commands.logs import logs_command, MAX_ZIP_BYTES
+        from micromech.bot.commands.logs import MAX_ZIP_BYTES, logs_command
 
         update = _make_update()
         ctx = _make_context()
@@ -752,8 +749,9 @@ class TestManageCommand:
             await manage_command(update, ctx)
 
     def test_build_chain_keyboard(self):
-        from micromech.bot.commands.manage import _build_chain_keyboard
         from telegram import InlineKeyboardMarkup
+
+        from micromech.bot.commands.manage import _build_chain_keyboard
 
         kb = _build_chain_keyboard({"gnosis": MagicMock(), "base": MagicMock()})
         assert isinstance(kb, InlineKeyboardMarkup)

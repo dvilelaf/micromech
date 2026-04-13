@@ -17,7 +17,6 @@ import pytest
 from micromech.tasks.notifications import NotificationService
 from tests.conftest import make_test_config
 
-
 # ===========================================================================
 # Health task
 # ===========================================================================
@@ -350,8 +349,8 @@ class TestUpdateCheckTask:
 
     @pytest.mark.asyncio
     async def test_up_to_date_no_notification(self):
-        from micromech.tasks.update_check import update_check_task
         import micromech.tasks.update_check as uc
+        from micromech.tasks.update_check import update_check_task
 
         uc._notified_version = None
         notification = NotificationService()
@@ -365,8 +364,8 @@ class TestUpdateCheckTask:
 
     @pytest.mark.asyncio
     async def test_new_version_sends_notification(self):
-        from micromech.tasks.update_check import update_check_task
         import micromech.tasks.update_check as uc
+        from micromech.tasks.update_check import update_check_task
 
         uc._notified_version = None
         notification = NotificationService()
@@ -381,8 +380,8 @@ class TestUpdateCheckTask:
 
     @pytest.mark.asyncio
     async def test_already_notified_skips(self):
-        from micromech.tasks.update_check import update_check_task
         import micromech.tasks.update_check as uc
+        from micromech.tasks.update_check import update_check_task
 
         uc._notified_version = "0.0.17"  # already notified
         notification = NotificationService()
@@ -397,8 +396,8 @@ class TestUpdateCheckTask:
 
     @pytest.mark.asyncio
     async def test_auto_update_schedules_and_triggers(self, tmp_path):
-        from micromech.tasks.update_check import update_check_task
         import micromech.tasks.update_check as uc
+        from micromech.tasks.update_check import update_check_task
 
         uc._notified_version = None
         uc._pending_version = None
@@ -424,8 +423,8 @@ class TestUpdateCheckTask:
 class TestAutoUpdatePollTask:
     @pytest.mark.asyncio
     async def test_does_nothing_when_no_pending(self):
-        from micromech.tasks.update_check import auto_update_poll_task
         import micromech.tasks.update_check as uc
+        from micromech.tasks.update_check import auto_update_poll_task
 
         uc._pending_version = None
         uc._auto_update_started_at = None
@@ -437,8 +436,8 @@ class TestAutoUpdatePollTask:
 
     @pytest.mark.asyncio
     async def test_triggers_update_normally(self, tmp_path):
-        from micromech.tasks.update_check import auto_update_poll_task
         import micromech.tasks.update_check as uc
+        from micromech.tasks.update_check import auto_update_poll_task
 
         uc._pending_version = "0.0.17"
         uc._auto_update_started_at = time.time()
@@ -459,8 +458,8 @@ class TestAutoUpdatePollTask:
 
     @pytest.mark.asyncio
     async def test_forces_update_after_max_wait(self, tmp_path):
-        from micromech.tasks.update_check import auto_update_poll_task, AUTO_UPDATE_MAX_WAIT_HOURS
         import micromech.tasks.update_check as uc
+        from micromech.tasks.update_check import AUTO_UPDATE_MAX_WAIT_HOURS, auto_update_poll_task
 
         uc._pending_version = "0.0.17"
         # Set start time far in the past — beyond max wait
@@ -674,6 +673,7 @@ class TestPredictionRequestHelpers:
 
     def test_extract_json_plain(self):
         import json
+
         from micromech.tools.prediction_request.prediction_request import _extract_json
 
         text = '{"p_yes": 0.7, "p_no": 0.3, "confidence": 0.8, "info_utility": 0.5}'
@@ -683,6 +683,7 @@ class TestPredictionRequestHelpers:
 
     def test_extract_json_wrapped_in_markdown(self):
         import json
+
         from micromech.tools.prediction_request.prediction_request import _extract_json
 
         inner = '{"p_yes": 0.6, "p_no": 0.4, "confidence": 0.9, "info_utility": 0.7}'
@@ -700,6 +701,7 @@ class TestPredictionRequestHelpers:
 
     def test_validate_prediction_valid(self):
         import json
+
         from micromech.tools.prediction_request.prediction_request import _validate_prediction
 
         raw = '{"p_yes": 0.7, "p_no": 0.3, "confidence": 0.8, "info_utility": 0.5}'
@@ -709,6 +711,7 @@ class TestPredictionRequestHelpers:
 
     def test_validate_prediction_normalizes_probabilities(self):
         import json
+
         from micromech.tools.prediction_request.prediction_request import _validate_prediction
 
         # p_yes + p_no = 2.0 → normalize to 0.5 each
@@ -720,6 +723,7 @@ class TestPredictionRequestHelpers:
 
     def test_validate_prediction_adds_missing_keys(self):
         import json
+
         from micromech.tools.prediction_request.prediction_request import _validate_prediction
 
         raw = '{"p_yes": 0.6}'
@@ -730,10 +734,9 @@ class TestPredictionRequestHelpers:
         assert "info_utility" in data
 
     def test_validate_prediction_returns_default_on_invalid_json(self):
-        import json
         from micromech.tools.prediction_request.prediction_request import (
-            _validate_prediction,
             DEFAULT_PREDICTION,
+            _validate_prediction,
         )
 
         result = _validate_prediction("not json at all")
@@ -741,8 +744,8 @@ class TestPredictionRequestHelpers:
 
     def test_validate_prediction_returns_default_on_type_error(self):
         from micromech.tools.prediction_request.prediction_request import (
-            _validate_prediction,
             DEFAULT_PREDICTION,
+            _validate_prediction,
         )
 
         # Passing None causes json.loads to raise TypeError

@@ -19,6 +19,7 @@ SAFETY RULES applied here:
 """
 
 import asyncio as _real_asyncio  # save real reference before any patching
+
 _real_sleep = _real_asyncio.sleep  # save the function itself — patch replaces module attr, not this ref
 from unittest.mock import MagicMock, patch
 

@@ -62,6 +62,7 @@ class TestModuleUtils:
 
     def test_push_log_line_delivers_to_queues(self):
         import queue as stdlib_queue
+
         from micromech.web import app as web_mod
 
         q = stdlib_queue.Queue()
@@ -74,6 +75,7 @@ class TestModuleUtils:
 
     def test_push_log_line_tolerates_full_queue(self):
         import queue as stdlib_queue
+
         from micromech.web import app as web_mod
 
         q = stdlib_queue.Queue(maxsize=1)
@@ -87,6 +89,7 @@ class TestModuleUtils:
 
     def test_stdlib_log_handler_emit(self):
         import logging
+
         from micromech.web.app import _StdlibLogHandler
 
         handler = _StdlibLogHandler()
@@ -375,7 +378,6 @@ class TestResultByIdEndpoint:
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_found_record_no_result(self, _mock):
-        from micromech.web.app import _record_to_dict
         queue = MagicMock()
         record = MagicMock()
         record.request.request_id = "ab" * 32
