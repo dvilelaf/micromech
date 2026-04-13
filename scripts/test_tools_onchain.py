@@ -93,9 +93,15 @@ def push_to_ipfs(prompt: str, tool: str) -> bytes:
     return cid_hex_to_multihash_bytes(cid_hex)
 
 
-def send_request(tool: str, prompt: str) -> tuple[str | None, int]:
+def push_to_ipfs_worker(tool: str, prompt: str, results: dict, lock: threading.Lock) -> None:
+    """Push IPFS data in parallel and store result bytes."""
+    data = push_to_ipfs(prompt, tool)
+    with lock:
+        results[tool] = data
+
+
+def send_request(tool: str, prompt: str, request_data: bytes, nonce: int) -> tuple[str | None, int]:
     """Returns (request_id_hex, tx_block) or (None, 0) on failure."""
-    request_data = push_to_ipfs(prompt, tool)
     fn_call = mp.functions.request(
         request_data,
         cc.delivery_rate,
@@ -109,7 +115,7 @@ def send_request(tool: str, prompt: str) -> tuple[str | None, int]:
         "value": value,
         "gas": 500_000,
         "gasPrice": w3.eth.gas_price,
-        "nonce": w3.eth.get_transaction_count(master),
+        "nonce": nonce,
         "chainId": w3.eth.chain_id,
     })
     success, receipt_or_err = w.sign_and_send_transaction(tx_dict, master, "gnosis")
@@ -130,50 +136,52 @@ def send_request(tool: str, prompt: str) -> tuple[str | None, int]:
 
 
 def _health_check() -> str:
-    """Check mech HTTP health endpoint. Returns status string."""
+    """Check mech web UI is responsive (GET / → 302 redirect means alive)."""
     try:
         import requests as req_lib
-        resp = req_lib.get("http://localhost:8090/api/health", timeout=5)
-        if resp.status_code == 200:
-            return f"OK ({resp.json().get('state', '?')})"
+        resp = req_lib.get("http://localhost:8090/", timeout=5, allow_redirects=False)
+        if resp.status_code in (200, 302, 301):
+            return f"OK (HTTP {resp.status_code})"
         return f"HTTP {resp.status_code}"
     except Exception as e:
         return f"UNREACHABLE ({e})"
 
 
-def _send_worker(tool: str, prompt: str, result_list: list, lock: threading.Lock) -> None:
-    """Thread worker: sends one request and appends result to result_list."""
-    t0 = time.time()
-    req_id, block = send_request(tool, prompt)
-    elapsed = time.time() - t0
-    with lock:
-        if req_id:
-            print(f"  [SENT {elapsed:.1f}s] {tool}: 0x{req_id[:16]}...  block {block}")
-            result_list.append({
-                "tool": tool, "prompt": prompt,
-                "id": req_id, "block": block,
-                "done": False, "t_send": elapsed,
-            })
-        else:
-            print(f"  [FAIL  {elapsed:.1f}s] {tool}: send failed")
-
-
 # Check mech health before sending
 print(f"\n[HEALTH] mech before test: {_health_check()}")
 
-# Send all requests in parallel
-print(f"\n[SEND] Firing {len(TOOLS)} requests simultaneously...")
-sent: list[dict] = []
-lock = threading.Lock()
-threads = [
-    threading.Thread(target=_send_worker, args=(tool, prompt, sent, lock))
+# Phase 1: push all IPFS data in parallel (the slow part)
+print(f"\n[IPFS] Pushing {len(TOOLS)} requests to IPFS in parallel...")
+ipfs_results: dict[str, bytes] = {}
+ipfs_lock = threading.Lock()
+ipfs_threads = [
+    threading.Thread(target=push_to_ipfs_worker, args=(tool, prompt, ipfs_results, ipfs_lock))
     for tool, prompt in TOOLS.items()
 ]
-t_burst_start = time.time()
-for t in threads:
+for t in ipfs_threads:
     t.start()
-for t in threads:
+for t in ipfs_threads:
     t.join()
+print(f"  → {len(ipfs_results)}/{len(TOOLS)} pushed")
+
+# Phase 2: send transactions sequentially (nonces must be in order on-chain).
+# The mech receives all requests within seconds and processes them concurrently.
+print(f"\n[SEND] Sending {len(TOOLS)} transactions back-to-back...")
+sent: list[dict] = []
+t_burst_start = time.time()
+for tool, prompt in TOOLS.items():
+    if tool not in ipfs_results:
+        print(f"  [SKIP] {tool}: IPFS push failed")
+        continue
+    nonce = w3.eth.get_transaction_count(master)
+    t0 = time.time()
+    req_id, block = send_request(tool, prompt, ipfs_results[tool], nonce)
+    elapsed = time.time() - t0
+    if req_id:
+        print(f"  [SENT {elapsed:.1f}s] {tool}: 0x{req_id[:16]}...  block {block}  nonce {nonce}")
+        sent.append({"tool": tool, "prompt": prompt, "id": req_id, "block": block, "done": False})
+    else:
+        print(f"  [FAIL  {elapsed:.1f}s] {tool}: send failed")
 t_burst = time.time() - t_burst_start
 print(f"  → All {len(sent)} requests submitted in {t_burst:.1f}s")
 
