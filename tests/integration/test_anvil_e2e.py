@@ -1007,6 +1007,7 @@ class TestMechLifecycleE2E:
                 # the production owner address (which is not in the test wallet).
                 from iwa.core.models import Config as _IwaConfig
                 from iwa.plugins.olas.models import OlasConfig as _OlasConfig
+
                 import micromech.core.bridge as _bridge_mod
 
                 _iwa_cfg = _IwaConfig()
@@ -1034,7 +1035,6 @@ class TestMechLifecycleE2E:
                 # ==============================================================
                 print("\n--- Step 7: verify staking ---")
 
-                service_key = result["service_key"]
                 assert result.get("staked"), f"full_deploy did not stake: {result}"
 
                 supply_state = supply_staking.functions.getStakingState(supply_svc_id).call()
