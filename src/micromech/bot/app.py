@@ -1,20 +1,24 @@
 """Telegram Bot Application."""
 
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 from telegram.request import HTTPXRequest
 
 from micromech.bot.commands.checkpoint import checkpoint_command, handle_checkpoint_callback
 from micromech.bot.commands.claim import claim_command, handle_claim_callback
+from micromech.bot.commands.contracts import contracts_command
 from micromech.bot.commands.info import info_command
+from micromech.bot.commands.last_rewards import last_rewards_command
 from micromech.bot.commands.logs import logs_command
 from micromech.bot.commands.manage import (
     handle_manage_callback,
@@ -23,8 +27,11 @@ from micromech.bot.commands.manage import (
 )
 from micromech.bot.commands.queue_cmd import queue_command
 from micromech.bot.commands.restart import restart_command
+from micromech.bot.commands.schedule import schedule_command
+from micromech.bot.commands.sell import sell_command
 from micromech.bot.commands.settings import (
     handle_settings_callback,
+    handle_settings_text,
     settings_command,
 )
 from micromech.bot.commands.status import status_command
@@ -48,6 +55,26 @@ ACTION_MANAGE = "manage"
 ACTION_MANAGE_CONFIRM = "mgcfm"
 ACTION_SETTINGS = "settings"
 
+# Bot command menu (shown in the blue button)
+_BOT_COMMANDS = [
+    BotCommand("status", "Mech status per chain"),
+    BotCommand("wallet", "Wallet addresses and balances"),
+    BotCommand("claim", "Claim staking rewards"),
+    BotCommand("checkpoint", "Call staking checkpoint"),
+    BotCommand("manage", "Stake/unstake per chain"),
+    BotCommand("contracts", "Staking contract info"),
+    BotCommand("schedule", "Next epoch checkpoint"),
+    BotCommand("last_rewards", "Accrued rewards this epoch"),
+    BotCommand("sell", "Run auto-sell manually"),
+    BotCommand("queue", "Request queue status"),
+    BotCommand("info", "Version and runtime info"),
+    BotCommand("logs", "Download last 24h logs"),
+    BotCommand("settings", "Toggle features and edit values"),
+    BotCommand("update", "Check for updates"),
+    BotCommand("restart", "Restart runtime"),
+    BotCommand("help", "Show all commands"),
+]
+
 
 @authorized_only
 @rate_limited
@@ -67,15 +94,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Send help message."""
     help_text = (
         f"{bold('Micromech Commands')}\n\n"
-        "/status - View mech status per chain\n"
-        "/wallet - View wallet addresses and balances\n"
+        "/status - Mech status per chain\n"
+        "/wallet - Wallet addresses and balances\n"
         "/claim - Claim staking rewards\n"
         "/checkpoint - Call staking checkpoint\n"
         "/manage - Stake/unstake per chain\n"
-        "/queue - View request queue status\n"
+        "/contracts - Staking contract info\n"
+        "/schedule - Next epoch checkpoint\n"
+        "/last_rewards - Accrued rewards this epoch\n"
+        "/sell - Run auto-sell manually\n"
+        "/queue - Request queue status\n"
         "/info - Version and runtime info\n"
         "/logs - Download last 24h logs\n"
-        "/settings - Toggle features\n"
+        "/settings - Toggle features and edit values\n"
         "/update - Check for updates\n"
         "/restart - Restart runtime"
     )
@@ -133,11 +164,21 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.opt(exception=context.error).error("Exception while handling an update")
 
 
+async def _post_init(application: Application) -> None:
+    """Post-init hook — register bot command menu."""
+    try:
+        await application.bot.set_my_commands(_BOT_COMMANDS)
+        logger.info("Bot command menu registered ({} commands)", len(_BOT_COMMANDS))
+    except Exception as e:
+        logger.warning("Failed to register bot commands: {}", e)
+
+
 def create_application(
     config: MicromechConfig,
     runtime_manager: Optional[RuntimeManager] = None,
     queue: Optional[PersistentQueue] = None,
     metrics: Optional[MetricsCollector] = None,
+    bridges: Optional[dict[str, Any]] = None,
 ) -> Application:
     """Create and configure the Telegram application."""
     if not secrets.telegram_token:
@@ -145,7 +186,10 @@ def create_application(
 
     request = HTTPXRequest(connect_timeout=10.0, read_timeout=10.0)
     builder = (
-        Application.builder().token(secrets.telegram_token.get_secret_value()).request(request)
+        Application.builder()
+        .token(secrets.telegram_token.get_secret_value())
+        .request(request)
+        .post_init(_post_init)
     )
     app = builder.build()
 
@@ -154,6 +198,7 @@ def create_application(
     app.bot_data["runtime_manager"] = runtime_manager
     app.bot_data["queue"] = queue
     app.bot_data["metrics"] = metrics
+    app.bot_data["bridges"] = bridges or {}
 
     # Pre-create MechLifecycle instances for all enabled chains
     lifecycles: dict[str, MechLifecycle] = {}
@@ -172,12 +217,22 @@ def create_application(
     app.add_handler(CommandHandler("claim", claim_command))
     app.add_handler(CommandHandler("checkpoint", checkpoint_command))
     app.add_handler(CommandHandler("manage", manage_command))
+    app.add_handler(CommandHandler("contracts", contracts_command))
+    app.add_handler(CommandHandler("schedule", schedule_command))
+    app.add_handler(CommandHandler("last_rewards", last_rewards_command))
+    app.add_handler(CommandHandler("sell", sell_command))
     app.add_handler(CommandHandler("queue", queue_command))
     app.add_handler(CommandHandler("info", info_command))
     app.add_handler(CommandHandler("logs", logs_command))
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("update", update_command))
     app.add_handler(CommandHandler("restart", restart_command))
+
+    # Text input for settings value editing
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_settings_text),
+        group=1,
+    )
 
     # Callbacks
     app.add_handler(CallbackQueryHandler(global_callback_handler))

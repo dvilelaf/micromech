@@ -266,6 +266,7 @@ def _mock_builder():
     builder = MagicMock()
     builder.token.return_value = builder
     builder.request.return_value = builder
+    builder.post_init.return_value = builder
     builder.build.return_value = mock_app
     return builder, mock_app
 

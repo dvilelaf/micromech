@@ -36,6 +36,31 @@ def format_address(addr: Optional[str]) -> str:
     return f"{addr[:6]}...{addr[-4:]}"
 
 
+def split_message_blocks(blocks: list[str], max_length: int = 4096) -> list[str]:
+    """Split a list of text blocks into messages that fit within Telegram's limit.
+
+    Each block is kept whole — not split mid-block.
+    Returns a list of message strings ready to send.
+    """
+    messages: list[str] = []
+    current_parts: list[str] = []
+    current_len = 0
+
+    for block in blocks:
+        needed = len(block) + (2 if current_parts else 0)  # 2 for "\n\n" separator
+        if current_parts and current_len + needed > max_length:
+            messages.append("\n\n".join(current_parts))
+            current_parts = []
+            current_len = 0
+        current_parts.append(block)
+        current_len += needed
+
+    if current_parts:
+        messages.append("\n\n".join(current_parts))
+
+    return messages
+
+
 def format_chain_status(chain: str, status: dict) -> str:
     """Format a per-chain status block."""
     lines = [bold(chain.upper())]

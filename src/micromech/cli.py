@@ -313,6 +313,7 @@ def run(
                     runtime_manager=None,
                     queue=server.queue,
                     metrics=server.metrics,
+                    bridges=bridges,
                 )
                 await bot_app.initialize()
                 await bot_app.start()
@@ -324,9 +325,7 @@ def run(
                 )
                 logger.info("Telegram bot started")
         except ImportError:
-            logger.debug(
-                "Telegram bot not available (python-telegram-bot not installed)"
-            )
+            logger.debug("Telegram bot not available (python-telegram-bot not installed)")
         except Exception as e:
             logger.warning("Telegram bot failed to start: {}", e)
 
@@ -501,9 +500,7 @@ def web(
             from micromech.tools.registry import ToolRegistry
 
             fresh_cfg = MicromechConfig.load()
-            disabled = (
-                set(fresh_cfg.disabled_tools) if fresh_cfg.disabled_tools else None
-            )
+            disabled = set(fresh_cfg.disabled_tools) if fresh_cfg.disabled_tools else None
             new_reg = ToolRegistry()
             new_reg.load_builtins(disabled=disabled)
             new_reg.load_custom(CUSTOM_TOOLS_DIR, disabled=disabled)
@@ -642,7 +639,9 @@ def metadata_publish(
 @app.command(name="create-service")
 def create_service(
     agent_id: int = typer.Option(40, help="Agent ID for the service"),
-    bond: int = typer.Option(5000, help="Bond amount in OLAS (= minStakingDeposit for Supply Alpha)"),
+    bond: int = typer.Option(
+        5000, help="Bond amount in OLAS (= minStakingDeposit for Supply Alpha)"
+    ),
     chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
 ) -> None:
