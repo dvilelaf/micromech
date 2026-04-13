@@ -1024,6 +1024,9 @@ def create_web_app(
 
                     if runtime_manager:
                         payload["runtime_state"] = runtime_manager.state
+                    else:
+                        # Standalone mode (micromech run): derive state from get_status
+                        payload["runtime_state"] = get_status().get("status", "running")
 
                     # Use passed metrics, or get from runtime manager
                     _mc = metrics or (runtime_manager.metrics if runtime_manager else None)
