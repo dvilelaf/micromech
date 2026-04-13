@@ -182,7 +182,12 @@ class MechLifecycle:
         factory_address: Optional[str] = None,
         delivery_rate: Optional[int] = None,
     ) -> Optional[str]:
-        """Create a mech on the marketplace."""
+        """Create a mech on the marketplace.
+
+        marketplace.create() must be called FROM the service's Safe multisig
+        (not the owner EOA). Uses iwa's execute_safe_transaction so the Safe
+        transaction is signed by the agent instance private key.
+        """
         mgr = _get_service_manager(self.config, service_key)
         factory = factory_address or self.chain_config.factory_address
         rate = delivery_rate if delivery_rate is not None else self.chain_config.delivery_rate
@@ -190,9 +195,9 @@ class MechLifecycle:
             import json
 
             from eth_abi import encode
-
             from iwa.core.types import EthereumAddress
             from iwa.plugins.olas.contracts.base import OLAS_ABI_PATH
+
             from micromech.core.bridge import get_wallet
 
             wallet = get_wallet()
@@ -200,37 +205,37 @@ class MechLifecycle:
             web3 = ci.web3
 
             abi = json.loads((OLAS_ABI_PATH / "mech_marketplace.json").read_text())
-            marketplace = web3.eth.contract(
-                address=EthereumAddress(self.chain_config.marketplace_address),
-                abi=abi,
-            )
+            marketplace_addr = EthereumAddress(self.chain_config.marketplace_address)
+            marketplace = web3.eth.contract(address=marketplace_addr, abi=abi)
+
             service_id = mgr.service.service_id
-            owner = mgr.service.service_owner_eoa_address
+            # marketplace.create() must originate from the service multisig (Safe),
+            # not the owner EOA. The Safe executes the call via the agent instance key.
+            multisig = str(mgr.service.multisig_address)
 
             # Third arg is bytes: ABI-encode the delivery rate
             payload = encode(["uint256"], [rate])
 
-            # Build transaction and sign+send via iwa (uses eth_sendRawTransaction,
-            # not eth_sendTransaction which is rejected by public RPCs with -32002).
-            tx = marketplace.functions.create(
+            # Build call data for marketplace.create()
+            call_data = marketplace.functions.create(
                 service_id,
                 EthereumAddress(factory),
                 payload,
-            ).build_transaction(
-                {
-                    "from": EthereumAddress(owner),
-                    "gas": 500_000,
-                }
+            ).build_transaction({"from": EthereumAddress(multisig)})["data"]
+
+            # Execute as Safe transaction from the multisig (signed by agent instance)
+            multisig_tag = f"service_{service_id}_multisig"
+            tx_hash = wallet.safe_service.execute_safe_transaction(
+                safe_address_or_tag=multisig_tag,
+                to=str(marketplace_addr),
+                value=0,
+                chain_name=self.chain_name,
+                data=call_data,
             )
 
-            success, receipt = wallet.transaction_service.sign_and_send(
-                transaction=tx,
-                signer_address_or_tag=owner,
-                chain_name=self.chain_name,
-            )
-            if not success or not receipt:
-                logger.error("Mech creation TX failed")
-                return None
+            # Wait for receipt
+            tx_bytes = bytes.fromhex(tx_hash[2:] if tx_hash.startswith("0x") else tx_hash)
+            receipt = web3.eth.wait_for_transaction_receipt(tx_bytes)
             if receipt.get("status") != 1:
                 logger.error("Mech creation TX reverted")
                 return None
