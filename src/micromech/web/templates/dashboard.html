@@ -539,6 +539,72 @@
 
     <script>
     const API_BASE = "{{ api_base }}";
+
+    // --- Auth ---
+    const _AUTH_KEY = 'micromech_auth_token';
+    let _loginCallback = null;
+
+    function _getToken() { return sessionStorage.getItem(_AUTH_KEY) || ''; }
+
+    function showLoginModal(onSuccess) {
+        _loginCallback = onSuccess || null;
+        document.getElementById('login-modal').style.display = 'flex';
+        const inp = document.getElementById('login-password');
+        inp.value = '';
+        document.getElementById('login-error').style.display = 'none';
+        setTimeout(() => inp.focus(), 50);
+    }
+
+    function hideLoginModal() {
+        document.getElementById('login-modal').style.display = 'none';
+    }
+
+    async function submitLogin() {
+        const password = document.getElementById('login-password').value;
+        if (!password) return;
+        try {
+            const resp = await fetch(API_BASE + '/api/status', {
+                headers: { 'Authorization': 'Bearer ' + password }
+            });
+            if (resp.ok) {
+                sessionStorage.setItem(_AUTH_KEY, password);
+                hideLoginModal();
+                if (_loginCallback) { _loginCallback(); _loginCallback = null; }
+            } else {
+                document.getElementById('login-error').style.display = 'block';
+            }
+        } catch (e) {
+            document.getElementById('login-error').style.display = 'block';
+        }
+    }
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && document.getElementById('login-modal').style.display === 'flex') {
+            submitLogin();
+        }
+    });
+
+    async function authFetch(url, options) {
+        options = options || {};
+        const headers = Object.assign({}, options.headers || {});
+        const token = _getToken();
+        if (token) headers['Authorization'] = 'Bearer ' + token;
+        const resp = await fetch(url, Object.assign({}, options, { headers }));
+        if (resp.status === 401) {
+            showLoginModal(() => authFetch(url, options));
+            throw new Error('auth-required');
+        }
+        return resp;
+    }
+
+    function createAuthEventSource(path) {
+        const token = _getToken();
+        const url = token
+            ? API_BASE + path + (path.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token)
+            : API_BASE + path;
+        return new EventSource(url);
+    }
+
     /**
      * Show a transient notification in the bottom-right corner.
      *
@@ -631,7 +697,7 @@
     // --- SSE Stream ---
     function connectSSE() {
         if (state.metricsES) return;
-        const es = new EventSource(API_BASE + '/api/metrics/stream');
+        const es = createAuthEventSource('/api/metrics/stream');
         state.metricsES = es;
         es.onopen = () => {
             state.sseConnected = true;
@@ -676,7 +742,7 @@
 
     // --- Activity Table ---
     function loadActivityRequests() {
-        fetch(API_BASE + '/api/requests?limit=100' + chainQueryAmp('activity')).then(r => r.json()).then(rows => {
+        authFetch(API_BASE + '/api/requests?limit=100' + chainQueryAmp('activity')).then(r => r.json()).then(rows => {
             state.historyData = rows;
             filterHistory();
         });
@@ -838,7 +904,7 @@
             },
         });
         // Load data
-        fetch(API_BASE + '/api/metrics/channels').then(r => r.json()).then(d => {
+        authFetch(API_BASE + '/api/metrics/channels').then(r => r.json()).then(d => {
             state.channelChart.data.datasets[0].data = [d.onchain || 0, d.offchain || 0];
             state.channelChart.update('none');
         });
@@ -848,7 +914,7 @@
     // --- Historical Charts ---
     function loadCharts() {
         // Daily
-        fetch(API_BASE + '/api/metrics/daily?days=30').then(r => r.json()).then(data => {
+        authFetch(API_BASE + '/api/metrics/daily?days=30').then(r => r.json()).then(data => {
             if (state.dailyChart) state.dailyChart.destroy();
             const ctx = document.getElementById('dailyChart').getContext('2d');
             state.dailyChart = new Chart(ctx, {
@@ -883,7 +949,7 @@
         });
 
         // Monthly
-        fetch(API_BASE + '/api/metrics/monthly?months=12').then(r => r.json()).then(data => {
+        authFetch(API_BASE + '/api/metrics/monthly?months=12').then(r => r.json()).then(data => {
             if (state.monthlyChart) state.monthlyChart.destroy();
             const ctx = document.getElementById('monthlyChart').getContext('2d');
             state.monthlyChart = new Chart(ctx, {
@@ -910,7 +976,7 @@
         });
 
         // Tool breakdown
-        fetch(API_BASE + '/api/metrics/tools').then(r => r.json()).then(tools => {
+        authFetch(API_BASE + '/api/metrics/tools').then(r => r.json()).then(tools => {
             if (state.toolChart) state.toolChart.destroy();
             const ctx = document.getElementById('toolChart').getContext('2d');
             state.toolChart = new Chart(ctx, {
@@ -963,8 +1029,8 @@
         // Load all data in parallel
         const [stateRes, stakingRes, karmaRes] = await Promise.all([
             fetch(API_BASE + '/api/setup/state').then(r => r.json()).catch(() => ({})),
-            fetch(API_BASE + '/api/staking/status').then(r => r.json()).catch(() => ({})),
-            fetch(API_BASE + '/api/karma').then(r => r.json()).catch(() => ({})),
+            authFetch(API_BASE + '/api/staking/status').then(r => r.json()).catch(() => ({})),
+            authFetch(API_BASE + '/api/karma').then(r => r.json()).catch(() => ({})),
         ]);
 
         mgmtChainData = stateRes.chains || {};
@@ -1118,7 +1184,7 @@
         if (card) card.querySelectorAll('.btn').forEach(b => b.disabled = true);
 
         try {
-            const resp = await fetch(API_BASE + '/api/management/' + action, {
+            const resp = await authFetch(API_BASE + '/api/management/' + action, {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json', 'X-Micromech-Action': action},
                 body: JSON.stringify({service_key: serviceKey, chain: chain}),
@@ -1348,7 +1414,7 @@
     }
 
     async function loadChains() {
-        const chains = await fetch(API_BASE + '/api/chains').then(r => r.json());
+        const chains = await authFetch(API_BASE + '/api/chains').then(r => r.json());
         state.chains = chains;
         // Populate all inline chain filter dropdowns
         ['filter-activity'].forEach(id => {
@@ -1406,7 +1472,7 @@
         // Disable all runtime buttons during action
         document.querySelectorAll('.rt-btn').forEach(b => b.disabled = true);
         try {
-            const resp = await fetch(API_BASE + '/api/runtime/' + action, {
+            const resp = await authFetch(API_BASE + '/api/runtime/' + action, {
                 method: 'POST',
                 headers: {'X-Micromech-Action': action},
             });
@@ -1444,7 +1510,7 @@
 
     function connectLogStream() {
         if (logES) return;
-        logES = new EventSource(API_BASE + '/api/logs/stream');
+        logES = createAuthEventSource('/api/logs/stream');
         logES.onmessage = (e) => {
             try {
                 const data = JSON.parse(e.data);
@@ -1538,7 +1604,7 @@
     async function loadToolsTab() {
         // 1) On-chain metadata status (badge + Update metadata button)
         try {
-            const res = await fetch(API_BASE + '/api/metadata');
+            const res = await authFetch(API_BASE + '/api/metadata');
             const data = await res.json();
             if (data.error) {
                 document.getElementById('metadata-status-badge').textContent = 'Error';
@@ -1712,7 +1778,7 @@
             // 2) Hot-reload the registry
             phase = 'reload';
             btn.textContent = 'Reloading…';
-            const reloadRes = await fetch(API_BASE + '/api/tools/reload', {
+            const reloadRes = await authFetch(API_BASE + '/api/tools/reload', {
                 method: 'POST',
                 headers: {'X-Micromech-Action': 'tools-reload'},
             });
@@ -1780,7 +1846,7 @@
         btn.textContent = 'Scanning…';
         updateToolsDirtyUI();
         try {
-            const res = await fetch(API_BASE + '/api/tools/reload', {
+            const res = await authFetch(API_BASE + '/api/tools/reload', {
                 method: 'POST',
                 headers: {'X-Micromech-Action': 'tools-reload'},
             });
@@ -1822,7 +1888,7 @@
      */
     async function publishMetadataStream(onStep) {
         try {
-            const res = await fetch(API_BASE + '/api/metadata/publish', {
+            const res = await authFetch(API_BASE + '/api/metadata/publish', {
                 method: 'POST',
                 headers: {'X-Micromech-Action': 'metadata'},
             });
@@ -1888,7 +1954,7 @@
 
     // --- History (paginated, client-side) ---
     function loadHistory() {
-        fetch(API_BASE + '/api/requests?limit=100').then(r => r.json()).then(rows => {
+        authFetch(API_BASE + '/api/requests?limit=100').then(r => r.json()).then(rows => {
             state.historyData = rows;
             state.historyPage = 0;
             filterHistory();
@@ -1941,7 +2007,7 @@
 
     // --- Overview Tool Stats table ---
     function loadOverviewToolStats() {
-        fetch(API_BASE + '/api/metrics/tools').then(r => r.json()).then(tools => {
+        authFetch(API_BASE + '/api/metrics/tools').then(r => r.json()).then(tools => {
             const tbody = document.getElementById('overview-tool-stats');
             if (!tools.length) {
                 tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No data yet</td></tr>';
@@ -1979,5 +2045,21 @@
     setInterval(loadActivityRequests, 15000);
     setInterval(loadKarma, 60000);
     </script>
+
+    <!-- Auth modal -->
+    <div id="login-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:10000; align-items:center; justify-content:center; backdrop-filter:blur(6px);">
+        <div style="background:var(--card-bg); border:1px solid var(--glass-border); border-radius:1rem; padding:2.5rem 2rem; width:100%; max-width:380px; text-align:center; backdrop-filter:blur(20px);">
+            <div style="font-size:2rem; margin-bottom:0.75rem;">🔐</div>
+            <h2 style="font-size:1.25rem; font-weight:600; margin-bottom:0.5rem;">Authentication Required</h2>
+            <p style="color:var(--text-muted); font-size:0.875rem; margin-bottom:1.5rem;">Enter your web UI password to continue.</p>
+            <input id="login-password" type="password" placeholder="Password"
+                style="width:100%; padding:0.75rem 1rem; background:rgba(255,255,255,0.07); border:1px solid var(--glass-border); border-radius:0.5rem; color:var(--text-color); font-family:var(--font-main); font-size:1rem; margin-bottom:0.75rem; outline:none;">
+            <div id="login-error" style="display:none; color:var(--error); font-size:0.85rem; margin-bottom:0.75rem;">Incorrect password. Try again.</div>
+            <button onclick="submitLogin()"
+                style="width:100%; padding:0.75rem; background:var(--primary-color); border:none; border-radius:0.5rem; color:#fff; font-family:var(--font-main); font-size:1rem; font-weight:600; cursor:pointer;">
+                Unlock
+            </button>
+        </div>
+    </div>
 </body>
 </html>

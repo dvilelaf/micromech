@@ -1,7 +1,6 @@
 """Web UI application — dashboard, metrics API, and SSE stream."""
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -245,29 +244,47 @@ def create_web_app(
 
     app.add_middleware(CORSMiddleware, allow_origins=[])
 
-    # HTTP Basic Auth middleware (only when WEBUI_PASSWORD secret is set)
-    from micromech.secrets import secrets as _secrets
+    # Bearer auth middleware — protects /api/* except setup + health.
+    # When WEBUI_PASSWORD is not set (first install / setup wizard), all
+    # requests pass through so the wizard is reachable without a password.
+    # SSE endpoints (EventSource) pass the token as ?token= query param
+    # because the browser EventSource API cannot send custom headers.
+    def _get_webui_password() -> str:
+        from micromech.secrets import secrets as _s
 
-    _webui_password = _secrets.webui_password.get_secret_value() if _secrets.webui_password else ""
-    if _webui_password:
-        _password_bytes = _webui_password.encode()
+        return _s.webui_password.get_secret_value() if _s.webui_password else ""
 
-        @app.middleware("http")
-        async def basic_auth(request: Request, call_next):
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Basic "):
-                try:
-                    decoded = base64.b64decode(auth_header[6:]).decode("utf-8", errors="replace")
-                    _, _, provided = decoded.partition(":")
-                    if secrets.compare_digest(provided.encode(), _password_bytes):
-                        return await call_next(request)
-                except Exception:
-                    pass
-            return Response(
-                content="Unauthorized",
-                status_code=401,
-                headers={"WWW-Authenticate": 'Basic realm="micromech dashboard"'},
-            )
+    @app.middleware("http")
+    async def bearer_auth(request: Request, call_next):
+        path = request.scope.get("path", "")
+        needs_auth = path.startswith("/api/") and not path.startswith(
+            "/api/setup/"
+        ) and path != "/api/health"
+        if not needs_auth:
+            return await call_next(request)
+
+        password = _get_webui_password()
+        if not password:
+            return await call_next(request)
+
+        # Authorization: Bearer <token>
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            if token and secrets.compare_digest(token, password):
+                return await call_next(request)
+
+        # ?token= query param (EventSource / SSE)
+        token_param = request.query_params.get("token", "")
+        if token_param and secrets.compare_digest(token_param, password):
+            return await call_next(request)
+
+        return Response(
+            content='{"detail":"Unauthorized"}',
+            status_code=401,
+            media_type="application/json",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     # Security headers middleware
     @app.middleware("http")
@@ -465,11 +482,22 @@ def create_web_app(
             # it from secrets.env for security reasons.
             if result.get("created"):
                 try:
+                    from pydantic import SecretStr
+
                     from micromech.core.secrets_file import write_secret
+                    from micromech.secrets import secrets as _secrets
 
                     write_secret("wallet_password", password)
+                    # Same password protects the web UI from this point on.
+                    # User may change WEBUI_PASSWORD in secrets.env at any time.
+                    write_secret("webui_password", password)
+                    # Update in-memory singleton so auth kicks in immediately
+                    # without requiring a restart.
+                    _secrets.webui_password = SecretStr(password)
                 except Exception:
-                    logger.warning("Could not write wallet_password to secrets.env (non-fatal)")
+                    logger.warning(
+                        "Could not write wallet_password/webui_password to secrets.env (non-fatal)"
+                    )
             return JSONResponse(
                 result,
                 headers={"Cache-Control": "no-store"},
