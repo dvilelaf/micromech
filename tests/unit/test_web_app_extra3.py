@@ -1122,22 +1122,12 @@ class TestBearerAuthValidToken:
             _real_secrets.webui_password = original
 
     @patch("micromech.web.app._needs_setup", return_value=False)
-    def test_html_route_redirects_when_no_auth(self, _mock):
-        """HTML routes (non /api/) redirect to /setup when not authed."""
-        from pydantic import SecretStr
-
-        from micromech.secrets import secrets as _real_secrets
-
-        original = _real_secrets.webui_password
-        _real_secrets.webui_password = SecretStr("somepass")
-        try:
-            c = _client()
-            resp = c.get("/", follow_redirects=False)
-            # Should redirect to /setup
-            assert resp.status_code in (302, 307)
-            assert "/setup" in resp.headers.get("location", "")
-        finally:
-            _real_secrets.webui_password = original
+    def test_html_route_loads_when_no_auth(self, _mock):
+        """HTML routes (non /api/) are served directly — auth is handled client-side."""
+        c = _client()
+        resp = c.get("/", follow_redirects=False)
+        # Auth middleware only covers /api/* — HTML routes always return 200
+        assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
