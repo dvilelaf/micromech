@@ -262,8 +262,12 @@ def create_web_app(
         if not path.startswith("/api/"):
             return await call_next(request)
 
-        # Setup and health endpoints are always public
-        if path.startswith("/api/setup/") or path == "/api/health":
+        # Health is always public (monitoring probes)
+        if path == "/api/health":
+            return await call_next(request)
+
+        # Setup endpoints only public during initial setup (no config yet)
+        if path.startswith("/api/setup/") and _needs_setup():
             return await call_next(request)
 
         password = _get_webui_password()
@@ -1059,6 +1063,10 @@ def create_web_app(
                         # Populate live from status if no metrics collector
                         if not metrics and "metrics" in status:
                             payload["live"] = status["metrics"]
+                        # DB-backed period stats for overview cards
+                        if queue:
+                            payload["stats_24h"] = queue.period_stats(hours=24)
+                            payload["stats_7d"] = queue.period_stats(hours=168)
 
                     yield f"data: {json.dumps(payload)}\n\n"
             finally:

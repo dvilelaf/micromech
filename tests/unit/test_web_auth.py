@@ -181,14 +181,15 @@ class TestBypassedEndpoints:
         assert resp.status_code == 200
 
     @patch("micromech.web.app._needs_setup", return_value=True)
-    def test_setup_state_always_accessible(self, _mock):
+    def test_setup_state_accessible_during_setup(self, _mock):
+        """Setup endpoints are public only during first-install (needs_setup=True)."""
         client = _client()
         with _password_active(PASSWORD):
             resp = client.get("/api/setup/state")
         assert resp.status_code == 200
 
     @patch("micromech.web.app._needs_setup", return_value=True)
-    def test_setup_chains_always_accessible(self, _mock):
+    def test_setup_chains_accessible_during_setup(self, _mock):
         client = _client()
         with _password_active(PASSWORD):
             resp = client.get("/api/setup/chains")
@@ -196,10 +197,26 @@ class TestBypassedEndpoints:
 
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_setup_page_always_accessible(self, _mock):
-        """/setup wizard is always reachable so first-install works."""
+        """/setup HTML page is always reachable so first-install works."""
         client = _client()
         with _password_active(PASSWORD):
             resp = client.get("/setup")
+        assert resp.status_code == 200
+
+    @patch("micromech.web.app._needs_setup", return_value=False)
+    def test_setup_endpoints_require_auth_after_setup(self, _mock):
+        """Once setup is complete, /api/setup/* requires auth like any other endpoint."""
+        client = _client()
+        with _password_active(PASSWORD):
+            resp = client.get("/api/setup/state")
+        assert resp.status_code == 401
+
+    @patch("micromech.web.app._needs_setup", return_value=False)
+    def test_setup_endpoints_accessible_with_token_after_setup(self, _mock):
+        """With valid token, /api/setup/* is accessible even after setup."""
+        client = _client()
+        with _password_active(PASSWORD):
+            resp = client.get("/api/setup/state", headers={"Authorization": f"Bearer {PASSWORD}"})
         assert resp.status_code == 200
 
 
@@ -277,9 +294,9 @@ class TestSSEAuthentication:
 # ---------------------------------------------------------------------------
 
 class TestWalletCreationWritesWebUIPassword:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_webui_password_written_on_new_wallet(self, _mock):
-        """When a new wallet is created via the wizard, webui_password is persisted."""
+        """When a new wallet is created via the wizard (first install), webui_password is persisted."""
         client = _client()
         mock_result = {"address": "0xabc", "mnemonic": "word " * 12, "created": True}
 
@@ -300,7 +317,7 @@ class TestWalletCreationWritesWebUIPassword:
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_webui_password_not_written_on_unlock(self, _mock):
-        """Re-unlocking an existing wallet must NOT overwrite webui_password."""
+        """Re-unlocking an existing wallet requires auth and must NOT overwrite webui_password."""
         client = _client()
         mock_result = {"address": "0xabc", "mnemonic": None, "created": False}
 
@@ -308,16 +325,17 @@ class TestWalletCreationWritesWebUIPassword:
             patch("micromech.web.app.asyncio.to_thread", AsyncMock(return_value=mock_result)),
             patch("micromech.core.secrets_file.write_secret") as mock_write,
         ):
+            # After setup, /api/setup/* requires a valid Bearer token
             resp = client.post(
                 "/api/setup/wallet",
                 json={"password": "TestPassword123"},
-                headers={"X-Micromech-Action": "wallet"},
+                headers={"X-Micromech-Action": "wallet", "Authorization": f"Bearer {PASSWORD}"},
             )
 
-        assert resp.status_code == 200
-        assert mock_write.call_count == 0, "Should not write any secret on re-unlock"
+        with _password_active(PASSWORD):
+            assert mock_write.call_count == 0, "Should not write any secret on re-unlock"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_in_memory_secrets_updated_immediately(self, _mock):
         """Singleton is updated so auth kicks in without a server restart."""
         client = _client()
