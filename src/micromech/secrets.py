@@ -1,15 +1,22 @@
 """Secrets from environment variables (never stored in config.yaml)."""
 
+from pathlib import Path
 from typing import Optional
 
 from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+SECRETS_FILE = Path("secrets.env")
+
 
 class MicromechSecrets(BaseSettings):
     """Secrets loaded from environment or secrets.env file."""
 
-    model_config = SettingsConfigDict(extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=str(SECRETS_FILE) if SECRETS_FILE.exists() else None,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # Wallet
     wallet_password: Optional[SecretStr] = None
