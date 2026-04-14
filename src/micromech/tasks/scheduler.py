@@ -20,8 +20,8 @@ from micromech.tasks.health import health_task
 from micromech.tasks.low_balance_alert import low_balance_alert_task
 from micromech.tasks.metadata_check import metadata_check_task
 from micromech.tasks.notifications import NotificationService
-from micromech.tasks.profitability_check import profitability_check_task
 from micromech.tasks.payment_withdraw import payment_withdraw_task
+from micromech.tasks.profitability_check import profitability_check_task
 from micromech.tasks.rewards import rewards_task
 from micromech.tasks.update_check import (
     AUTO_UPDATE_POLL_MINUTES,
@@ -29,6 +29,7 @@ from micromech.tasks.update_check import (
     update_check_task,
 )
 from micromech.tasks.watchdog import record_task_success
+from micromech.tasks.xdai_sweep import xdai_sweep_task
 
 
 class TaskScheduler:
@@ -115,6 +116,22 @@ class TaskScheduler:
                 hours=cfg.payment_withdraw_interval_hours,
                 args=[self.bridges, self.notification_service, cfg],
                 id="payment_withdraw_task",
+                replace_existing=True,
+                misfire_grace_time=misfire_grace_time,
+                max_instances=1,
+                coalesce=True,
+                next_run_time=datetime.now(tz=timezone.utc) + timedelta(seconds=startup_delay),
+            )
+            startup_delay += 20
+
+        # xDAI Sweep Task
+        if cfg.xdai_sweep_enabled:
+            self.scheduler.add_job(
+                xdai_sweep_task,
+                "interval",
+                hours=cfg.xdai_sweep_interval_hours,
+                args=[self.bridges, self.notification_service, cfg],
+                id="xdai_sweep_task",
                 replace_existing=True,
                 misfire_grace_time=misfire_grace_time,
                 max_instances=1,
