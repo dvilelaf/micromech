@@ -89,7 +89,7 @@ def _get_balance_tracker_address(
             "[{}] Balance tracker is zero address — no tracker for this payment type", chain_name
         )
         return None
-    return bt_addr
+    return web3.to_checksum_address(bt_addr)
 
 
 def _get_pending_balance(bridge: "IwaBridge", bt_address: str, mech_address: str) -> float:
@@ -104,7 +104,12 @@ def _get_pending_balance(bridge: "IwaBridge", bt_address: str, mech_address: str
 
 
 def _withdraw(
-    bridge: "IwaBridge", chain_name: str, bt_address: str, mech_address: str, multisig_address: str
+    bridge: "IwaBridge",
+    chain_name: str,
+    bt_address: str,
+    mech_address: str,
+    multisig_address: str,
+    balance: float = 0.0,
 ) -> float:
     """Call processPaymentByMultisig(mech) from the multisig via Safe.
 
@@ -137,9 +142,8 @@ def _withdraw(
         msg = f"[{chain_name}] processPaymentByMultisig reverted: {tx_hash_str}"
         raise RuntimeError(msg)
 
-    # Decode return value from the receipt logs is complex; re-read balance delta instead
-    # (the payment went through — amount is whatever was pending before)
-    return receipt
+    # Return the pending balance that was withdrawn (reading from receipt logs is complex)
+    return balance
 
 
 async def payment_withdraw_task(
@@ -217,6 +221,7 @@ async def payment_withdraw_task(
                 bt_address,
                 chain_config.mech_address,
                 multisig,
+                balance,
             )
 
             logger.info("[{}] Payment withdraw complete: {:.6f} xDAI", chain_name, balance)
