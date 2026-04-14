@@ -435,9 +435,10 @@ class TestDeliveryBatchFailure:
     """Test that delivery failures mark request as failed."""
 
     @pytest.mark.asyncio
-    async def test_delivery_failure_marks_failed(self, queue: PersistentQueue, monkeypatch):
-        from micromech.core.constants import STATUS_FAILED
-
+    async def test_delivery_tx_failure_leaves_in_executed(
+        self, queue: PersistentQueue, monkeypatch
+    ):
+        """TX revert does NOT permanently mark records failed — they stay EXECUTED for retry."""
         monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0)
         config = MicromechConfig()
         bridge = MagicMock()
@@ -459,9 +460,9 @@ class TestDeliveryBatchFailure:
             count = await dm.deliver_batch()
         assert count == 0
 
+        # Record must stay in EXECUTED so the next deliver_batch() retries it.
         record = queue.get_by_id("r1")
-        assert record.request.status == STATUS_FAILED
-        assert "delivery" in record.request.error
+        assert record.request.status == STATUS_EXECUTED
 
 
 class TestDeliverOneIpfs:

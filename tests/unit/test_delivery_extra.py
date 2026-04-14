@@ -150,8 +150,8 @@ class TestDeliverBatchNoWallet:
         assert count2 == 0
 
     @pytest.mark.asyncio
-    async def test_delivery_exception_marks_failed(self, monkeypatch):
-        """Batch TX failure marks all records in the batch as failed."""
+    async def test_delivery_tx_failure_leaves_in_executed_for_retry(self, monkeypatch):
+        """Batch TX failure does NOT mark_failed — records stay EXECUTED for next loop."""
         monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0)
         bridge = _make_bridge()
         q = _make_queue()
@@ -172,7 +172,8 @@ class TestDeliverBatchNoWallet:
             count = await dm.deliver_batch()
 
         assert count == 0
-        q.mark_failed.assert_called_once()
+        # mark_failed is terminal — TX reverts should be retried, not permanently failed
+        q.mark_failed.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -455,12 +456,15 @@ class TestBatchAgeSeconds:
 
     def test_naive_datetime_handled(self):
         """Naive datetimes (no tzinfo) are treated as UTC."""
-        import datetime as dt
+        from datetime import timedelta
 
         from micromech.runtime.delivery import _batch_age_seconds
 
         record = _make_record()
-        record.request.created_at = dt.datetime.utcnow() - dt.timedelta(seconds=30)
+        # Simulate a naive UTC datetime (tzinfo=None) — seen in legacy data
+        record.request.created_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(
+            seconds=30
+        )
         age = _batch_age_seconds([record])
         assert age >= 29
 
@@ -606,8 +610,8 @@ class TestDeliverOnchainBatch:
         q.mark_failed.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_batch_tx_failure_marks_all_failed(self):
-        """If the batch TX fails, all prepared records are marked failed."""
+    async def test_batch_tx_failure_leaves_records_in_executed(self):
+        """If the batch TX fails, records are NOT marked failed — they stay in EXECUTED for retry."""
         bridge = _make_bridge()
         q = _make_queue()
         records = [_make_record(request_id=f"0x{i:064x}") for i in range(2)]
@@ -624,7 +628,8 @@ class TestDeliverOnchainBatch:
             count = await dm._deliver_onchain_batch(records)
 
         assert count == 0
-        assert q.mark_failed.call_count == 2
+        # mark_failed is terminal — transient TX errors must be retried
+        q.mark_failed.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

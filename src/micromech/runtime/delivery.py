@@ -127,16 +127,29 @@ class DeliveryManager:
         return self._mech_contract
 
     def _request_id_to_bytes(self, request_id: str) -> bytes:
-        """Convert a request ID string to bytes32."""
-        try:
-            hex_str = request_id[2:] if request_id.startswith("0x") else request_id
-            req_id_bytes = bytes.fromhex(hex_str)
-        except ValueError:
-            # Non-hex IDs (e.g. "http-abc123") — hash to get deterministic bytes32
-            import hashlib
+        """Convert a request ID string to bytes32.
 
-            req_id_bytes = hashlib.sha256(request_id.encode()).digest()
-        return req_id_bytes.ljust(32, b"\x00")[:32]
+        On-chain IDs come in as "0x" + 64 hex chars (bytes32) — converted directly.
+        Off-chain / non-hex IDs are sha256-hashed to get a deterministic bytes32.
+        Warns if a hex ID has unexpected length (collision/truncation risk).
+        """
+        if request_id.startswith("0x"):
+            try:
+                req_id_bytes = bytes.fromhex(request_id[2:])
+                if len(req_id_bytes) != 32:
+                    logger.warning(
+                        "request_id {} has unexpected length {} bytes (expected 32); "
+                        "truncation/padding may cause delivery mismatch",
+                        request_id[:20] + "...",
+                        len(req_id_bytes),
+                    )
+                return req_id_bytes.ljust(32, b"\x00")[:32]
+            except ValueError:
+                pass
+        # Non-hex IDs (e.g. "http-abc123") — sha256 for deterministic bytes32
+        import hashlib
+
+        return hashlib.sha256(request_id.encode()).digest()
 
     async def deliver_batch(self) -> int:
         """Deliver undelivered responses. On-chain: batched; off-chain: 1:1.
@@ -160,24 +173,34 @@ class DeliveryManager:
                 self._wallet_warning_logged = True
             return 0
 
+        # Pull 2× batch size to ensure we get a full on-chain batch even when
+        # off-chain records share the limit.  On-chain batch is then capped at
+        # DEFAULT_DELIVERY_BATCH_SIZE; off-chain processes all extras 1:1.
         records = self.queue.get_undelivered(
-            limit=DEFAULT_DELIVERY_BATCH_SIZE, chain=self._chain_name
+            limit=DEFAULT_DELIVERY_BATCH_SIZE * 2, chain=self._chain_name
         )
         if not records:
             return 0
 
-        onchain = [r for r in records if not r.request.is_offchain]
+        onchain = [r for r in records if not r.request.is_offchain][:DEFAULT_DELIVERY_BATCH_SIZE]
         offchain = [r for r in records if r.request.is_offchain]
 
         delivered = 0
 
         # --- On-chain: batch by size or time ---
         if onchain:
-            should_flush = (
-                len(onchain) >= DEFAULT_DELIVERY_BATCH_SIZE
-                or _batch_age_seconds(onchain) >= DEFAULT_DELIVERY_FLUSH_TIMEOUT
-            )
+            full_batch = len(onchain) >= DEFAULT_DELIVERY_BATCH_SIZE
+            old_enough = _batch_age_seconds(onchain) >= DEFAULT_DELIVERY_FLUSH_TIMEOUT
+            should_flush = full_batch or old_enough
             if should_flush:
+                flush_reason = "size" if full_batch else "timeout"
+                logger.debug(
+                    "Flushing on-chain batch chain={} size={} reason={} oldest_age={:.1f}s",
+                    self._chain_name,
+                    len(onchain),
+                    flush_reason,
+                    _batch_age_seconds(onchain),
+                )
                 delivered += await self._deliver_onchain_batch(onchain)
 
         # --- Off-chain: 1:1 (unchanged) ---
@@ -273,13 +296,21 @@ class DeliveryManager:
             )
             return len(good)
         except Exception as e:
-            logger.error("Batch delivery failed ({} request(s)): {}", len(good), e)
+            ids = [r.request.request_id[:16] for r, *_ in good]
+            logger.exception(
+                "Batch delivery failed chain={} size={} ids={} — leaving in EXECUTED for retry",
+                self._chain_name,
+                len(good),
+                ids,
+            )
             for record, *_ in good:
                 if self._metrics:
                     self._metrics.record_delivery_failed(
                         record.request.request_id, str(e), chain=self._chain_name
                     )
-                self.queue.mark_failed(record.request.request_id, f"delivery: {e}")
+            # Do NOT mark_failed — leave records in EXECUTED so the next loop
+            # iteration retries the batch.  mark_failed is terminal and would
+            # permanently lose revenue for a transient TX revert or RPC error.
             return 0
 
     async def _prepare_onchain(self, record: RequestRecord) -> tuple[bytes, bytes, Optional[str]]:
@@ -491,7 +522,7 @@ class DeliveryManager:
             chain_name=self._chain_name,
             data=call_data,
         )
-        logger.info("Safe {} submitted: {}", label, tx_hash)
+        logger.info("Safe {} submitted chain={}: {}", label, self._chain_name, tx_hash)
         return tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
 
     def _via_impersonation(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
@@ -528,7 +559,7 @@ class DeliveryManager:
                 if count:
                     logger.debug("Delivered {} responses", count)
             except Exception as e:
-                logger.error("Delivery loop error: {}", e)
+                logger.exception("Delivery loop error: {}", e)
             await asyncio.sleep(interval)
 
     def stop(self) -> None:
