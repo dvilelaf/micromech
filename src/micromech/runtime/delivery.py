@@ -28,6 +28,7 @@ from micromech.core.constants import (
     DEFAULT_DELIVERY_BATCH_SIZE,
     DEFAULT_DELIVERY_FLUSH_TIMEOUT,
     DEFAULT_DELIVERY_INTERVAL,
+    DEFAULT_DELIVERY_MAX_RETRIES,
     GAS_FALLBACK,
     GAS_FLOOR_DELIVERY,
     IPFS_API_URL,
@@ -89,6 +90,7 @@ class DeliveryManager:
         self._metrics = metrics
         self._wallet_warning_logged = False
         self._ipfs_warning_logged = False
+        self._delivery_failures: dict[str, int] = {}
 
     @property
     def delivered_count(self) -> int:
@@ -131,25 +133,53 @@ class DeliveryManager:
 
         On-chain IDs come in as "0x" + 64 hex chars (bytes32) — converted directly.
         Off-chain / non-hex IDs are sha256-hashed to get a deterministic bytes32.
-        Warns if a hex ID has unexpected length (collision/truncation risk).
+        Raises ValueError if a hex ID is not exactly 32 bytes (delivery mismatch risk).
         """
         if request_id.startswith("0x"):
             try:
                 req_id_bytes = bytes.fromhex(request_id[2:])
                 if len(req_id_bytes) != 32:
-                    logger.warning(
-                        "request_id {} has unexpected length {} bytes (expected 32); "
-                        "truncation/padding may cause delivery mismatch",
-                        request_id[:20] + "...",
-                        len(req_id_bytes),
+                    msg = (
+                        f"request_id {request_id[:20]}... is {len(req_id_bytes)} bytes "
+                        f"(expected 32); refusing to pad/truncate to avoid delivery mismatch"
                     )
-                return req_id_bytes.ljust(32, b"\x00")[:32]
+                    raise ValueError(msg)
+                return req_id_bytes
             except ValueError:
-                pass
+                raise
         # Non-hex IDs (e.g. "http-abc123") — sha256 for deterministic bytes32
         import hashlib
 
         return hashlib.sha256(request_id.encode()).digest()
+
+    def _increment_failure(self, request_id: str, error: str) -> None:
+        """Increment per-request failure counter; mark_failed after MAX_RETRIES.
+
+        Prevents poison-pill batches from stalling indefinitely: a single broken
+        record (bad IPFS payload, malformed ID, etc.) will permanently fail after
+        DEFAULT_DELIVERY_MAX_RETRIES consecutive attempts and stop blocking the
+        rest of the batch.  Transient errors (RPC blip, TX revert) need several
+        failures before they reach the terminal state.
+        """
+        count = self._delivery_failures.get(request_id, 0) + 1
+        self._delivery_failures[request_id] = count
+        if count >= DEFAULT_DELIVERY_MAX_RETRIES:
+            logger.error(
+                "Request {} failed {} consecutive times ({}), marking as failed",
+                request_id[:16] + "...",
+                count,
+                error,
+            )
+            self.queue.mark_failed(request_id, f"max_retries ({count}x): {error}")
+            self._delivery_failures.pop(request_id, None)
+        else:
+            logger.warning(
+                "Request {} failure {}/{}: {}",
+                request_id[:16] + "...",
+                count,
+                DEFAULT_DELIVERY_MAX_RETRIES,
+                error,
+            )
 
     async def deliver_batch(self) -> int:
         """Deliver undelivered responses. On-chain: batched; off-chain: 1:1.
@@ -265,7 +295,9 @@ class DeliveryManager:
                     self._metrics.record_delivery_failed(
                         record.request.request_id, str(result), chain=self._chain_name
                     )
-                self.queue.mark_failed(record.request.request_id, f"ipfs_prep: {result}")
+                # Use retry counter — IPFS failures may be transient; only
+                # mark_failed permanently after MAX_RETRIES consecutive failures.
+                self._increment_failure(record.request.request_id, f"ipfs_prep: {result}")
             else:
                 req_id_bytes, delivery_data, ipfs_cid_hex = result
                 good.append((record, req_id_bytes, delivery_data, ipfs_cid_hex))
@@ -284,6 +316,9 @@ class DeliveryManager:
                     tx_hash=tx_hash,
                     ipfs_hash=ipfs_cid_hex,
                 )
+                # Clear failure counter on success so transient errors don't
+                # accumulate across unrelated delivery attempts.
+                self._delivery_failures.pop(record.request.request_id, None)
                 self._delivered_count += 1
                 if self._metrics:
                     self._metrics.record_delivery(record.request.request_id, chain=self._chain_name)
@@ -298,19 +333,25 @@ class DeliveryManager:
         except Exception as e:
             ids = [r.request.request_id[:16] for r, *_ in good]
             logger.exception(
-                "Batch delivery failed chain={} size={} ids={} — leaving in EXECUTED for retry",
+                "Batch delivery failed chain={} size={} ids={} — will retry (failure {}/{})",
                 self._chain_name,
                 len(good),
                 ids,
+                max(
+                    (self._delivery_failures.get(r.request.request_id, 0) + 1 for r, *_ in good),
+                    default=1,
+                ),
+                DEFAULT_DELIVERY_MAX_RETRIES,
             )
             for record, *_ in good:
                 if self._metrics:
                     self._metrics.record_delivery_failed(
                         record.request.request_id, str(e), chain=self._chain_name
                     )
-            # Do NOT mark_failed — leave records in EXECUTED so the next loop
-            # iteration retries the batch.  mark_failed is terminal and would
-            # permanently lose revenue for a transient TX revert or RPC error.
+                # Increment per-record counter; mark_failed only after MAX_RETRIES.
+                # TX reverts may be transient (gas, nonce, RPC) — leave in EXECUTED
+                # until the retry budget is exhausted.
+                self._increment_failure(record.request.request_id, f"tx: {e}")
             return 0
 
     async def _prepare_onchain(self, record: RequestRecord) -> tuple[bytes, bytes, Optional[str]]:
@@ -346,6 +387,9 @@ class DeliveryManager:
             )
             delivery_data = cid_hex_to_multihash_bytes(cid_hex)
             ipfs_cid_hex = cid_hex
+            if self._ipfs_warning_logged:
+                logger.info("IPFS recovered — resuming CID-based delivery")
+                self._ipfs_warning_logged = False
         except Exception as e:
             if not self._ipfs_warning_logged:
                 logger.warning(
@@ -542,6 +586,13 @@ class DeliveryManager:
             gas = GAS_FALLBACK
         tx_hash = fn_call.transact({"from": from_addr, "gas": gas})
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
+
+    # TODO(H1): crash recovery for STATUS_DELIVERING
+    # If the process dies between _submit_batch_delivery and mark_delivered, the
+    # records remain in STATUS_EXECUTED (or a hypothetical STATUS_DELIVERING) and
+    # will be re-submitted on next startup, potentially double-delivering.
+    # Fix requires a STATUS_DELIVERING state + schema migration to detect in-flight
+    # batches on startup and check the chain for the TX hash before re-submitting.
 
     async def run(self) -> None:
         """Run the delivery loop."""

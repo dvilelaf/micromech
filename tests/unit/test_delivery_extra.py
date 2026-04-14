@@ -489,6 +489,13 @@ class TestRequestIdToBytes:
         expected = hashlib.sha256(b"http-abc123").digest()
         assert result == expected
 
+    def test_wrong_length_hex_id_raises(self):
+        """Hex IDs that are not exactly 32 bytes raise ValueError (not silently padded)."""
+        dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), _make_bridge())
+        # 16 bytes instead of 32 — would silently be padded before fix
+        with pytest.raises(ValueError, match="expected 32"):
+            dm._request_id_to_bytes("0x" + "ab" * 16)
+
 
 # ---------------------------------------------------------------------------
 # _prepare_onchain
@@ -569,8 +576,9 @@ class TestDeliverOnchainBatch:
         assert q.mark_delivered.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_ipfs_prep_failure_marks_record_failed(self):
-        """Records that fail IPFS prep are marked failed; the rest are batched."""
+    async def test_ipfs_prep_failure_marks_record_failed(self, monkeypatch):
+        """Records that exhaust MAX_RETRIES on IPFS prep are marked failed; rest batched."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
         bridge = _make_bridge()
         q = _make_queue()
         good_record = _make_record(request_id="0x" + "a" * 64)
@@ -590,13 +598,30 @@ class TestDeliverOnchainBatch:
             count = await dm._deliver_onchain_batch([good_record, bad_record])
 
         assert count == 1
-        # bad record marked failed, good record marked delivered
+        # bad record hits MAX_RETRIES=1 → mark_failed; good record delivered
         assert q.mark_failed.call_count == 1
         assert q.mark_delivered.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_all_records_fail_prep_returns_zero(self):
-        """If all records fail IPFS prep, returns 0."""
+    async def test_ipfs_prep_failure_no_mark_failed_before_max_retries(self):
+        """IPFS prep failure does NOT immediately mark_failed — needs MAX_RETRIES attempts."""
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        with patch.object(dm, "_prepare_onchain", side_effect=RuntimeError("ipfs down")):
+            count = await dm._deliver_onchain_batch([record])
+
+        assert count == 0
+        # First failure only — no mark_failed yet (counter < MAX_RETRIES)
+        q.mark_failed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_all_records_fail_prep_returns_zero(self, monkeypatch):
+        """If all records fail IPFS prep (and exhaust retries), returns 0."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
         bridge = _make_bridge()
         q = _make_queue()
         record = _make_record()
@@ -748,3 +773,71 @@ class TestSubmitBatchDelivery:
         mock_contract.functions.deliverToMarketplace.assert_called_once_with(
             [b"\x01" * 32, b"\x02" * 32], [b"data1", b"data2"]
         )
+
+
+# ---------------------------------------------------------------------------
+# _increment_failure — retry counter
+# ---------------------------------------------------------------------------
+
+
+class TestIncrementFailure:
+    def test_no_mark_failed_before_max_retries(self, monkeypatch):
+        """Failures below MAX_RETRIES only log a warning, never call mark_failed."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 3)
+        q = _make_queue()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, _make_bridge())
+
+        dm._increment_failure("req-1", "some error")
+        dm._increment_failure("req-1", "some error")
+        q.mark_failed.assert_not_called()
+        assert dm._delivery_failures["req-1"] == 2
+
+    def test_mark_failed_at_max_retries(self, monkeypatch):
+        """Exactly MAX_RETRIES failures triggers mark_failed and clears the counter."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 3)
+        q = _make_queue()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, _make_bridge())
+
+        dm._increment_failure("req-1", "err")
+        dm._increment_failure("req-1", "err")
+        dm._increment_failure("req-1", "err")  # 3rd = MAX_RETRIES
+
+        q.mark_failed.assert_called_once()
+        call_args = q.mark_failed.call_args[0]
+        assert call_args[0] == "req-1"
+        assert "max_retries" in call_args[1]
+        # Counter is cleared after reaching max
+        assert "req-1" not in dm._delivery_failures
+
+    def test_counter_cleared_on_success(self):
+        """Successful delivery clears the failure counter for that request."""
+        q = _make_queue()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, _make_bridge())
+        dm._delivery_failures["req-1"] = 3
+
+        # Simulate what _deliver_onchain_batch does on success
+        dm._delivery_failures.pop("req-1", None)
+
+        assert "req-1" not in dm._delivery_failures
+
+
+# ---------------------------------------------------------------------------
+# _prepare_onchain — IPFS recovery resets warning flag
+# ---------------------------------------------------------------------------
+
+
+class TestPrepareOnchainIpfsRecovery:
+    @pytest.mark.asyncio
+    async def test_ipfs_recovery_resets_warning_flag(self):
+        """After IPFS recovers, _ipfs_warning_logged is reset to False."""
+        from unittest.mock import AsyncMock
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), _make_bridge())
+        dm._ipfs_warning_logged = True  # simulate prior IPFS failure
+
+        record = _make_record()
+        mock_push = AsyncMock(return_value=("bafkrei_test", "f01551220aabb"))
+        with patch("micromech.ipfs.client.push_to_ipfs", mock_push):
+            await dm._prepare_onchain(record)
+
+        assert dm._ipfs_warning_logged is False
