@@ -7,12 +7,10 @@ Covers the lines missed in the existing test suite:
 
 import json
 import sys
-import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -644,12 +642,11 @@ class TestPredictionRun:
         mock_search.assert_not_called()
 
     def test_run_llm_failure_returns_default_prediction(self):
+        import micromech.tools.local_llm.local_llm as llm_mod
         from micromech.tools.prediction_request import prediction_request as pr
         from micromech.tools.prediction_request.prediction_request import (
             DEFAULT_PREDICTION,
         )
-
-        import micromech.tools.local_llm.local_llm as llm_mod
 
         with (
             patch.object(pr, "_search_context", return_value=""),

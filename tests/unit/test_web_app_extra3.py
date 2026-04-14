@@ -216,8 +216,6 @@ class TestSetupWalletNoAddress:
         mock_ks = MagicMock()
         mock_ks.get_address_by_tag.return_value = None  # triggers RuntimeError
 
-        mock_ks_cls = MagicMock(return_value=mock_ks)
-
         with patch.dict("sys.modules", {}):
             with patch("asyncio.to_thread", side_effect=RuntimeError("Wallet creation failed")):
                 resp = c.post(
@@ -289,8 +287,8 @@ class TestSaveSecretsWebUiPasswordHotReload:
         if "webui_password" not in EDITABLE_KEYS:
             pytest.skip("webui_password not in EDITABLE_KEYS")
 
-        with patch("micromech.core.secrets_file.write_secrets") as mock_write, \
-             patch("micromech.secrets.secrets") as mock_live_secrets:
+        with patch("micromech.core.secrets_file.write_secrets"), \
+             patch("micromech.secrets.secrets"):
             resp = c.post(
                 "/api/setup/secrets",
                 json={"webui_password": "newpassword123"},
@@ -312,13 +310,13 @@ class TestSaveSecretsWebUiPasswordHotReload:
         if "webui_password" not in EDITABLE_KEYS:
             pytest.skip("webui_password not in EDITABLE_KEYS")
 
-        with patch("micromech.core.secrets_file.write_secrets"):
-            with patch("micromech.secrets.secrets") as mock_live:
-                resp = c.post(
-                    "/api/setup/secrets",
-                    json={"webui_password": ""},  # empty → None
-                    headers=CSRF,
-                )
+        with patch("micromech.core.secrets_file.write_secrets"), \
+             patch("micromech.secrets.secrets"):
+            resp = c.post(
+                "/api/setup/secrets",
+                json={"webui_password": ""},  # empty → None
+                headers=CSRF,
+            )
         assert resp.status_code == 200
 
     @patch("micromech.web.app._needs_setup", return_value=False)
@@ -574,12 +572,9 @@ class TestMetadataPublish:
         """When publish is already in progress, returns 409."""
         mm = MagicMock()
         app = _app(metadata_manager=mm)
-        # Pre-acquire the lock
-        lock = None
         for attr in dir(app):
             pass
         # Patch the lock to be pre-acquired
-        from micromech.web import app as app_mod
         locked_lock = asyncio.Lock()
 
         async def acquire_lock():
@@ -589,7 +584,6 @@ class TestMetadataPublish:
 
         try:
             # Re-create app to get fresh lock, then patch it
-            import micromech.web.app as app_module
             c = TestClient(app, raise_server_exceptions=False)
             # Access internal lock by making a fresh locked asyncio.Lock
             # and patching the endpoint's closure variable
@@ -893,10 +887,10 @@ class TestLogsStream:
 
     def test_logs_stream_too_many_connections_returns_429(self):
         """When _log_queues is full, logs_stream returns 429."""
-        import micromech.web.app as app_mod
-
         # Fill _log_queues to the max
         import queue as stdlib_queue
+
+        import micromech.web.app as app_mod
         fake_queues = [stdlib_queue.Queue() for _ in range(app_mod._MAX_SSE_CONNECTIONS)]
         original = list(app_mod._log_queues)
         app_mod._log_queues.clear()
@@ -1002,8 +996,6 @@ class TestGetClientIp:
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
-            from fastapi import Request
-            from starlette.testclient import TestClient as _TC
 
             app = _app()
 
@@ -1033,9 +1025,8 @@ class TestGetClientIp:
 
     def test_trust_proxy_with_no_forwarded_falls_back_to_client(self):
         """TRUST_PROXY set but no X-Forwarded-For → falls back to client.host."""
-        from micromech.web.app import _get_client_ip
-
         import micromech.web.app as app_mod
+        from micromech.web.app import _get_client_ip
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
@@ -1065,7 +1056,6 @@ class TestRateLimited:
         from micromech.web.app import _rate_limited
 
         # Save state
-        original_counters = dict(app_mod._rate_counters)
         original_max = app_mod._MAX_TRACKED_IPS
 
         # Set a tiny max to trigger eviction easily
@@ -1080,7 +1070,7 @@ class TestRateLimited:
             app_mod._rate_counters[endpoint]["1.1.1.1"] = [old_time]
             app_mod._rate_counters[endpoint]["2.2.2.2"] = [old_time]
             # Adding a new IP (3.3.3.3) should trigger eviction
-            result = _rate_limited(endpoint, "3.3.3.3")
+            _rate_limited(endpoint, "3.3.3.3")
             # Should not raise, and new IP should be present
             assert "3.3.3.3" in app_mod._rate_counters[endpoint]
         finally:
@@ -1158,7 +1148,7 @@ class TestGetSecretsMasking:
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_sensitive_values_are_masked(self, _mock):
         """Sensitive keys are returned as '***' when non-empty."""
-        from micromech.core.secrets_file import EDITABLE_KEYS, SENSITIVE_KEYS
+        from micromech.core.secrets_file import SENSITIVE_KEYS
 
         c = _client()
 
@@ -1512,9 +1502,8 @@ class TestRateLimitOnSetupEndpoints:
 class TestGetClientIpTrustProxyNoHeader:
     def test_trust_proxy_no_forwarded_no_client_returns_unknown(self):
         """TRUST_PROXY=True, no X-Forwarded-For, no request.client → 'unknown'."""
-        from micromech.web.app import _get_client_ip
-
         import micromech.web.app as app_mod
+        from micromech.web.app import _get_client_ip
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
@@ -1565,9 +1554,8 @@ class TestCsrfProtectionOnWalletAndSecrets:
 class TestGetClientIpEdgeCases:
     def test_trust_proxy_true_no_forwarded_header_no_client(self):
         """Line 160: TRUST_PROXY=True, no X-Forwarded-For, client=None → 'unknown'."""
-        from micromech.web.app import _get_client_ip
-
         import micromech.web.app as app_mod
+        from micromech.web.app import _get_client_ip
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
@@ -1582,9 +1570,8 @@ class TestGetClientIpEdgeCases:
 
     def test_trust_proxy_true_with_forwarded_for_returns_first_ip(self):
         """Line 160: TRUST_PROXY=True + X-Forwarded-For → returns first IP."""
-        from micromech.web.app import _get_client_ip
-
         import micromech.web.app as app_mod
+        from micromech.web.app import _get_client_ip
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
@@ -1600,9 +1587,8 @@ class TestGetClientIpEdgeCases:
 
     def test_trust_proxy_true_single_forwarded_ip(self):
         """TRUST_PROXY=True + single X-Forwarded-For IP → returns it."""
-        from micromech.web.app import _get_client_ip
-
         import micromech.web.app as app_mod
+        from micromech.web.app import _get_client_ip
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:

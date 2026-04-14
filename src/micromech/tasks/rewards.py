@@ -23,7 +23,6 @@ async def rewards_task(
     logger.debug("Running rewards task...")
 
     threshold = config.claim_threshold_olas
-    claimed_any = False
 
     for chain_name, lifecycle in lifecycles.items():
         from micromech.core.bridge import get_service_info
@@ -52,7 +51,6 @@ async def rewards_task(
             success = await asyncio.to_thread(lifecycle.claim_rewards, svc_key)
 
             if success:
-                claimed_any = True
                 # Transfer OLAS from Safe to master (mirrors triton's behaviour)
                 _ok, transferred = await asyncio.to_thread(
                     lifecycle.withdraw_rewards, svc_key
