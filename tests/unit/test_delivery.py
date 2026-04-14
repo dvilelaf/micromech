@@ -88,9 +88,14 @@ class TestDeliveryNoBridge:
 class TestDeliveryWithBridge:
     @pytest.mark.asyncio
     async def test_deliver_succeeds_via_safe(
-        self, delivery_with_bridge: DeliveryManager, queue: PersistentQueue
+        self,
+        delivery_with_bridge: DeliveryManager,
+        queue: PersistentQueue,
+        monkeypatch,
     ):
         """With bridge and Safe mock, delivery succeeds."""
+        # Force flush regardless of batch size or age
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0)
         req = MechRequest(request_id="r1", prompt="test", tool="echo")
         queue.add_request(req)
         queue.mark_executing("r1")
@@ -430,9 +435,10 @@ class TestDeliveryBatchFailure:
     """Test that delivery failures mark request as failed."""
 
     @pytest.mark.asyncio
-    async def test_delivery_failure_marks_failed(self, queue: PersistentQueue):
+    async def test_delivery_failure_marks_failed(self, queue: PersistentQueue, monkeypatch):
         from micromech.core.constants import STATUS_FAILED
 
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0)
         config = MicromechConfig()
         bridge = MagicMock()
         dm = DeliveryManager(
@@ -447,12 +453,10 @@ class TestDeliveryBatchFailure:
         queue.mark_executing("r1")
         queue.mark_executed("r1", ToolResult(output="ok"))
 
-        async def exploding_deliver(record):
-            raise RuntimeError("tx reverted")
-
-        dm._deliver_one = exploding_deliver
-
-        count = await dm.deliver_batch()
+        # On-chain records go through _prepare_onchain → _submit_batch_delivery.
+        # Simulate a TX failure by raising inside _submit_batch_delivery.
+        with patch.object(dm, "_submit_batch_delivery", side_effect=RuntimeError("tx reverted")):
+            count = await dm.deliver_batch()
         assert count == 0
 
         record = queue.get_by_id("r1")

@@ -7,10 +7,18 @@ Delivery transport strategy:
 - Production (bridge has safe_service): _via_safe — Gnosis Safe execTransaction.
 - Test/local (Anvil, bridge without safe_service): _via_impersonation — direct
   transact() via Anvil auto-impersonate. This path does NOT work on real nodes.
+
+Batching strategy:
+- On-chain requests are accumulated and flushed together in a single Safe TX
+  when either DEFAULT_DELIVERY_BATCH_SIZE requests are ready OR the oldest
+  request has been waiting DEFAULT_DELIVERY_FLUSH_TIMEOUT seconds.
+- IPFS uploads for a batch are parallelized with asyncio.gather.
+- Off-chain (HTTP) requests are delivered 1:1 as before.
 """
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
@@ -18,6 +26,7 @@ from loguru import logger
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import (
     DEFAULT_DELIVERY_BATCH_SIZE,
+    DEFAULT_DELIVERY_FLUSH_TIMEOUT,
     DEFAULT_DELIVERY_INTERVAL,
     GAS_FALLBACK,
     GAS_FLOOR_DELIVERY,
@@ -43,6 +52,15 @@ def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
         msg = f"{error_prefix} transaction reverted: {tx_hash.hex()}"
         raise RuntimeError(msg)
     return tx_hash.hex()
+
+
+def _batch_age_seconds(records: list[RequestRecord]) -> float:
+    """Return age in seconds of the oldest record's request creation time."""
+    now = datetime.now(timezone.utc)
+    oldest = min(r.request.created_at for r in records)
+    if oldest.tzinfo is None:
+        oldest = oldest.replace(tzinfo=timezone.utc)
+    return (now - oldest).total_seconds()
 
 
 class DeliveryManager:
@@ -108,8 +126,25 @@ class DeliveryManager:
             )
         return self._mech_contract
 
+    def _request_id_to_bytes(self, request_id: str) -> bytes:
+        """Convert a request ID string to bytes32."""
+        try:
+            hex_str = request_id[2:] if request_id.startswith("0x") else request_id
+            req_id_bytes = bytes.fromhex(hex_str)
+        except ValueError:
+            # Non-hex IDs (e.g. "http-abc123") — hash to get deterministic bytes32
+            import hashlib
+
+            req_id_bytes = hashlib.sha256(request_id.encode()).digest()
+        return req_id_bytes.ljust(32, b"\x00")[:32]
+
     async def deliver_batch(self) -> int:
-        """Deliver a batch of undelivered responses. Returns count delivered."""
+        """Deliver undelivered responses. On-chain: batched; off-chain: 1:1.
+
+        On-chain records are accumulated and flushed together in a single Safe TX
+        when DEFAULT_DELIVERY_BATCH_SIZE records are ready or the oldest record
+        has been waiting DEFAULT_DELIVERY_FLUSH_TIMEOUT seconds.
+        """
         if self.bridge is None:
             return 0
 
@@ -131,8 +166,22 @@ class DeliveryManager:
         if not records:
             return 0
 
+        onchain = [r for r in records if not r.request.is_offchain]
+        offchain = [r for r in records if r.request.is_offchain]
+
         delivered = 0
-        for record in records:
+
+        # --- On-chain: batch by size or time ---
+        if onchain:
+            should_flush = (
+                len(onchain) >= DEFAULT_DELIVERY_BATCH_SIZE
+                or _batch_age_seconds(onchain) >= DEFAULT_DELIVERY_FLUSH_TIMEOUT
+            )
+            if should_flush:
+                delivered += await self._deliver_onchain_batch(onchain)
+
+        # --- Off-chain: 1:1 (unchanged) ---
+        for record in offchain:
             try:
                 tx_hash, ipfs_hash = await self._deliver_one(record)
                 if tx_hash:
@@ -149,7 +198,7 @@ class DeliveryManager:
                         )
                     prompt_short = record.request.prompt[:60] if record.request.prompt else ""
                     logger.info(
-                        "Delivered {} tool={} tx={} prompt={}",
+                        "Delivered (offchain) {} tool={} tx={} prompt={}",
                         record.request.request_id[:16] + "...",
                         record.request.tool,
                         tx_hash[:18] + "...",
@@ -169,16 +218,124 @@ class DeliveryManager:
 
         return delivered
 
+    async def _deliver_onchain_batch(self, records: list[RequestRecord]) -> int:
+        """Prepare (IPFS in parallel) and submit all on-chain records in one Safe TX.
+
+        IPFS uploads run concurrently. Records that fail IPFS prep are marked
+        failed individually; the rest are batched into a single deliverToMarketplace call.
+        """
+        # Parallel IPFS uploads
+        prepare_results = await asyncio.gather(
+            *[self._prepare_onchain(r) for r in records],
+            return_exceptions=True,
+        )
+
+        good: list[tuple[RequestRecord, bytes, bytes, Optional[str]]] = []
+        for record, result in zip(records, prepare_results):
+            if isinstance(result, Exception):
+                logger.error(
+                    "IPFS prep failed for {}: {}",
+                    record.request.request_id,
+                    result,
+                )
+                if self._metrics:
+                    self._metrics.record_delivery_failed(
+                        record.request.request_id, str(result), chain=self._chain_name
+                    )
+                self.queue.mark_failed(record.request.request_id, f"ipfs_prep: {result}")
+            else:
+                req_id_bytes, delivery_data, ipfs_cid_hex = result
+                good.append((record, req_id_bytes, delivery_data, ipfs_cid_hex))
+
+        if not good:
+            return 0
+
+        req_id_bytes_list = [item[1] for item in good]
+        datas = [item[2] for item in good]
+
+        try:
+            tx_hash = await asyncio.to_thread(self._submit_batch_delivery, req_id_bytes_list, datas)
+            for record, _, _, ipfs_cid_hex in good:
+                self.queue.mark_delivered(
+                    record.request.request_id,
+                    tx_hash=tx_hash,
+                    ipfs_hash=ipfs_cid_hex,
+                )
+                self._delivered_count += 1
+                if self._metrics:
+                    self._metrics.record_delivery(record.request.request_id, chain=self._chain_name)
+            ids_short = ", ".join(r.request.request_id[:10] for r, *_ in good)
+            logger.info(
+                "Batch delivered {} on-chain request(s) tx={} ids=[{}]",
+                len(good),
+                tx_hash[:18] + "...",
+                ids_short,
+            )
+            return len(good)
+        except Exception as e:
+            logger.error("Batch delivery failed ({} request(s)): {}", len(good), e)
+            for record, *_ in good:
+                if self._metrics:
+                    self._metrics.record_delivery_failed(
+                        record.request.request_id, str(e), chain=self._chain_name
+                    )
+                self.queue.mark_failed(record.request.request_id, f"delivery: {e}")
+            return 0
+
+    async def _prepare_onchain(self, record: RequestRecord) -> tuple[bytes, bytes, Optional[str]]:
+        """Build payload, upload to IPFS, return (req_id_bytes, delivery_data, ipfs_cid_hex).
+
+        Raises if record has no result. Falls back to raw JSON if IPFS is unavailable.
+        """
+        if record.result is None:
+            raise ValueError(f"No result for {record.request.request_id}")
+
+        request_id = record.request.request_id
+
+        response_payload = json.dumps(
+            {
+                "requestId": request_id,
+                "result": record.result.output,
+                "prompt": record.request.prompt,
+                "tool": record.request.tool,
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        ipfs_cid_hex: Optional[str] = None
+        try:
+            from micromech.ipfs.client import (
+                cid_hex_to_multihash_bytes,
+                push_to_ipfs,
+            )
+
+            _, cid_hex = await push_to_ipfs(
+                response_payload,
+                api_url=IPFS_API_URL,
+            )
+            delivery_data = cid_hex_to_multihash_bytes(cid_hex)
+            ipfs_cid_hex = cid_hex
+        except Exception as e:
+            if not self._ipfs_warning_logged:
+                logger.warning(
+                    "IPFS unavailable, delivering raw: {}",
+                    e,
+                )
+                self._ipfs_warning_logged = True
+            delivery_data = response_payload
+
+        req_id_bytes = self._request_id_to_bytes(request_id)
+        return req_id_bytes, delivery_data, ipfs_cid_hex
+
     async def _deliver_one(
         self,
         record: RequestRecord,
     ) -> tuple[Optional[str], Optional[str]]:
-        """Deliver a single response.
+        """Deliver a single response (used for off-chain / HTTP requests).
 
         Returns (tx_hash, ipfs_cid_hex) or (None, None).
 
-        Pushes the result to IPFS first (if enabled), then
-        delivers on-chain:
+        Pushes the result to IPFS first (if enabled), then delivers on-chain:
         - On-chain: deliverToMarketplace(requestIds[], datas[])
         - Off-chain: deliverMarketplaceWithSignatures(...)
         """
@@ -241,15 +398,9 @@ class DeliveryManager:
             )
         return tx_hash, ipfs_cid_hex
 
-    def _submit_delivery(self, request_id: str, data: bytes) -> str:
-        """Submit deliverToMarketplace transaction on-chain (sync, runs in thread).
-
-        Calls mech.deliverToMarketplace([requestId], [data]).
-        Tries Safe TX first (production), then impersonation (Anvil),
-        then signed transaction as last resort.
-        """
+    def _submit_batch_delivery(self, req_id_bytes_list: list[bytes], datas: list[bytes]) -> str:
+        """Submit deliverToMarketplace([ids...], [datas...]) in a single Safe TX."""
         mech_contract = self._get_mech_contract()
-        # deliverToMarketplace must be called from the service multisig
         from micromech.core.bridge import get_service_info
 
         svc_info = get_service_info(self.chain_config.chain)
@@ -258,22 +409,20 @@ class DeliveryManager:
             raise ValueError("multisig_address not configured — cannot deliver")
         from_addr = self.bridge.web3.to_checksum_address(multisig)
 
-        # Convert request_id to bytes32
-        try:
-            hex_str = request_id[2:] if request_id.startswith("0x") else request_id
-            req_id_bytes = bytes.fromhex(hex_str)
-        except ValueError:
-            # Non-hex IDs (e.g. "http-abc123") — hash to get deterministic bytes32
-            import hashlib
-
-            req_id_bytes = hashlib.sha256(request_id.encode()).digest()
-        req_id_bytes = req_id_bytes.ljust(32, b"\x00")[:32]
-
         fn_call = mech_contract.functions.deliverToMarketplace(
-            [req_id_bytes],
-            [data],
+            req_id_bytes_list,
+            datas,
         )
-        return self._submit_tx(fn_call, from_addr, "Delivery")
+        return self._submit_tx(fn_call, from_addr, f"BatchDelivery[{len(req_id_bytes_list)}]")
+
+    def _submit_delivery(self, request_id: str, data: bytes) -> str:
+        """Submit deliverToMarketplace for a single request.
+
+        Converts request_id to bytes32 and delegates to _submit_batch_delivery.
+        Kept for backward compatibility (used by _deliver_one for on-chain path).
+        """
+        req_id_bytes = self._request_id_to_bytes(request_id)
+        return self._submit_batch_delivery([req_id_bytes], [data])
 
     def _submit_offchain_delivery(self, record: RequestRecord, delivery_data: bytes) -> str:
         """Submit deliverMarketplaceWithSignatures for off-chain (HTTP) requests.
@@ -356,7 +505,9 @@ class DeliveryManager:
             ci = self.bridge.wallet.chain_interfaces.get(self._chain_name)
             gas = max(ci.estimate_gas(fn_call, {"from": from_addr}), GAS_FLOOR_DELIVERY)
         except Exception as e:
-            logger.warning("Gas estimation failed ({}), using fallback {}", type(e).__name__, GAS_FALLBACK)
+            logger.warning(
+                "Gas estimation failed ({}), using fallback {}", type(e).__name__, GAS_FALLBACK
+            )
             gas = GAS_FALLBACK
         tx_hash = fn_call.transact({"from": from_addr, "gas": gas})
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)

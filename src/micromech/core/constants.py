@@ -46,6 +46,7 @@ DEFAULT_EVENT_POLL_INTERVAL = 15  # seconds
 DEFAULT_EVENT_LOOKBACK_BLOCKS = 1000
 DEFAULT_DELIVERY_BATCH_SIZE = 10
 DEFAULT_DELIVERY_INTERVAL = 10  # seconds
+DEFAULT_DELIVERY_FLUSH_TIMEOUT = 60  # seconds — flush batch if oldest request is this old
 
 # Persistence
 DEFAULT_CONFIG_DIR = Path("data")
