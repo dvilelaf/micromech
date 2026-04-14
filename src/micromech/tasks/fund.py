@@ -31,32 +31,27 @@ async def fund_task(
     if not config.fund_enabled:
         return
 
-    from micromech.core.bridge import get_wallet
-
-    wallet = get_wallet()
-
-    for chain_name, _chain_config in config.enabled_chains.items():
+    for chain_name in config.enabled_chains:
         try:
             bridge = bridges.get(chain_name)
             if not bridge:
+                logger.debug(f"No bridge for {chain_name}, skipping fund")
+                continue
+
+            # Resolve agent address from iwa service info
+            from micromech.core.bridge import get_service_info
+
+            svc_info = await asyncio.to_thread(get_service_info, chain_name)
+            agent_address = svc_info.get("agent_address")
+            if not agent_address:
                 logger.debug(
-                    f"No bridge for {chain_name}, skipping fund"
+                    f"[{chain_name}] No agent_address in service info, skipping fund"
                 )
                 continue
 
-            # Get the agent EOA address (tagged "mech" by convention)
-            agent_tag = _chain_config.account_tag  # default: "mech"
-            try:
-                agent_address = str(
-                    wallet.account_service.get_address_by_tag(agent_tag)
-                )
-            except Exception:
-                logger.debug(
-                    f"[{chain_name}] Could not resolve agent tag "
-                    f"'{agent_tag}', skipping fund"
-                )
-                continue
+            from micromech.core.bridge import get_wallet
 
+            wallet = get_wallet()
             native = wallet.get_native_balance_eth(agent_address, chain_name)
 
             if native >= config.fund_threshold_native:
@@ -71,11 +66,8 @@ async def fund_task(
             if amount <= 0:
                 continue
 
-            # Check master has enough funds
             master_address = str(wallet.master_account.address)
-            master_native = wallet.get_native_balance_eth(
-                master_address, chain_name
-            )
+            master_native = wallet.get_native_balance_eth(master_address, chain_name)
             if master_native < amount:
                 logger.warning(
                     f"[{chain_name}] Master balance too low: "

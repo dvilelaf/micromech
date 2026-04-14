@@ -310,10 +310,12 @@ def get_service_info(chain_name: str) -> dict:
                     if svc_chain == chain_name:
                         svc_id = _get_attr(service, "service_id")
                         multisig = _get_attr(service, "multisig_address")
+                        agent = _get_attr(service, "agent_address")
                         result = {
                             "service_id": svc_id,
                             "service_key": f"{chain_name}:{svc_id}",
                             "multisig_address": multisig,
+                            "agent_address": str(agent) if agent else None,
                         }
                         _service_info_cache[chain_name] = (now, result)
                         return result
