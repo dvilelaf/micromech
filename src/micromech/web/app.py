@@ -257,19 +257,17 @@ def create_web_app(
     @app.middleware("http")
     async def bearer_auth(request: Request, call_next):
         path = request.scope.get("path", "")
-        # Paths that are always public (setup wizard + health probe + static assets)
-        exempt = (
-            path == "/setup"
-            or path.startswith("/api/setup/")
-            or path == "/api/health"
-            or path.startswith("/static/")
-        )
-        if exempt:
+
+        # Only protect /api/* endpoints — HTML pages are public so the login modal can load
+        if not path.startswith("/api/"):
+            return await call_next(request)
+
+        # Setup and health endpoints are always public
+        if path.startswith("/api/setup/") or path == "/api/health":
             return await call_next(request)
 
         password = _get_webui_password()
         if not password:
-            # No password configured → open access (first install / setup wizard)
             return await call_next(request)
 
         # Authorization: Bearer <token>
@@ -283,10 +281,6 @@ def create_web_app(
         token_param = request.query_params.get("token", "")
         if token_param and secrets.compare_digest(token_param, password):
             return await call_next(request)
-
-        # HTML routes → redirect to setup page so the browser shows something useful
-        if not path.startswith("/api/"):
-            return RedirectResponse(url="/setup")
 
         return Response(
             content='{"detail":"Unauthorized"}',

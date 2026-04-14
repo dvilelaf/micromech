@@ -209,37 +209,28 @@ class TestBypassedEndpoints:
 
 class TestDashboardAuth:
     @patch("micromech.web.app._needs_setup", return_value=False)
-    def test_dashboard_blocked_without_auth(self, _mock):
-        """/ must NOT return 200 when a password is configured and no token given."""
+    def test_dashboard_always_accessible_password_set(self, _mock):
+        """/ returns 200 even with password set — login modal in JS handles auth."""
         client = _client()
         with _password_active(PASSWORD):
             resp = client.get("/", follow_redirects=False)
-        assert resp.status_code != 200, "Dashboard must be protected when WEBUI_PASSWORD is set"
-
-    @patch("micromech.web.app._needs_setup", return_value=False)
-    def test_dashboard_redirects_to_setup_without_auth(self, _mock):
-        """Unauthenticated browser request to / is redirected to /setup."""
-        client = _client()
-        with _password_active(PASSWORD):
-            resp = client.get("/", follow_redirects=False)
-        assert resp.status_code == 307
-        assert resp.headers["location"] == "/setup"
-
-    @patch("micromech.web.app._needs_setup", return_value=False)
-    def test_dashboard_accessible_with_bearer_token(self, _mock):
-        """/ returns 200 when correct Bearer token is provided."""
-        client = _client()
-        with _password_active(PASSWORD):
-            resp = client.get("/", headers={"Authorization": f"Bearer {PASSWORD}"})
         assert resp.status_code == 200
 
     @patch("micromech.web.app._needs_setup", return_value=False)
-    def test_dashboard_blocked_without_password_set(self, _mock):
+    def test_dashboard_accessible_without_password(self, _mock):
         """/ is accessible when no password is configured (first install)."""
         client = _client()
         with _password_active(None):
             resp = client.get("/")
         assert resp.status_code == 200
+
+    @patch("micromech.web.app._needs_setup", return_value=False)
+    def test_api_blocked_without_auth_even_when_dashboard_loads(self, _mock):
+        """Dashboard HTML loads freely, but /api/* is still protected."""
+        client = _client()
+        with _password_active(PASSWORD):
+            assert client.get("/").status_code == 200
+            assert client.get("/api/status").status_code == 401
 
 
 # ---------------------------------------------------------------------------
