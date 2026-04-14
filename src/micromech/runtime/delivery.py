@@ -166,7 +166,7 @@ class DeliveryManager:
         if count >= DEFAULT_DELIVERY_MAX_RETRIES:
             logger.error(
                 "Request {} failed {} consecutive times ({}), marking as failed",
-                request_id[:16] + "...",
+                request_id[:20] + "...",
                 count,
                 error,
             )
@@ -175,7 +175,7 @@ class DeliveryManager:
         else:
             logger.warning(
                 "Request {} failure {}/{}: {}",
-                request_id[:16] + "...",
+                request_id[:20] + "...",
                 count,
                 DEFAULT_DELIVERY_MAX_RETRIES,
                 error,
@@ -286,7 +286,7 @@ class DeliveryManager:
         good: list[tuple[RequestRecord, bytes, bytes, Optional[str]]] = []
         for record, result in zip(records, prepare_results):
             if isinstance(result, Exception):
-                logger.error(
+                logger.exception(
                     "IPFS prep failed for {}: {}",
                     record.request.request_id,
                     result,
