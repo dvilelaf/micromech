@@ -3,7 +3,7 @@
 from typing import Any, Optional
 
 from loguru import logger
-from telegram import BotCommand, Update
+from telegram import Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -54,26 +54,6 @@ ACTION_WALLET = "wallet"
 ACTION_MANAGE = "manage"
 ACTION_MANAGE_CONFIRM = "mgcfm"
 ACTION_SETTINGS = "settings"
-
-# Bot command menu (shown in the blue button)
-_BOT_COMMANDS = [
-    BotCommand("status", "Mech status per chain"),
-    BotCommand("wallet", "Wallet addresses and balances"),
-    BotCommand("claim", "Claim staking rewards"),
-    BotCommand("checkpoint", "Call staking checkpoint"),
-    BotCommand("manage", "Stake/unstake per chain"),
-    BotCommand("contracts", "Staking contract info"),
-    BotCommand("schedule", "Next epoch checkpoint"),
-    BotCommand("last_rewards", "Accrued rewards this epoch"),
-    BotCommand("sell", "Run auto-sell manually"),
-    BotCommand("queue", "Request queue status"),
-    BotCommand("info", "Version and runtime info"),
-    BotCommand("logs", "Download last 24h logs"),
-    BotCommand("settings", "Toggle features and edit values"),
-    BotCommand("update", "Check for updates"),
-    BotCommand("restart", "Restart runtime"),
-    BotCommand("help", "Show all commands"),
-]
 
 
 @authorized_only
@@ -164,15 +144,6 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.opt(exception=context.error).error("Exception while handling an update")
 
 
-async def _post_init(application: Application) -> None:
-    """Post-init hook — register bot command menu."""
-    try:
-        await application.bot.set_my_commands(_BOT_COMMANDS)
-        logger.info("Bot command menu registered ({} commands)", len(_BOT_COMMANDS))
-    except Exception as e:
-        logger.warning("Failed to register bot commands: {}", e)
-
-
 def create_application(
     config: MicromechConfig,
     runtime_manager: Optional[RuntimeManager] = None,
@@ -186,10 +157,7 @@ def create_application(
 
     request = HTTPXRequest(connect_timeout=10.0, read_timeout=10.0)
     builder = (
-        Application.builder()
-        .token(secrets.telegram_token.get_secret_value())
-        .request(request)
-        .post_init(_post_init)
+        Application.builder().token(secrets.telegram_token.get_secret_value()).request(request)
     )
     app = builder.build()
 

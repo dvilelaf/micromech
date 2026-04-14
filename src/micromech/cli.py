@@ -317,6 +317,32 @@ def run(
                 )
                 await bot_app.initialize()
                 await bot_app.start()
+
+                # Register bot command menu (blue button) — same pattern as triton
+                from telegram import BotCommand
+
+                await bot_app.bot.set_my_commands(
+                    [
+                        BotCommand("status", "Mech status per chain"),
+                        BotCommand("wallet", "Wallet addresses and balances"),
+                        BotCommand("claim", "Claim staking rewards"),
+                        BotCommand("checkpoint", "Call staking checkpoint"),
+                        BotCommand("manage", "Stake/unstake per chain"),
+                        BotCommand("contracts", "Staking contract info"),
+                        BotCommand("schedule", "Next epoch checkpoint"),
+                        BotCommand("last_rewards", "Accrued rewards this epoch"),
+                        BotCommand("sell", "Run auto-sell manually"),
+                        BotCommand("queue", "Request queue status"),
+                        BotCommand("info", "Version and runtime info"),
+                        BotCommand("logs", "Download last 24h logs"),
+                        BotCommand("settings", "Toggle features and edit values"),
+                        BotCommand("update", "Check for updates"),
+                        BotCommand("restart", "Restart runtime"),
+                        BotCommand("help", "Show all commands"),
+                    ]
+                )
+                logger.info("Bot command menu registered")
+
                 await bot_app.updater.start_polling(drop_pending_updates=True)
                 # Wire the initialized bot into the notification service
                 notification = NotificationService(
