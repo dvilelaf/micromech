@@ -9,8 +9,9 @@ from micromech.secrets import MicromechSecrets
 
 class TestMicromechSecrets:
     def test_defaults_are_none(self):
+        # _env_file=None prevents loading from secrets.env on the filesystem
         with patch.dict("os.environ", {}, clear=True):
-            s = MicromechSecrets()
+            s = MicromechSecrets(_env_file=None)
         assert s.wallet_password is None
         assert s.telegram_token is None
         assert s.telegram_chat_id is None

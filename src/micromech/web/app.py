@@ -1196,6 +1196,49 @@ def create_web_app(
             logger.exception("Karma check failed")
             return {"error": "Karma check failed"}
 
+    @app.get("/api/marketplace/pending-payments")
+    async def marketplace_pending_payments(chain: Optional[str] = None) -> dict:
+        """Get pending xDAI claimable from the marketplace balance tracker for each chain."""
+
+        def _get_payments() -> dict:
+            from micromech.core.bridge import IwaBridge
+            from micromech.tasks.payment_withdraw import (
+                _get_balance_tracker_address,
+                _get_pending_balance,
+            )
+
+            config = MicromechConfig.load()
+            chains_to_check = (
+                {chain: config.chains[chain]}
+                if chain and chain in config.chains
+                else config.enabled_chains
+            )
+            results = {}
+            for name, cfg in chains_to_check.items():
+                if not cfg.mech_address or not cfg.marketplace_address:
+                    results[name] = {"pending": 0.0, "error": "not configured"}
+                    continue
+                try:
+                    bridge = IwaBridge(chain_name=name)
+                    bt_addr = _get_balance_tracker_address(
+                        bridge, name, cfg.mech_address, cfg.marketplace_address
+                    )
+                    if not bt_addr:
+                        results[name] = {"pending": 0.0}
+                        continue
+                    pending = _get_pending_balance(bridge, bt_addr, cfg.mech_address)
+                    results[name] = {"pending": round(pending, 6)}
+                except Exception as e:
+                    logger.warning("Pending payments check failed for {}: {}", name, e)
+                    results[name] = {"pending": 0.0, "error": "check failed"}
+            return results
+
+        try:
+            return await asyncio.to_thread(_get_payments)
+        except Exception:
+            logger.exception("Pending payments check failed")
+            return {"error": "Pending payments check failed"}
+
     @app.get("/api/health")
     async def health_check() -> dict:
         """Health check with per-chain RPC status."""

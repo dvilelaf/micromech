@@ -287,8 +287,10 @@ class TestSaveSecretsWebUiPasswordHotReload:
         if "webui_password" not in EDITABLE_KEYS:
             pytest.skip("webui_password not in EDITABLE_KEYS")
 
+        mock_s = MagicMock()
+        mock_s.webui_password = None
         with patch("micromech.core.secrets_file.write_secrets"), \
-             patch("micromech.secrets.secrets"):
+             patch("micromech.secrets.secrets", mock_s):
             resp = c.post(
                 "/api/setup/secrets",
                 json={"webui_password": "newpassword123"},
@@ -310,8 +312,10 @@ class TestSaveSecretsWebUiPasswordHotReload:
         if "webui_password" not in EDITABLE_KEYS:
             pytest.skip("webui_password not in EDITABLE_KEYS")
 
+        mock_s = MagicMock()
+        mock_s.webui_password = None
         with patch("micromech.core.secrets_file.write_secrets"), \
-             patch("micromech.secrets.secrets"):
+             patch("micromech.secrets.secrets", mock_s):
             resp = c.post(
                 "/api/setup/secrets",
                 json={"webui_password": ""},  # empty → None

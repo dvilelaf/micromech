@@ -374,6 +374,49 @@ class PersistentQueue:
         query = _chain_filter(query, chain)
         return query.count()
 
+    def period_stats(
+        self,
+        hours: int = 24,
+        chain: Optional[str] = None,
+    ) -> dict:
+        """Aggregate stats for the last N hours from DB.
+
+        Returns received, delivered, failed counts plus avg execution time
+        and success rate — all sourced from persistent storage so they
+        survive container restarts.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        query = RequestRow.select(
+            pw.fn.COUNT(RequestRow.request_id).alias("total"),
+            pw.fn.SUM(
+                pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)
+            ).alias("delivered"),
+            pw.fn.SUM(
+                pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)
+            ).alias("failed"),
+            pw.fn.AVG(RequestRow.result_time).alias("avg_time"),
+        ).where(RequestRow.created_at >= cutoff)
+        query = _chain_filter(query, chain)
+        row = query.tuples().first()
+        if not row:
+            return {
+                "received": 0, "delivered": 0, "failed": 0,
+                "avg_time": 0.0, "success_rate": 0.0,
+            }
+        total, delivered, failed, avg_time = row
+        total = int(total or 0)
+        delivered = int(delivered or 0)
+        failed = int(failed or 0)
+        avg_time = round(float(avg_time or 0), 3)
+        success_rate = round(delivered / total * 100, 1) if total > 0 else 0.0
+        return {
+            "received": total,
+            "delivered": delivered,
+            "failed": failed,
+            "avg_time": avg_time,
+            "success_rate": success_rate,
+        }
+
     def cleanup(self, days: int = 30) -> int:
         """Remove delivered/failed requests older than N days. Returns count deleted."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)

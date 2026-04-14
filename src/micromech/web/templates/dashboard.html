@@ -89,6 +89,7 @@
         .metric-value.warning { color: var(--warning); }
         .metric-value.error { color: var(--error); }
         .metric-label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .metric-period { font-size: 0.65rem; opacity: 0.6; font-weight: 400; }
 
         /* Charts grid */
         .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem; }
@@ -335,7 +336,7 @@
                 <div class="metrics-grid">
                     <div class="glass metric-card">
                         <div class="metric-value" id="m-received">0</div>
-                        <div class="metric-label">Received</div>
+                        <div class="metric-label">Received <span class="metric-period">24h</span></div>
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value" id="m-pending">0</div>
@@ -347,19 +348,19 @@
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value success" id="m-delivered">0</div>
-                        <div class="metric-label">Delivered</div>
+                        <div class="metric-label">Delivered <span class="metric-period">24h</span></div>
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value error" id="m-failed">0</div>
-                        <div class="metric-label">Failed</div>
+                        <div class="metric-label">Failed <span class="metric-period">24h</span></div>
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value" id="m-avg-time">0s</div>
-                        <div class="metric-label">Avg Exec Time</div>
+                        <div class="metric-label">Avg Exec Time <span class="metric-period">7d</span></div>
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value" id="m-success-rate">-</div>
-                        <div class="metric-label">Success Rate</div>
+                        <div class="metric-label">Success Rate <span class="metric-period">7d</span></div>
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value" id="m-uptime">0m</div>
@@ -728,15 +729,20 @@
     function updateLiveMetrics(data) {
         const live = data.live || {};
         const queue = data.queue || {};
+        const s24 = data.stats_24h || {};
+        const s7d = data.stats_7d || {};
 
-        setText('m-received', live.requests_received ?? 0);
+        // Received / Delivered / Failed: 24h from DB (survives restarts)
+        setText('m-received', s24.received ?? live.requests_received ?? 0);
         setText('m-pending', queue.pending ?? 0);
         setText('m-executing', queue.executing ?? 0);
-        setText('m-delivered', (data.delivered_total ?? live.deliveries_completed) ?? 0);
-        setText('m-failed', live.executions_failed ?? 0);
-        setText('m-avg-time', (live.avg_execution_time ?? 0).toFixed(2) + 's');
-        const received = live.requests_received ?? 0;
-        setText('m-success-rate', received > 0 ? (live.success_rate ?? 100).toFixed(1) + '%' : '-');
+        setText('m-delivered', s24.delivered ?? (data.delivered_total ?? live.deliveries_completed) ?? 0);
+        setText('m-failed', s24.failed ?? live.executions_failed ?? 0);
+        // Avg time / Success rate: 7d from DB (enough volume for stable stats)
+        const avgTime = s7d.avg_time ?? live.avg_execution_time ?? 0;
+        setText('m-avg-time', avgTime.toFixed(2) + 's');
+        const rate = s7d.received > 0 ? s7d.success_rate : (live.success_rate ?? null);
+        setText('m-success-rate', rate != null ? rate.toFixed(1) + '%' : '-');
         setText('m-uptime', formatUptime(live.uptime ?? 0));
     }
 
@@ -1002,9 +1008,10 @@
 
     // --- Management ---
     // Cached management data to avoid redundant fetches
-    let mgmtChainData = {};   // {chain: {service_key, service_id, mech_address, ...}}
-    let mgmtStakingData = {}; // {chain: {staking_state, is_staked, rewards, ...}}
-    let mgmtKarmaData = {};   // {chain: {karma, deliveries, timeouts}}
+    let mgmtChainData = {};    // {chain: {service_key, service_id, mech_address, ...}}
+    let mgmtStakingData = {};  // {chain: {staking_state, is_staked, rewards, ...}}
+    let mgmtKarmaData = {};    // {chain: {karma, deliveries, timeouts}}
+    let mgmtPaymentsData = {}; // {chain: {pending: float}}
 
     function truncateAddr(addr) {
         if (!addr || addr.length < 12) return addr || '-';
@@ -1027,15 +1034,17 @@
 
     async function loadManagementTab() {
         // Load all data in parallel
-        const [stateRes, stakingRes, karmaRes] = await Promise.all([
+        const [stateRes, stakingRes, karmaRes, paymentsRes] = await Promise.all([
             fetch(API_BASE + '/api/setup/state').then(r => r.json()).catch(() => ({})),
             authFetch(API_BASE + '/api/staking/status').then(r => r.json()).catch(() => ({})),
             authFetch(API_BASE + '/api/karma').then(r => r.json()).catch(() => ({})),
+            authFetch(API_BASE + '/api/marketplace/pending-payments').then(r => r.json()).catch(() => ({})),
         ]);
 
         mgmtChainData = stateRes.chains || {};
         mgmtStakingData = stakingRes.error ? {} : stakingRes;
         mgmtKarmaData = karmaRes.error ? {} : karmaRes;
+        mgmtPaymentsData = paymentsRes.error ? {} : paymentsRes;
 
         renderChainCards();
         loadNewChainOptions();
@@ -1055,6 +1064,7 @@
         container.innerHTML = deployed.map(([chainName, chainInfo]) => {
             const staking = mgmtStakingData[chainName] || {};
             const karma = mgmtKarmaData[chainName] || {};
+            const payments = mgmtPaymentsData[chainName] || {};
             const serviceKey = chainInfo.service_key || '';
             const isComplete = chainInfo.complete === true;
             const isStaked = staking.is_staked === true;
@@ -1086,6 +1096,18 @@
                         <span class="value" style="color:var(--error);">${karma.timeouts}</span>
                     </div>`;
                 }
+            }
+
+            // Pending marketplace payment
+            let pendingPaymentHtml = '';
+            if (payments.pending !== undefined && payments.pending !== null && !payments.error) {
+                const pendingVal = parseFloat(payments.pending) || 0;
+                const color = pendingVal > 0 ? 'var(--success)' : 'var(--text-muted)';
+                pendingPaymentHtml = `
+                    <div class="chain-card-row">
+                        <span class="label">Pending payment</span>
+                        <span class="value" style="color:${color};">${pendingVal.toFixed(6)} xDAI</span>
+                    </div>`;
             }
 
             // Staking details
@@ -1161,6 +1183,7 @@
                 ${setupStateHtml}
                 ${stakingDetailHtml}
                 ${karmaHtml}
+                ${pendingPaymentHtml}
                 <div class="chain-card-actions">${actionsHtml}</div>
             </div>`;
         }).join('');
