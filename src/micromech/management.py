@@ -306,6 +306,18 @@ class MechLifecycle:
             logger.error("Failed to claim rewards on {}: {}", self.chain_name, e)
             return False
 
+    def withdraw_rewards(self, service_key: str) -> tuple[bool, float]:
+        """Transfer OLAS rewards from Safe to master wallet after claiming."""
+        mgr = _get_service_manager(self.config, service_key)
+        try:
+            success, amount = mgr.withdraw_rewards()
+            if success:
+                logger.info("Transferred {:.4f} OLAS to master on {}", amount, self.chain_name)
+            return success, amount
+        except Exception as e:
+            logger.error("Failed to transfer rewards on {}: {}", self.chain_name, e)
+            return False, 0.0
+
     def get_status(self, service_key: str) -> Optional[dict]:
         """Get comprehensive service/staking status."""
         mgr = _get_service_manager(self.config, service_key)

@@ -60,8 +60,12 @@ def _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18)):
     safe_service = MagicMock()
     safe_service.execute_safe_transaction.return_value = "0xtxhash"
 
+    master_account = MagicMock()
+    master_account.address = "0x" + "f" * 40
+
     wallet = MagicMock()
     wallet.safe_service = safe_service
+    wallet.master_account = master_account
 
     bridge = MagicMock()
     bridge.web3 = web3
@@ -198,7 +202,8 @@ class TestPaymentWithdrawTask:
         ):
             await payment_withdraw_task(bridges, notification, cfg)
 
-        bridge.wallet.safe_service.execute_safe_transaction.assert_called_once()
+        # Called twice: processPaymentByMultisig + transfer to master
+        assert bridge.wallet.safe_service.execute_safe_transaction.call_count == 2
         notification.send.assert_awaited_once()
         msg = notification.send.call_args[0][1]
         assert "0.500000" in msg

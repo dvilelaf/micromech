@@ -38,6 +38,7 @@ def _make_lifecycle(service_key="0xkey", is_staked=True, rewards=0.0):
     status = {"is_staked": is_staked, "rewards": rewards, "staking_state": "STAKED"}
     lc.get_status.return_value = status
     lc.claim_rewards.return_value = True
+    lc.withdraw_rewards.return_value = (True, rewards)
     lc.checkpoint.return_value = True
     return lc
 

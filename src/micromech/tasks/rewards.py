@@ -37,11 +37,15 @@ async def rewards_task(
         for chain_name in config.enabled_chains:
             try:
                 _, olas = await asyncio.to_thread(check_balances, chain_name)
-                pre_claim_olas_wei[chain_name] = int(Decimal(str(olas)) * Decimal(10**18))
+                pre_claim_olas_wei[chain_name] = int(
+                    Decimal(str(olas)) * Decimal(10**18)
+                )
             except Exception:
                 # Don't add to dict — auto_sell will skip chains
                 # without a floor rather than selling everything
-                logger.warning(f"Could not snapshot OLAS balance on {chain_name}")
+                logger.warning(
+                    f"Could not snapshot OLAS balance on {chain_name}"
+                )
 
     claimed_any = False
 
@@ -62,7 +66,8 @@ async def rewards_task(
             accrued = status.get("rewards", 0.0)
             if accrued < threshold:
                 logger.debug(
-                    f"Rewards on {chain_name}: {accrued:.4f} OLAS (below threshold {threshold})"
+                    f"Rewards on {chain_name}: {accrued:.4f} OLAS "
+                    f"(below threshold {threshold})"
                 )
                 continue
 
@@ -72,10 +77,19 @@ async def rewards_task(
 
             if success:
                 claimed_any = True
-                logger.info(f"Rewards claimed on {chain_name}: {accrued:.4f} OLAS")
+                # Transfer OLAS from Safe to master (mirrors triton's behaviour)
+                _ok, transferred = await asyncio.to_thread(
+                    lifecycle.withdraw_rewards, svc_key
+                )
+                transfer_line = (
+                    f"\nTransferred to master: {transferred:.4f} OLAS" if _ok else ""
+                )
+                logger.info(
+                    f"Rewards claimed on {chain_name}: {accrued:.4f} OLAS"
+                )
                 await notification_service.send(
                     "Rewards Claimed",
-                    f"Chain: {chain_name}\nAmount: {accrued:.4f} OLAS",
+                    f"Chain: {chain_name}\nAmount: {accrued:.4f} OLAS{transfer_line}",
                 )
             else:
                 logger.warning(f"Claim returned false on {chain_name}")

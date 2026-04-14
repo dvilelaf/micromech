@@ -103,6 +103,43 @@ def _get_pending_balance(bridge: "IwaBridge", bt_address: str, mech_address: str
     return raw / 1e18
 
 
+def _transfer_to_master(
+    bridge: "IwaBridge",
+    chain_name: str,
+    multisig_address: str,
+    amount_xdai: float,
+) -> None:
+    """Transfer native xDAI from the Safe to the master wallet.
+
+    Sends a value-only Safe transaction (empty calldata) to master.
+    """
+    master = str(bridge.wallet.master_account.address)
+    amount_wei = int(amount_xdai * 1e18)
+
+    tx_hash = bridge.wallet.safe_service.execute_safe_transaction(
+        safe_address_or_tag=multisig_address,
+        to=master,
+        value=amount_wei,
+        chain_name=chain_name,
+        data=b"",
+    )
+    tx_hash_str = tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
+    logger.info(
+        "[{}] Transferred {:.6f} xDAI to master {}. TX: {}",
+        chain_name,
+        amount_xdai,
+        master,
+        tx_hash_str,
+    )
+
+    web3 = bridge.web3
+    receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    if receipt["status"] != 1:
+        logger.warning(
+            "[{}] xDAI transfer to master reverted: {}", chain_name, tx_hash_str
+        )
+
+
 def _withdraw(
     bridge: "IwaBridge",
     chain_name: str,
@@ -224,11 +261,39 @@ async def payment_withdraw_task(
                 balance,
             )
 
-            logger.info("[{}] Payment withdraw complete: {:.6f} xDAI", chain_name, balance)
-            await notification_service.send(
-                "Mech Payment Withdrawn",
-                f"Chain: {chain_name}\nAmount: {balance:.6f} xDAI\nTo: {multisig}",
+            logger.info(
+                "[{}] Payment withdraw complete: {:.6f} xDAI", chain_name, balance
             )
+
+            # Transfer the xDAI from Safe to master immediately after
+            try:
+                await asyncio.to_thread(
+                    _transfer_to_master,
+                    bridge,
+                    chain_name,
+                    multisig,
+                    balance,
+                )
+                master = str(bridge.wallet.master_account.address)
+                await notification_service.send(
+                    "Mech Payment Withdrawn",
+                    (
+                        f"Chain: {chain_name}\nAmount: {balance:.6f} xDAI"
+                        f"\nTransferred to master: {master}"
+                    ),
+                )
+            except Exception as e:
+                logger.error(
+                    "[{}] xDAI transfer to master failed: {}", chain_name, e
+                )
+                await notification_service.send(
+                    "Mech Payment Withdrawn",
+                    (
+                        f"Chain: {chain_name}\nAmount: {balance:.6f} xDAI"
+                        f"\nTo Safe: {multisig}"
+                        f"\nWARNING: transfer to master failed: {e}"
+                    ),
+                )
 
         except Exception as e:
             logger.error("[{}] Payment withdraw task error: {}", chain_name, e)
