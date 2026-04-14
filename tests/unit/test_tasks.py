@@ -146,86 +146,22 @@ class TestRewardsTask:
 # ── Fund Task ─────────────────────────────────────────────────────────────
 
 
+AGENT_ADDR = "0x" + "e" * 40
+MASTER_ADDR = "0x" + "f" * 40
+
+
+def _make_wallet_mock(agent_balance=0.01, master_balance=10.0):
+    """Mock iwa wallet for fund task tests."""
+    wallet = MagicMock()
+    wallet.account_service.get_address_by_tag.return_value = AGENT_ADDR
+    wallet.master_account.address = MASTER_ADDR
+    wallet.get_native_balance_eth.side_effect = lambda addr, chain: (
+        agent_balance if addr == AGENT_ADDR else master_balance
+    )
+    return wallet
+
+
 class TestFundTask:
-    @pytest.mark.asyncio
-    async def test_alerts_when_no_bridge(self):
-        from micromech.tasks.fund import fund_task
-
-        notification = NotificationService()
-        notification.send = AsyncMock()
-
-        config = _make_config(fund_threshold_native=0.1)
-
-        with (
-            patch(
-                "micromech.core.bridge.check_safe_balance",
-                return_value=0.01,
-            ),
-            patch(
-                "micromech.core.bridge.get_service_info",
-                return_value={"multisig_address": "0x" + "a" * 40},
-            ),
-        ):
-            await fund_task({}, notification, config)
-
-        notification.send.assert_called_once()
-        assert "Auto-Fund" in notification.send.call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_transfers_when_bridge_available(self):
-        from micromech.tasks.fund import fund_task
-
-        notification = NotificationService()
-        notification.send = AsyncMock()
-
-        bridge = MagicMock()
-        bridge.wallet.send.return_value = "0xtxhash"
-
-        config = _make_config(
-            fund_threshold_native=0.1,
-            fund_target_native=0.5,
-        )
-
-        with (
-            patch(
-                "micromech.core.bridge.check_safe_balance",
-                return_value=0.01,
-            ),
-            patch(
-                "micromech.core.bridge.get_service_info",
-                return_value={"multisig_address": "0x" + "a" * 40},
-            ),
-            patch(
-                "micromech.core.bridge.check_balances",
-                return_value=(10.0, 0.0),
-            ),
-        ):
-            await fund_task({"gnosis": bridge}, notification, config)
-
-        bridge.wallet.send.assert_called_once()
-        call_kwargs = bridge.wallet.send.call_args[1]
-        assert call_kwargs["from_address_or_tag"] == "master"
-        assert call_kwargs["chain_name"] == "gnosis"
-        notification.send.assert_called_once()
-        assert "Auto-Fund Safe" in notification.send.call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_no_action_when_balance_ok(self):
-        from micromech.tasks.fund import fund_task
-
-        notification = NotificationService()
-        notification.send = AsyncMock()
-
-        config = _make_config(fund_threshold_native=0.01)
-
-        with patch(
-            "micromech.core.bridge.check_safe_balance",
-            return_value=1.0,
-        ):
-            await fund_task({}, notification, config)
-
-        notification.send.assert_not_called()
-
     @pytest.mark.asyncio
     async def test_skips_when_fund_disabled(self):
         from micromech.tasks.fund import fund_task
@@ -239,20 +175,80 @@ class TestFundTask:
         notification.send.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_handles_exception(self):
+    async def test_no_action_when_balance_ok(self):
         from micromech.tasks.fund import fund_task
 
         notification = NotificationService()
         notification.send = AsyncMock()
+        bridge = MagicMock()
+        config = _make_config(fund_threshold_native=0.01)
+        wallet = _make_wallet_mock(agent_balance=1.0)
 
-        config = _make_config()
+        with patch("micromech.core.bridge.get_wallet", return_value=wallet):
+            await fund_task({"gnosis": bridge}, notification, config)
 
-        with patch(
-            "micromech.core.bridge.check_safe_balance",
-            side_effect=Exception("rpc fail"),
-        ):
-            # Should not raise
+        notification.send.assert_not_called()
+        bridge.wallet.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_no_bridge(self):
+        from micromech.tasks.fund import fund_task
+
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        config = _make_config(fund_threshold_native=0.1)
+        wallet = _make_wallet_mock(agent_balance=0.01)
+
+        with patch("micromech.core.bridge.get_wallet", return_value=wallet):
             await fund_task({}, notification, config)
+
+        # No bridge → debug log only, no alert
+        notification.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_transfers_when_bridge_available(self):
+        from micromech.tasks.fund import fund_task
+
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        bridge = MagicMock()
+        bridge.wallet.send.return_value = "0xtxhash"
+        config = _make_config(
+            fund_threshold_native=0.1,
+            fund_target_native=0.5,
+        )
+        wallet = _make_wallet_mock(agent_balance=0.01, master_balance=10.0)
+
+        with patch("micromech.core.bridge.get_wallet", return_value=wallet):
+            await fund_task({"gnosis": bridge}, notification, config)
+
+        bridge.wallet.send.assert_called_once()
+        call_kwargs = bridge.wallet.send.call_args[1]
+        assert call_kwargs["from_address_or_tag"] == "master"
+        assert call_kwargs["to_address_or_tag"] == AGENT_ADDR
+        assert call_kwargs["chain_name"] == "gnosis"
+        notification.send.assert_called_once()
+        assert "Auto-Fund Agent" in notification.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_alerts_when_master_too_low(self):
+        from micromech.tasks.fund import fund_task
+
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        bridge = MagicMock()
+        config = _make_config(
+            fund_threshold_native=0.1,
+            fund_target_native=0.5,
+        )
+        wallet = _make_wallet_mock(agent_balance=0.01, master_balance=0.001)
+
+        with patch("micromech.core.bridge.get_wallet", return_value=wallet):
+            await fund_task({"gnosis": bridge}, notification, config)
+
+        bridge.wallet.send.assert_not_called()
+        notification.send.assert_called_once()
+        assert "Insufficient Master" in notification.send.call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_alerts_on_transfer_failure(self):
@@ -260,33 +256,36 @@ class TestFundTask:
 
         notification = NotificationService()
         notification.send = AsyncMock()
-
         bridge = MagicMock()
         bridge.wallet.send.side_effect = Exception("insufficient funds")
-
         config = _make_config(
             fund_threshold_native=0.1,
             fund_target_native=0.5,
         )
+        wallet = _make_wallet_mock(agent_balance=0.01, master_balance=10.0)
 
-        with (
-            patch(
-                "micromech.core.bridge.check_safe_balance",
-                return_value=0.01,
-            ),
-            patch(
-                "micromech.core.bridge.get_service_info",
-                return_value={"multisig_address": "0x" + "a" * 40},
-            ),
-            patch(
-                "micromech.core.bridge.check_balances",
-                return_value=(10.0, 0.0),
-            ),
-        ):
+        with patch("micromech.core.bridge.get_wallet", return_value=wallet):
             await fund_task({"gnosis": bridge}, notification, config)
 
         notification.send.assert_called_once()
         assert "Auto-Fund Failed" in notification.send.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_handles_exception(self):
+        from micromech.tasks.fund import fund_task
+
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        bridge = MagicMock()
+        config = _make_config()
+        wallet = MagicMock()
+        wallet.account_service.get_address_by_tag.side_effect = Exception(
+            "rpc fail"
+        )
+
+        with patch("micromech.core.bridge.get_wallet", return_value=wallet):
+            # Should not raise
+            await fund_task({"gnosis": bridge}, notification, config)
 
 
 # ── Checkpoint Task ───────────────────────────────────────────────────────

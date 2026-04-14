@@ -1,7 +1,11 @@
 """Auto-fund task.
 
-Checks the Safe multisig balance on each enabled chain and transfers
+Checks the agent EOA balance on each enabled chain and transfers
 native tokens from the master wallet when below threshold.
+
+The agent EOA pays gas for all Safe transactions (checkpoint, claim,
+stake, payment withdraw, etc.) — the Safe itself does not need a
+native balance for mech operations.
 """
 
 import asyncio
@@ -21,64 +25,60 @@ async def fund_task(
     notification_service: "NotificationService",
     config: "MicromechConfig",
 ) -> None:
-    """Check Safe balances and fund from master wallet if needed."""
+    """Check agent EOA balance and fund from master wallet if needed."""
     logger.debug("Running fund task...")
 
     if not config.fund_enabled:
         return
 
-    from micromech.core.bridge import check_safe_balance, get_service_info
+    from micromech.core.bridge import get_wallet
 
-    for chain_name in config.enabled_chains:
+    wallet = get_wallet()
+
+    for chain_name, _chain_config in config.enabled_chains.items():
         try:
-            native = await asyncio.to_thread(check_safe_balance, chain_name)
-
-            if native is None:
-                logger.warning(f"Could not check Safe balance on {chain_name}, skipping fund")
+            bridge = bridges.get(chain_name)
+            if not bridge:
+                logger.debug(
+                    f"No bridge for {chain_name}, skipping fund"
+                )
                 continue
+
+            # Get the agent EOA address (tagged "mech" by convention)
+            agent_tag = _chain_config.account_tag  # default: "mech"
+            try:
+                agent_address = str(
+                    wallet.account_service.get_address_by_tag(agent_tag)
+                )
+            except Exception:
+                logger.debug(
+                    f"[{chain_name}] Could not resolve agent tag "
+                    f"'{agent_tag}', skipping fund"
+                )
+                continue
+
+            native = wallet.get_native_balance_eth(agent_address, chain_name)
 
             if native >= config.fund_threshold_native:
                 continue
 
             logger.warning(
-                f"Low Safe balance on {chain_name}: {native:.4f} "
+                f"[{chain_name}] Low agent balance: {native:.4f} "
                 f"(threshold: {config.fund_threshold_native})"
             )
-
-            bridge = bridges.get(chain_name)
-            if not bridge:
-                await notification_service.send(
-                    "Auto-Fund: No Bridge",
-                    f"Chain: {chain_name}\n"
-                    f"Safe balance: {native:.4f} native\n"
-                    f"No bridge available for auto-transfer.",
-                    level="warning",
-                )
-                continue
-
-            svc_info = await asyncio.to_thread(get_service_info, chain_name)
-            multisig = svc_info.get("multisig_address")
-            if not multisig:
-                await notification_service.send(
-                    "Auto-Fund: No Multisig",
-                    f"Chain: {chain_name}\n"
-                    f"Safe balance: {native:.4f} native\n"
-                    f"No multisig address configured.",
-                    level="warning",
-                )
-                continue
 
             amount = config.fund_target_native - native
             if amount <= 0:
                 continue
 
             # Check master has enough funds
-            from micromech.core.bridge import check_balances
-
-            master_native, _ = await asyncio.to_thread(check_balances, chain_name)
+            master_address = str(wallet.master_account.address)
+            master_native = wallet.get_native_balance_eth(
+                master_address, chain_name
+            )
             if master_native < amount:
                 logger.warning(
-                    f"Master balance too low on {chain_name}: "
+                    f"[{chain_name}] Master balance too low: "
                     f"{master_native:.4f} < {amount:.4f} needed"
                 )
                 await notification_service.send(
@@ -96,19 +96,27 @@ async def fund_task(
                 tx_hash = await asyncio.to_thread(
                     bridge.wallet.send,
                     from_address_or_tag="master",
-                    to_address_or_tag=multisig,
+                    to_address_or_tag=agent_address,
                     amount_wei=amount_wei,
                     chain_name=chain_name,
                 )
 
                 if tx_hash:
-                    logger.info(f"Funded Safe on {chain_name}: {amount:.4f} native (tx: {tx_hash})")
+                    logger.info(
+                        f"[{chain_name}] Funded agent EOA: "
+                        f"{amount:.4f} native (tx: {tx_hash})"
+                    )
                     await notification_service.send(
-                        "Auto-Fund Safe",
-                        f"Chain: {chain_name}\nAmount: {amount:.4f} native\nTx: {tx_hash}",
+                        "Auto-Fund Agent",
+                        f"Chain: {chain_name}\n"
+                        f"Agent: {agent_address}\n"
+                        f"Amount: {amount:.4f} native\n"
+                        f"Tx: {tx_hash}",
                     )
                 else:
-                    logger.error(f"Fund transfer returned no tx hash on {chain_name}")
+                    logger.error(
+                        f"[{chain_name}] Fund transfer returned no tx hash"
+                    )
                     await notification_service.send(
                         "Auto-Fund Failed",
                         f"Chain: {chain_name}\n"
@@ -118,10 +126,12 @@ async def fund_task(
                     )
 
             except Exception as e:
-                logger.error(f"Fund transfer failed on {chain_name}: {e}")
+                logger.error(f"[{chain_name}] Fund transfer failed: {e}")
                 await notification_service.send(
                     "Auto-Fund Failed",
-                    f"Chain: {chain_name}\nSafe balance: {native:.4f} native\nError: {e}",
+                    f"Chain: {chain_name}\n"
+                    f"Agent balance: {native:.4f} native\n"
+                    f"Error: {e}",
                     level="warning",
                 )
 
