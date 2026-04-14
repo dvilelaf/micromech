@@ -1,6 +1,7 @@
 """micromech CLI — management and runtime commands."""
 
 import asyncio
+import logging
 import sys
 import time
 from pathlib import Path
@@ -16,6 +17,34 @@ from micromech.core.constants import (
     MIN_NATIVE_WEI,
     MIN_OLAS_WHOLE,
 )
+
+def _configure_logging() -> None:
+    """Configure loguru with green timestamps, matching triton's format."""
+    if hasattr(_configure_logging, "configured"):
+        return
+    logger.remove()
+    log_format = (
+        "<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> - <level>{level: <8}</level> - {message}"
+    )
+    logger.add(sys.stderr, format=log_format, level="INFO", colorize=True)
+
+    class _InterceptHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            try:
+                level = logger.level(record.levelname).name
+            except ValueError:
+                level = record.levelno  # type: ignore[assignment]
+            frame, depth = logging.currentframe(), 2
+            while frame and frame.f_code.co_filename == logging.__file__:
+                frame = frame.f_back  # type: ignore[assignment]
+                depth += 1
+            logger.opt(depth=depth, exception=record.exc_info).log(level, record.getMessage())
+
+    logging.basicConfig(handlers=[_InterceptHandler()], level=0, force=True)
+    _configure_logging.configured = True  # type: ignore[attr-defined]
+
+
+_configure_logging()
 
 app = typer.Typer(
     name="micromech",
