@@ -15,8 +15,8 @@ class TestTaskFields:
         assert cfg.claim_threshold_olas == 1.0
         assert cfg.fund_enabled is True
         assert cfg.fund_interval_minutes == 360
-        assert cfg.fund_threshold_native == 0.05
-        assert cfg.fund_target_native == 0.5
+        assert cfg.fund_threshold_native == 0.1
+        assert cfg.fund_target_native == 1.0
         assert cfg.auto_sell_enabled is False
         assert cfg.low_balance_alert_enabled is True
         assert cfg.update_check_enabled is True

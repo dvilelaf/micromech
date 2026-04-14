@@ -66,8 +66,8 @@ class MicromechConfig(BaseModel):
     claim_threshold_olas: float = Field(default=1.0, ge=0)
     fund_enabled: bool = True
     fund_interval_minutes: int = Field(default=360, ge=10, le=1440)
-    fund_threshold_native: float = Field(default=0.05, ge=0, le=50)
-    fund_target_native: float = Field(default=0.5, ge=0, le=50)
+    fund_threshold_native: float = Field(default=0.1, ge=0, le=50)
+    fund_target_native: float = Field(default=1.0, ge=0, le=50)
     auto_sell_enabled: bool = False
     auto_sell_min_olas: float = Field(default=1.0, ge=0)
     payment_withdraw_enabled: bool = True
