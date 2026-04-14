@@ -1,13 +1,11 @@
 """Extra tests for tasks/rewards.py and tasks/checkpoint.py covering missed lines.
 
 Covers:
-- rewards_task: auto_sell_enabled balance snapshot (lines 35-44)
-- rewards_task: claim returns False (line 81)
-- rewards_task: auto_sell triggered after claim (lines 88-91)
-- checkpoint_task: epoch still active (lines 56-58)
-- checkpoint_task: within grace period (lines 61-63)
-- checkpoint_task: past grace, checkpoint called + alert (lines 65-76)
-- checkpoint_task: checkpoint returns False (lines 78-80)
+- rewards_task: claim returns False
+- checkpoint_task: epoch still active
+- checkpoint_task: within grace period
+- checkpoint_task: past grace, checkpoint called + alert
+- checkpoint_task: checkpoint returns False
 """
 
 from datetime import datetime, timedelta, timezone
@@ -48,68 +46,10 @@ def _make_staking_contract_cls(epoch_end: datetime):
 
 
 # ---------------------------------------------------------------------------
-# rewards_task — auto_sell paths
+# rewards_task
 # ---------------------------------------------------------------------------
 
-class TestRewardsAutoSell:
-    @pytest.mark.asyncio
-    async def test_balance_snapshot_taken_when_auto_sell_enabled(self):
-        """auto_sell_enabled=True triggers pre-claim OLAS balance snapshot."""
-        from micromech.tasks.rewards import rewards_task
-
-        config = _make_config(claim_threshold_olas=1.0)
-        config.auto_sell_enabled = True
-        lifecycle = _make_lifecycle(rewards=5.0)
-        notification = NotificationService()
-        notification.send = AsyncMock()
-        bridges = {"gnosis": MagicMock()}
-
-        with patch("micromech.core.bridge.get_service_info", return_value=_svc_info()), \
-             patch("micromech.core.bridge.check_balances", return_value=(1.0, 100.0)) as mock_cb, \
-             patch("micromech.tasks.auto_sell.auto_sell_task", new_callable=AsyncMock):
-            await rewards_task({"gnosis": lifecycle}, notification, config, bridges=bridges)
-
-        mock_cb.assert_called_once_with("gnosis")
-
-    @pytest.mark.asyncio
-    async def test_auto_sell_triggered_after_successful_claim(self):
-        """auto_sell_task is called when claimed_any=True."""
-        from micromech.tasks.rewards import rewards_task
-
-        config = _make_config(claim_threshold_olas=1.0)
-        config.auto_sell_enabled = True
-        lifecycle = _make_lifecycle(rewards=5.0)
-        notification = NotificationService()
-        notification.send = AsyncMock()
-        bridges = {"gnosis": MagicMock()}
-
-        with patch("micromech.core.bridge.get_service_info", return_value=_svc_info()), \
-             patch("micromech.core.bridge.check_balances", return_value=(1.0, 100.0)), \
-             patch("micromech.tasks.auto_sell.auto_sell_task", new_callable=AsyncMock) as mock_sell:
-            await rewards_task({"gnosis": lifecycle}, notification, config, bridges=bridges)
-
-        mock_sell.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_balance_snapshot_exception_is_handled(self):
-        """Exception during balance snapshot is caught; auto_sell still runs."""
-        from micromech.tasks.rewards import rewards_task
-
-        config = _make_config(claim_threshold_olas=1.0)
-        config.auto_sell_enabled = True
-        lifecycle = _make_lifecycle(rewards=5.0)
-        notification = NotificationService()
-        notification.send = AsyncMock()
-        bridges = {"gnosis": MagicMock()}
-
-        with patch("micromech.core.bridge.get_service_info", return_value=_svc_info()), \
-             patch("micromech.core.bridge.check_balances", side_effect=Exception("rpc down")), \
-             patch("micromech.tasks.auto_sell.auto_sell_task", new_callable=AsyncMock) as mock_sell:
-            await rewards_task({"gnosis": lifecycle}, notification, config, bridges=bridges)
-
-        # Auto sell still triggered (claimed_any=True), floor is empty (exception)
-        mock_sell.assert_called_once()
-
+class TestRewardsTask:
     @pytest.mark.asyncio
     async def test_claim_returns_false_no_notification(self):
         """When lifecycle.claim_rewards returns False, warning logged, no notification."""

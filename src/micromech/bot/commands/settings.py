@@ -17,7 +17,6 @@ _TOGGLES = [
     ("checkpoint_alert", "checkpoint_alert_enabled", "Checkpoint alerts"),
     ("low_balance_alert", "low_balance_alert_enabled", "Low balance alerts"),
     ("fund", "fund_enabled", "Auto-fund"),
-    ("auto_sell", "auto_sell_enabled", "Auto-sell"),
     ("payment_withdraw", "payment_withdraw_enabled", "Payment withdraw"),
     ("auto_update", "auto_update_enabled", "Auto-update"),
     ("update_check", "update_check_enabled", "Update check"),
@@ -35,15 +34,6 @@ EDITABLE_SETTINGS: dict[str, dict[str, Any]] = {
         "max": 500.0,
         "unit": "OLAS",
         "group": "rewards",
-    },
-    "sell_min": {
-        "attr": "auto_sell_min_olas",
-        "label": "Min OLAS to sell",
-        "type": float,
-        "min": 0.1,
-        "max": 500.0,
-        "unit": "OLAS",
-        "group": "sell",
     },
     "fund_thr": {
         "attr": "fund_threshold_native",
@@ -139,16 +129,6 @@ def _format_edit_status(config: MicromechConfig) -> str:
         lines.append(f"  {escape_html(setting['label'])}: {code(f'{current} {unit}'.strip())}")
     lines.append("")
 
-    if config.auto_sell_enabled:
-        lines.append(escape_html("Auto-sell"))
-        for setting in EDITABLE_SETTINGS.values():
-            if setting["group"] != "sell":
-                continue
-            current = getattr(config, setting["attr"])
-            unit = setting.get("unit", "")
-            lines.append(f"  {escape_html(setting['label'])}: {code(f'{current} {unit}'.strip())}")
-        lines.append("")
-
     if config.fund_enabled or config.payment_withdraw_enabled:
         lines.append(escape_html("Funding"))
         for setting in EDITABLE_SETTINGS.values():
@@ -192,8 +172,6 @@ def _build_edit_keyboard(config: MicromechConfig) -> InlineKeyboardMarkup:
     """Build keyboard for edit values page."""
     rows: list[list[InlineKeyboardButton]] = []
     for key, setting in EDITABLE_SETTINGS.items():
-        if setting["group"] == "sell" and not config.auto_sell_enabled:
-            continue
         current = getattr(config, setting["attr"])
         unit = setting.get("unit", "")
         display = f"{current} {unit}".strip()

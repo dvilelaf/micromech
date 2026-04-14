@@ -98,7 +98,7 @@ class TaskScheduler:
             rewards_task,
             "interval",
             minutes=cfg.claim_interval_minutes,
-            args=[self.lifecycles, self.notification_service, cfg, self.bridges],
+            args=[self.lifecycles, self.notification_service, cfg],
             id="rewards_task",
             replace_existing=True,
             misfire_grace_time=misfire_grace_time,

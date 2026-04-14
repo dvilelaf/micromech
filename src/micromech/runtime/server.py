@@ -338,20 +338,11 @@ class MechServer:
         # the server. Exceptions are caught inside notification.send() already.
         try:
             from micromech import __version__
-            from micromech.core.bridge import get_service_info
 
-            chain_lines = []
-            for chain_name in chains:
-                svc = get_service_info(chain_name)
-                chain_cfg = self.config.chains.get(chain_name)
-                mech = (chain_cfg.mech_address or "?") if chain_cfg else "?"
-                svc_id = svc.get("service_id", "?")
-                chain_lines.append(f"  {chain_name}: svc={svc_id} mech={str(mech)[:12]}…")
-            details = "\n".join(chain_lines) if chain_lines else "  (no chains)"
             asyncio.ensure_future(
                 notification.send(
                     "Micromech started",
-                    f"v{__version__} | tools: {len(self.registry.tool_ids)}\n{details}",
+                    f"v{__version__}",
                 )
             )
         except Exception as e:

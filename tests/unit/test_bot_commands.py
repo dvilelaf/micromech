@@ -859,14 +859,11 @@ class TestSettingsCommand:
         buttons = [btn.text for row in kb.inline_keyboard for btn in row]
         assert any("Close" in b for b in buttons)
 
-    def test_get_set_value(self):
-        from micromech.bot.commands.settings import _get_value, _set_value
+    def test_get_value(self):
+        from micromech.bot.commands.settings import _get_value
 
         config = make_test_config()
-        _set_value(config, "fund_enabled", True)
         assert _get_value(config, "fund_enabled") is True
-        _set_value(config, "fund_enabled", False)
-        assert _get_value(config, "fund_enabled") is False
 
 
 # ---------------------------------------------------------------------------

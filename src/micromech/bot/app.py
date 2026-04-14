@@ -28,7 +28,6 @@ from micromech.bot.commands.manage import (
 from micromech.bot.commands.queue_cmd import queue_command
 from micromech.bot.commands.restart import restart_command
 from micromech.bot.commands.schedule import schedule_command
-from micromech.bot.commands.sell import sell_command
 from micromech.bot.commands.settings import (
     handle_settings_callback,
     handle_settings_text,
@@ -82,7 +81,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/contracts - Staking contract info\n"
         "/schedule - Next epoch checkpoint\n"
         "/last_rewards - Accrued rewards this epoch\n"
-        "/sell - Run auto-sell manually\n"
         "/queue - Request queue status\n"
         "/info - Version and runtime info\n"
         "/logs - Download last 24h logs\n"
@@ -188,7 +186,6 @@ def create_application(
     app.add_handler(CommandHandler("contracts", contracts_command))
     app.add_handler(CommandHandler("schedule", schedule_command))
     app.add_handler(CommandHandler("last_rewards", last_rewards_command))
-    app.add_handler(CommandHandler("sell", sell_command))
     app.add_handler(CommandHandler("queue", queue_command))
     app.add_handler(CommandHandler("info", info_command))
     app.add_handler(CommandHandler("logs", logs_command))
