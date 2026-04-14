@@ -453,6 +453,17 @@ release-check:
     VERSION=$(grep -m1 'version = ' pyproject.toml | cut -d '"' -f2)
     TAG="v$VERSION"
 
+    # Verify __version__ in __init__.py matches pyproject.toml
+    INIT_VERSION=$(grep -m1 '__version__' src/micromech/__init__.py | cut -d '"' -f2)
+    if [ "$INIT_VERSION" != "$VERSION" ]; then
+        echo "Error: __version__ mismatch!"
+        echo "  pyproject.toml: $VERSION"
+        echo "  src/micromech/__init__.py: $INIT_VERSION"
+        echo "Fix: update __version__ in src/micromech/__init__.py to \"$VERSION\""
+        exit 1
+    fi
+    echo "Version consistency OK ($VERSION)"
+
     echo "Running security checks..."
     just security
     echo "Running quality checks..."
