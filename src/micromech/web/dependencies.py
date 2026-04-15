@@ -61,11 +61,25 @@ def verify_auth(
     request: Request,
     authorization: Optional[str] = Header(None),
 ) -> None:
-    """Enforce Bearer (or ?token= for SSE) authentication.
+    """Enforce Bearer (or ``?token=`` for SSE) authentication.
 
     - If WEBUI_PASSWORD is unset, allow all requests (fresh install).
+      This preserves the existing fresh-install semantics on
+      ``protected_router`` so the read-only dashboard endpoints can
+      bootstrap before the wizard is run.
     - Accepts ``Authorization: Bearer <password>`` OR ``?token=<password>``.
     - Raises 401 with ``WWW-Authenticate: Bearer`` on failure.
+
+    **Security note** — The "password is None ⇒ allow" branch is
+    intentionally NOT applied to ``verify_auth_or_setup_mode``, which is
+    what guards the mutating ``/api/setup/*`` endpoints. That dependency
+    fails closed when no password is set and ``_needs_setup()`` is False,
+    so clearing ``webui_password`` from ``secrets.env`` post-deploy
+    cannot expose wallet re-creation / secrets rewrite. The CI gate
+    ``test_every_api_route_has_auth_dependency`` enforces that every
+    ``/api/*`` route lists one of the two dependencies, so the risk of
+    reusing plain ``verify_auth`` on a new mutating endpoint is bounded
+    by the allow-list review in that test.
     """
     password = _get_webui_password()
     if not password:
