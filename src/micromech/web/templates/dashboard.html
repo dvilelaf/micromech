@@ -89,7 +89,8 @@
         .metric-value.warning { color: var(--warning); }
         .metric-value.error { color: var(--error); }
         .metric-label { font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem; text-transform: uppercase; letter-spacing: 0.05em; }
-        .metric-period { font-size: 0.65rem; opacity: 0.6; font-weight: 400; }
+        .metric-period { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; padding: 1px 5px; margin-left: 4px; color: var(--text-muted); vertical-align: middle; }
+        .chart-period { font-size: 0.6rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); border-radius: 4px; padding: 1px 5px; margin-left: 6px; color: var(--text-muted); vertical-align: middle; font-family: inherit; }
 
         /* Charts grid */
         .charts-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 1.5rem; margin-bottom: 1.5rem; }
@@ -340,11 +341,11 @@
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value" id="m-pending">0</div>
-                        <div class="metric-label">Pending</div>
+                        <div class="metric-label">Pending <span class="metric-period">now</span></div>
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value" id="m-executing">0</div>
-                        <div class="metric-label">Executing</div>
+                        <div class="metric-label">Executing <span class="metric-period">now</span></div>
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value success" id="m-delivered">0</div>
@@ -364,17 +365,17 @@
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value" id="m-uptime">0m</div>
-                        <div class="metric-label">Uptime</div>
+                        <div class="metric-label" title="Time since last process start">Uptime <span class="metric-period">session</span></div>
                     </div>
                 </div>
 
                 <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:1.5rem; max-width:700px; margin-bottom:1.5rem;">
                     <div class="glass chart-card">
-                        <h3>Queue Status</h3>
+                        <h3>Queue Status <span class="chart-period">now</span></h3>
                         <canvas id="queueChart"></canvas>
                     </div>
                     <div class="glass chart-card">
-                        <h3>Request Channels</h3>
+                        <h3>Request Channels <span class="chart-period">all-time</span></h3>
                         <canvas id="channelChart"></canvas>
                     </div>
                 </div>
@@ -385,17 +386,17 @@
                         <canvas id="dailyChart"></canvas>
                     </div>
                     <div class="glass chart-card">
-                        <h3>Monthly Requests</h3>
+                        <h3>Monthly Requests <span class="chart-period">12 months</span></h3>
                         <canvas id="monthlyChart"></canvas>
                     </div>
                 </div>
                 <div class="charts-grid" style="margin-top:1.5rem;">
                     <div class="glass chart-card" style="max-width:350px;">
-                        <h3>Requests by Tool</h3>
+                        <h3>Requests by Tool <span class="chart-period">all-time</span></h3>
                         <canvas id="toolChart"></canvas>
                     </div>
                     <div class="glass chart-card">
-                        <h3>Tool Performance</h3>
+                        <h3>Tool Performance <span class="chart-period">all-time</span></h3>
                         <table>
                             <thead>
                                 <tr>
