@@ -51,26 +51,40 @@ def _make_web_app(config_path: Path):
 
 @pytest.fixture(autouse=True)
 def _reset_bridge_caches():
-    """Clear bridge module caches and rate counters before each test.
+    """Clear all module-level state that can leak between tests.
 
-    Without this, state from a previous test leaks into the next — either
-    cached wallet/interface state or accumulated rate-limiter buckets that
-    cause subsequent tests to receive 429 instead of the expected status.
+    Sources of contamination this fixture guards against:
+      * bridge module caches (wallet / interfaces / key storage) —
+        otherwise a later test sees an unlocked wallet it did not create
+      * rate-limiter buckets — accumulated hits 429 subsequent tests
+      * ``secrets.webui_password`` — POST /api/setup/wallet sets this
+        singleton on success; if a wizard test ran earlier in the session
+        every subsequent test's setup endpoints jump to the "enforce
+        auth" branch and return 401 instead of 200
+      * ``_needs_setup()`` — the underlying ``MicromechConfig.load()``
+        reads ``data/config.yaml`` from disk, which OTHER integration
+        test files (anvil, full-cycle, multichain) can leave populated
+        with a completed deploy. We force ``_needs_setup()`` to return
+        True by default so the wizard tests always run as if on a fresh
+        install; individual tests that need the post-setup branch
+        (e.g. ``test_auth_required``) re-patch it in their own scope.
     """
     import micromech.core.bridge as _bridge
     import micromech.web.app as _app
+    from micromech.secrets import secrets as _live_secrets
 
-    _bridge._cached_wallet = None
-    _bridge._cached_interfaces = None
-    _bridge._cached_key_storage = None
-    _app._rate_counters.clear()
-    _app._setup_needed = None  # reset _needs_setup() cache so each test sees a clean state
-    yield
-    _bridge._cached_wallet = None
-    _bridge._cached_interfaces = None
-    _bridge._cached_key_storage = None
-    _app._rate_counters.clear()
-    _app._setup_needed = None
+    def _reset() -> None:
+        _bridge._cached_wallet = None
+        _bridge._cached_interfaces = None
+        _bridge._cached_key_storage = None
+        _app._rate_counters.clear()
+        _app._setup_needed = None
+        _live_secrets.webui_password = None
+
+    _reset()
+    with patch("micromech.web.app._needs_setup", return_value=True):
+        yield
+    _reset()
 
 
 class TestWebWizardE2E:
@@ -557,16 +571,26 @@ class TestWebWizardE2E:
     def test_auth_required(self, tmp_path: Path):
         """Setup endpoints require auth once the system is already configured.
 
-        During initial setup _needs_setup() is True and the middleware passes
-        requests through so the wizard is reachable.  Once setup is complete,
-        _needs_setup() returns False and the middleware enforces Bearer auth.
+        During initial setup ``_needs_setup()`` is True and
+        ``verify_auth_or_setup_mode`` lets requests through so the wizard
+        is reachable. Once setup is complete ``_needs_setup()`` returns
+        False AND ``webui_password`` is set, so ``verify_auth`` enforces
+        Bearer auth. This test simulates that post-setup state by
+        patching both module-level values and then hitting a protected
+        setup endpoint without a token.
         """
+        from pydantic import SecretStr
+
         app = _make_web_app(tmp_path)
         client = TestClient(app)
 
-        # Simulate post-setup state: _needs_setup() returns False.
-        # Without this the middleware intentionally skips auth on /api/setup/.
-        with patch("micromech.web.app._needs_setup", return_value=False):
+        with (
+            patch("micromech.web.app._needs_setup", return_value=False),
+            patch(
+                "micromech.secrets.secrets.webui_password",
+                SecretStr("real-webui-password"),
+            ),
+        ):
             resp = client.post(
                 "/api/setup/wallet",
                 headers={"Content-Type": "application/json", "X-Micromech-Action": "setup"},
@@ -767,3 +791,54 @@ class TestWebWizardE2E:
                 headers={"Authorization": "Bearer wrong-token"},
             )
             assert r3.status_code == 401
+
+    def test_every_api_route_has_auth_dependency(self, tmp_path: Path):
+        """Fail-closed CI gate: every ``/api/*`` route must declare an auth dep.
+
+        Walks ``app.routes`` and, for each path starting with ``/api/``, checks
+        that the route's merged dependency chain includes either ``verify_auth``
+        or ``verify_auth_or_setup_mode``. Endpoints intentionally left public
+        must be listed in ``PUBLIC_ALLOWLIST`` below — adding a new endpoint
+        without updating either the allow-list or the protected router will
+        make this test fail, preventing the class of regression that plagued
+        the old path-parsing middleware.
+        """
+        from micromech.web.dependencies import verify_auth, verify_auth_or_setup_mode
+
+        PUBLIC_ALLOWLIST = {
+            "/api/health",  # monitoring probe — public by design
+        }
+
+        app = _make_web_app(tmp_path)
+        auth_deps = {verify_auth, verify_auth_or_setup_mode}
+
+        missing: list[str] = []
+        for route in app.routes:
+            path = getattr(route, "path", "")
+            if not path.startswith("/api/"):
+                continue
+            if path in PUBLIC_ALLOWLIST:
+                continue
+
+            # route.dependant.dependencies is the merged chain of all
+            # dependencies (router-level + endpoint-level) that FastAPI will
+            # invoke for this route. We only need to see one of our auth
+            # dependencies anywhere in that chain.
+            dependant = getattr(route, "dependant", None)
+            if dependant is None:
+                missing.append(f"{path} (no dependant)")
+                continue
+            chain_calls = {
+                d.call for d in dependant.dependencies if d.call is not None
+            }
+            if not (chain_calls & auth_deps):
+                missing.append(path)
+
+        assert not missing, (
+            "The following /api/* routes have NO auth dependency and are not "
+            "in PUBLIC_ALLOWLIST:\n  - "
+            + "\n  - ".join(sorted(missing))
+            + "\n\nFix: register the endpoint on protected_router or "
+            "setup_router in micromech/web/app.py, or add it to "
+            "PUBLIC_ALLOWLIST if it is intentionally public."
+        )

@@ -1035,7 +1035,7 @@
     async function loadManagementTab() {
         // Load all data in parallel
         const [stateRes, stakingRes, karmaRes, paymentsRes] = await Promise.all([
-            fetch(API_BASE + '/api/setup/state').then(r => r.json()).catch(() => ({})),
+            authFetch(API_BASE + '/api/setup/state').then(r => r.json()).catch(() => ({})),
             authFetch(API_BASE + '/api/staking/status').then(r => r.json()).catch(() => ({})),
             authFetch(API_BASE + '/api/karma').then(r => r.json()).catch(() => ({})),
             authFetch(API_BASE + '/api/marketplace/pending-payments').then(r => r.json()).catch(() => ({})),
@@ -1240,7 +1240,7 @@
         const desc = document.getElementById('deploy-new-desc');
         const grid = document.getElementById('deploy-new-chains');
         try {
-            const chainsRes = await fetch(API_BASE + '/api/setup/chains').then(r => r.json());
+            const chainsRes = await authFetch(API_BASE + '/api/setup/chains').then(r => r.json());
             // Exclude ALL chains already in config (complete or in-progress)
             const deployed = new Set(Object.keys(mgmtChainData));
             const available = chainsRes.filter(c => !deployed.has(c.name));
@@ -1304,7 +1304,7 @@
         let allOk = true;
         for (const chain of newDeploySelected) {
             try {
-                const r = await fetch(API_BASE + '/api/setup/balance?chain=' + chain);
+                const r = await authFetch(API_BASE + '/api/setup/balance?chain=' + chain);
                 const d = await r.json();
                 const sym = NATIVE_SYM[chain] || 'Native';
                 const nOk = d.native_sufficient ? '✓' : '✗';
@@ -1358,7 +1358,7 @@
     async function deployNewChain(chain, log) {
         addDeployLog(log, `[${chain}] Starting deployment...`);
         try {
-            const res = await fetch(API_BASE + '/api/setup/deploy', {
+            const res = await authFetch(API_BASE + '/api/setup/deploy', {
                 method: 'POST',
                 headers: {'Content-Type':'application/json','X-Micromech-Action':'deploy'},
                 body: JSON.stringify({ chain })
@@ -1673,7 +1673,7 @@
         container.innerHTML = '';
         let tools;
         try {
-            const res = await fetch(API_BASE + '/api/setup/tools');
+            const res = await authFetch(API_BASE + '/api/setup/tools');
             tools = await res.json();
         } catch (e) {
             container.textContent = 'Failed to load tools: ' + e.message;
@@ -1785,7 +1785,7 @@
         let phase = 'save';
         try {
             // 1) Persist the disabled_tools list
-            const saveRes = await fetch(API_BASE + '/api/setup/tools', {
+            const saveRes = await authFetch(API_BASE + '/api/setup/tools', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

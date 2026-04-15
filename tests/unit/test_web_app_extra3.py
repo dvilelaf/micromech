@@ -985,7 +985,8 @@ class TestSetupWalletRateLimit:
                 headers=CSRF,
             )
         assert resp.status_code == 429
-        assert "error" in resp.json()
+        # rate_limit dependency raises HTTPException → {"detail": "..."}
+        assert "detail" in resp.json()
 
 
 # ---------------------------------------------------------------------------
@@ -1525,7 +1526,8 @@ class TestCsrfProtectionOnWalletAndSecrets:
             # No CSRF header
         )
         assert resp.status_code == 403
-        assert "Missing" in resp.json()["error"]
+        # require_csrf_header dependency raises HTTPException → {"detail": ...}
+        assert "Missing" in resp.json()["detail"]
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_save_secrets_missing_csrf_returns_403(self, _mock):
@@ -1537,7 +1539,7 @@ class TestCsrfProtectionOnWalletAndSecrets:
             # No CSRF header
         )
         assert resp.status_code == 403
-        assert "Missing" in resp.json()["error"]
+        assert "Missing" in resp.json()["detail"]
 
 
 # ---------------------------------------------------------------------------
@@ -1562,8 +1564,13 @@ class TestGetClientIpEdgeCases:
         finally:
             app_mod._TRUST_PROXY = original
 
-    def test_trust_proxy_true_with_forwarded_for_returns_first_ip(self):
-        """Line 160: TRUST_PROXY=True + X-Forwarded-For → returns first IP."""
+    def test_trust_proxy_true_with_forwarded_for_returns_last_ip(self):
+        """TRUST_PROXY=True + X-Forwarded-For → returns LAST (rightmost) IP.
+
+        The rightmost entry is the last trusted proxy before us; the
+        leftmost is client-controlled and spoofable, so we use the
+        rightmost to prevent rate-limit evasion via forged headers.
+        """
         import micromech.web.app as app_mod
         from micromech.web.app import _get_client_ip
         original = app_mod._TRUST_PROXY
@@ -1574,8 +1581,7 @@ class TestGetClientIpEdgeCases:
             mock_req.headers.get.return_value = "10.0.0.1, 192.168.1.1, 172.16.0.1"
             mock_req.client = None
             ip = _get_client_ip(mock_req)
-            # Should return the first (leftmost) IP
-            assert ip == "10.0.0.1"
+            assert ip == "172.16.0.1"
         finally:
             app_mod._TRUST_PROXY = original
 

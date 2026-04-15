@@ -6,19 +6,17 @@ import logging
 import os
 import queue as stdlib_queue
 import re
-import secrets
 import threading
 import time
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
-from fastapi import FastAPI, Header, Request
+from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
-    Response,
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +24,12 @@ from fastapi.templating import Jinja2Templates
 from loguru import logger
 
 from micromech.core.config import MicromechConfig
+from micromech.web.dependencies import (
+    rate_limit,
+    require_csrf_header,
+    verify_auth,
+    verify_auth_or_setup_mode,
+)
 
 if TYPE_CHECKING:
     from micromech.core.persistence import PersistentQueue
@@ -33,10 +37,6 @@ if TYPE_CHECKING:
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
-
-# CSRF header required on state-changing endpoints (browsers won't send
-# this in simple cross-origin requests)
-CSRF_HEADER = "X-Micromech-Action"
 
 # --- Simple rate limiter ---
 _RATE_LIMITS: dict[str, tuple[int, int]] = {
@@ -153,11 +153,19 @@ _TRUST_PROXY: bool = os.environ.get("MICROMECH_TRUST_PROXY", "").lower() in ("1"
 
 
 def _get_client_ip(request: Request) -> str:
-    """Extract client IP. Only trusts X-Forwarded-For when MICROMECH_TRUST_PROXY is set."""
+    """Extract client IP, preferring the LAST hop in X-Forwarded-For.
+
+    When MICROMECH_TRUST_PROXY=1 we read X-Forwarded-For. The right-most
+    entry is the hop closest to our server (the last trusted proxy); the
+    left-most entry is client-controlled and spoofable. Using the right-
+    most entry prevents rate-limit evasion via forged headers.
+    """
     if _TRUST_PROXY:
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
-            return forwarded.split(",")[0].strip()
+            parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+            if parts:
+                return parts[-1]
     if request.client:
         return request.client.host
     return "unknown"
@@ -244,62 +252,13 @@ def create_web_app(
 
     app.add_middleware(CORSMiddleware, allow_origins=[])
 
-    # Bearer auth middleware — protects /api/* except setup + health.
-    # When WEBUI_PASSWORD is not set (first install / setup wizard), all
-    # requests pass through so the wizard is reachable without a password.
-    # SSE endpoints (EventSource) pass the token as ?token= query param
-    # because the browser EventSource API cannot send custom headers.
-    def _get_webui_password() -> str:
-        from micromech.secrets import secrets as _s
-
-        return _s.webui_password.get_secret_value() if _s.webui_password else ""
-
-    @app.middleware("http")
-    async def bearer_auth(request: Request, call_next):
-        # When mounted as a sub-app (e.g. app.mount("/dashboard", web_app)),
-        # scope["path"] contains the FULL path (/dashboard/api/…) while
-        # scope["root_path"] holds the mount prefix (/dashboard).
-        # Strip the prefix so every downstream check works uniformly.
-        full_path = request.scope.get("path", "")
-        root_path = request.scope.get("root_path", "")
-        path = full_path[len(root_path):] if root_path and full_path.startswith(root_path) else full_path
-        if not path or path == "/":
-            path = full_path  # keep original if stripping leaves nothing sensible
-
-        # Only protect /api/* endpoints — HTML pages are public so the login modal can load
-        if not path.startswith("/api/"):
-            return await call_next(request)
-
-        # Health is always public (monitoring probes)
-        if path == "/api/health":
-            return await call_next(request)
-
-        # Setup endpoints only public during initial setup (no config yet)
-        if path.startswith("/api/setup/") and _needs_setup():
-            return await call_next(request)
-
-        password = _get_webui_password()
-        if not password:
-            return await call_next(request)
-
-        # Authorization: Bearer <token>
-        auth_header = request.headers.get("Authorization", "")
-        if auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-            if token and secrets.compare_digest(token, password):
-                return await call_next(request)
-
-        # ?token= query param (EventSource / SSE)
-        token_param = request.query_params.get("token", "")
-        if token_param and secrets.compare_digest(token_param, password):
-            return await call_next(request)
-
-        return Response(
-            content='{"detail":"Unauthorized"}',
-            status_code=401,
-            media_type="application/json",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    # NOTE: Authentication is enforced via FastAPI dependencies on the
+    # routers defined below (verify_auth / verify_auth_or_setup_mode).
+    # The previous bearer_auth middleware was removed because it parsed
+    # scope["path"] manually and silently failed when the app was mounted
+    # as a sub-app (e.g. app.mount("/dashboard", web_app)) — the prefixed
+    # path bypassed every ``startswith("/api/")`` check. See
+    # ``test_auth_enforced_when_mounted_as_sub_app`` for the regression guard.
 
     # Security headers middleware
     @app.middleware("http")
@@ -325,7 +284,28 @@ def create_web_app(
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    @app.get("/", response_class=HTMLResponse)
+    # ------------------------------------------------------------------
+    # Routers — auth is attached at the ROUTER level (fail-closed).
+    #
+    #   public_router   : no auth (HTML shell, health, /result/{id})
+    #   setup_router    : auth bypassed only while _needs_setup() == True
+    #   protected_router: verify_auth required on every request
+    #
+    # Adding a new /api/* endpoint to ``protected_router`` automatically
+    # inherits auth; forgetting to register it on any router surfaces as
+    # a failure in ``test_all_api_endpoints_covered_by_router`` (CI gate).
+    # ------------------------------------------------------------------
+    public_router = APIRouter()
+    setup_router = APIRouter(
+        prefix="/api/setup",
+        dependencies=[Depends(verify_auth_or_setup_mode)],
+    )
+    protected_router = APIRouter(
+        prefix="/api",
+        dependencies=[Depends(verify_auth)],
+    )
+
+    @public_router.get("/", response_class=HTMLResponse)
     async def dashboard(request: Request):
         if _needs_setup():
             root = request.scope.get("root_path", "")
@@ -336,7 +316,7 @@ def create_web_app(
             context={"api_base": request.scope.get("root_path", "")},
         )
 
-    @app.get("/setup", response_class=HTMLResponse)
+    @public_router.get("/setup", response_class=HTMLResponse)
     async def setup_page(request: Request) -> HTMLResponse:
         return templates.TemplateResponse(
             request=request,
@@ -346,11 +326,9 @@ def create_web_app(
 
     # --- Setup API ---
 
-    @app.get("/api/setup/state")
+    @setup_router.get("/state", dependencies=[Depends(rate_limit("/api/setup/state"))])
     async def setup_state(request: Request) -> dict:
         """Get current setup state."""
-        if _rate_limited("/api/setup/state", _get_client_ip(request)):
-            return JSONResponse({"error": "Too many requests. Try again later."}, 429)
         wallet_exists = False
         wallet_address = None
         needs_password = False
@@ -422,21 +400,19 @@ def create_web_app(
             "step": step,
         }
 
-    @app.post("/api/setup/wallet")
-    async def setup_wallet(
-        request: Request,
-        x_micromech_action: Optional[str] = Header(None),
-    ) -> dict:
+    @setup_router.post(
+        "/wallet",
+        dependencies=[
+            Depends(require_csrf_header),
+            Depends(rate_limit("/api/setup/wallet")),
+        ],
+    )
+    async def setup_wallet(request: Request) -> dict:
         """Create or unlock wallet. Body: {password: str}.
 
         If no wallet exists, creates a new one and returns address + mnemonic.
         If wallet exists but locked, unlocks it and returns address.
         """
-        if not x_micromech_action:
-            return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
-        if _rate_limited("/api/setup/wallet", _get_client_ip(request)):
-            return JSONResponse({"error": "Too many attempts. Try again later."}, 429)
-
         body = await request.json()
         password = body.get("password", "")
         if not password or len(password) < 8:
@@ -526,11 +502,12 @@ def create_web_app(
                 status_code=500,
             )
 
-    @app.get("/api/setup/secrets")
+    @setup_router.get(
+        "/secrets",
+        dependencies=[Depends(rate_limit("/api/setup/secrets/get"))],
+    )
     async def get_secrets(request: Request) -> dict:
         """Return editable secrets (sensitive values masked)."""
-        if _rate_limited("/api/setup/secrets/get", _get_client_ip(request)):
-            return JSONResponse({"error": "Too many requests. Try again later."}, 429)
         try:
             from micromech.core.secrets_file import EDITABLE_KEYS, SENSITIVE_KEYS, read_secrets_file
 
@@ -544,16 +521,15 @@ def create_web_app(
             logger.exception("Failed to read secrets file")
             return JSONResponse({"error": "Could not read secrets file"}, 500)
 
-    @app.post("/api/setup/secrets")
-    async def save_secrets(
-        request: Request,
-        x_micromech_action: Optional[str] = Header(None),
-    ) -> dict:
+    @setup_router.post(
+        "/secrets",
+        dependencies=[
+            Depends(require_csrf_header),
+            Depends(rate_limit("/api/setup/secrets/post")),
+        ],
+    )
+    async def save_secrets(request: Request) -> dict:
         """Write editable secrets to secrets.env."""
-        if not x_micromech_action:
-            return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
-        if _rate_limited("/api/setup/secrets/post", _get_client_ip(request)):
-            return JSONResponse({"error": "Too many requests. Try again later."}, 429)
         try:
             from micromech.core.secrets_file import EDITABLE_KEYS, write_secrets
 
@@ -583,7 +559,7 @@ def create_web_app(
             logger.exception("Failed to write secrets file")
             return JSONResponse({"error": "Could not write secrets file"}, 500)
 
-    @app.get("/api/setup/balance")
+    @setup_router.get("/balance")
     async def setup_balance(chain: str = "gnosis") -> dict:
         """Check wallet balances for setup funding."""
         if not _valid_chain(chain):
@@ -607,19 +583,16 @@ def create_web_app(
             logger.exception("Balance check failed for {}", chain)
             return {"error": "Balance check failed", "sufficient": False}
 
-    @app.post("/api/setup/deploy")
-    async def setup_deploy(
-        request: Request,
-        x_micromech_action: Optional[str] = Header(None),
-    ):
+    @setup_router.post(
+        "/deploy",
+        dependencies=[Depends(require_csrf_header)],
+    )
+    async def setup_deploy(request: Request):
         """Deploy service via real-time SSE stream.
 
-        Requires X-Micromech-Action header (CSRF protection).
-        Only one deploy at a time (concurrency guard).
+        CSRF header enforced by dependency. Only one deploy at a time
+        (concurrency guard).
         """
-        if not x_micromech_action:
-            return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
-
         body = await request.json() if request.headers.get("content-type") else {}
         chain_name = body.get("chain", "gnosis")
 
@@ -733,7 +706,7 @@ def create_web_app(
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         )
 
-    @app.get("/api/setup/chains")
+    @setup_router.get("/chains")
     async def setup_chains() -> list[dict]:
         """Available chains for setup."""
         from micromech.core.constants import CHAIN_DEFAULTS
@@ -744,25 +717,25 @@ def create_web_app(
 
     # --- Status API ---
 
-    @app.get("/api/status")
+    @protected_router.get("/status")
     async def api_status() -> dict:
         return get_status()
 
-    @app.get("/api/chains")
+    @protected_router.get("/chains")
     async def api_chains() -> list[str]:
         status = get_status()
         return status.get("chains", [])
 
-    @app.get("/api/requests")
+    @protected_router.get("/requests")
     async def api_requests(limit: int = 50, chain: Optional[str] = None) -> list[dict]:
         records = get_recent(min(limit, 200), chain)
         return [_record_to_dict(r) for r in records]
 
-    @app.get("/api/tools")
+    @protected_router.get("/tools")
     async def api_tools() -> list[dict]:
         return get_tools()
 
-    @app.get("/api/setup/tools")
+    @setup_router.get("/tools")
     async def api_setup_tools() -> list[dict]:
         """All available tool packages (builtin + custom) with enabled/disabled status."""
         from micromech.core.constants import CUSTOM_TOOLS_DIR
@@ -785,13 +758,12 @@ def create_web_app(
             for t in all_tools
         ]
 
-    @app.post("/api/setup/tools")
+    @setup_router.post(
+        "/tools",
+        dependencies=[Depends(require_csrf_header)],
+    )
     async def api_setup_tools_save(request: Request):
         """Save which tools are enabled/disabled."""
-        csrf = request.headers.get(CSRF_HEADER)
-        if not csrf:
-            return JSONResponse({"error": f"Missing {CSRF_HEADER} header"}, 403)
-
         body = await request.json()
         disabled = body.get("disabled_tools", [])
         if not isinstance(disabled, list):
@@ -808,21 +780,19 @@ def create_web_app(
             "hot_reloadable": reload_tools is not None,
         }
 
-    @app.post("/api/tools/reload")
+    @protected_router.post(
+        "/tools/reload",
+        dependencies=[
+            Depends(require_csrf_header),
+            Depends(rate_limit("/api/tools/reload")),
+        ],
+    )
     async def api_tools_reload(request: Request):
         """Hot-reload the tool registry (builtins + custom), honoring disabled_tools.
 
         Must be called AFTER saving disabled_tools via POST /api/setup/tools.
         Returns the new list of active tool IDs.
         """
-        csrf = request.headers.get(CSRF_HEADER)
-        if not csrf:
-            return JSONResponse({"error": f"Missing {CSRF_HEADER} header"}, 403)
-        if _rate_limited("/api/tools/reload", _get_client_ip(request)):
-            return JSONResponse(
-                {"error": "Rate limit exceeded — too many reload attempts"},
-                429,
-            )
         if reload_tools is None:
             return JSONResponse(
                 {"error": "Hot reload not available (server not wired)"},
@@ -849,7 +819,7 @@ def create_web_app(
 
     # --- Metadata API ---
 
-    @app.get("/api/metadata")
+    @protected_router.get("/metadata")
     async def api_metadata_status() -> dict:
         """Current tool metadata state: staleness, hashes, tools list."""
         if not metadata_manager:
@@ -875,21 +845,17 @@ def create_web_app(
 
     _metadata_publish_lock = asyncio.Lock()
 
-    @app.post("/api/metadata/publish")
+    @protected_router.post(
+        "/metadata/publish",
+        dependencies=[
+            Depends(require_csrf_header),
+            Depends(rate_limit("/api/metadata/publish")),
+        ],
+    )
     async def api_metadata_publish(request: Request):
         """Publish tool metadata to IPFS + update on-chain hash (SSE stream)."""
         if not metadata_manager:
             return JSONResponse({"error": "Metadata manager not configured"}, 501)
-
-        csrf = request.headers.get(CSRF_HEADER)
-        if not csrf:
-            return JSONResponse(
-                {"error": f"Missing {CSRF_HEADER} header"},
-                403,
-            )
-
-        if _rate_limited("/api/metadata/publish", _get_client_ip(request)):
-            return JSONResponse({"error": "Rate limit exceeded"}, 429)
 
         if _metadata_publish_lock.locked():
             return JSONResponse({"error": "Publish already in progress"}, 409)
@@ -943,7 +909,7 @@ def create_web_app(
 
     _REQUEST_ID_RE = re.compile(r"^(http-|0x)?[a-f0-9-]{1,66}$", re.IGNORECASE)
 
-    @app.get("/result/{request_id}")
+    @public_router.get("/result/{request_id}")
     async def get_result_by_id(request_id: str) -> dict:
         """Get result for a specific request (used by demo poller)."""
         if not _REQUEST_ID_RE.match(request_id):
@@ -963,7 +929,7 @@ def create_web_app(
 
     # --- Metrics API ---
 
-    @app.get("/api/metrics/live")
+    @protected_router.get("/metrics/live")
     async def metrics_live() -> dict:
         """In-memory metrics snapshot (no DB hit)."""
         status = get_status()
@@ -975,7 +941,7 @@ def create_web_app(
             result["live"] = metrics.get_live_snapshot()
         return result
 
-    @app.get("/api/metrics/events")
+    @protected_router.get("/metrics/events")
     async def metrics_events(since: float = 0, limit: int = 50) -> list[dict]:
         """Recent activity events from in-memory buffer."""
         if not metrics:
@@ -984,28 +950,28 @@ def create_web_app(
             return metrics.get_events_since(since)
         return metrics.get_recent_events(limit)
 
-    @app.get("/api/metrics/tools")
+    @protected_router.get("/metrics/tools")
     async def metrics_tools(chain: Optional[str] = None) -> list[dict]:
         """Per-tool aggregate stats from DB."""
         if not queue:
             return []
         return queue.tool_stats(chain=chain)
 
-    @app.get("/api/metrics/daily")
+    @protected_router.get("/metrics/daily")
     async def metrics_daily(days: int = 30, chain: Optional[str] = None) -> list[dict]:
         """Daily request counts from DB."""
         if not queue:
             return []
         return queue.daily_stats(min(days, 365), chain=chain)
 
-    @app.get("/api/metrics/monthly")
+    @protected_router.get("/metrics/monthly")
     async def metrics_monthly(months: int = 12, chain: Optional[str] = None) -> list[dict]:
         """Monthly request counts from DB."""
         if not queue:
             return []
         return queue.monthly_stats(min(months, 36), chain=chain)
 
-    @app.get("/api/metrics/channels")
+    @protected_router.get("/metrics/channels")
     async def metrics_channels(chain: Optional[str] = None) -> dict:
         """On-chain vs off-chain request counts."""
         if not queue:
@@ -1014,7 +980,7 @@ def create_web_app(
 
     # --- SSE Stream ---
 
-    @app.get("/api/metrics/stream")
+    @protected_router.get("/metrics/stream")
     async def metrics_stream(request: Request) -> StreamingResponse:
         """Server-Sent Events stream for real-time dashboard updates.
 
@@ -1092,7 +1058,7 @@ def create_web_app(
 
     # --- Staking & Health API (Phase 4) ---
 
-    @app.get("/api/staking/status")
+    @protected_router.get("/staking/status")
     async def staking_status(chain: Optional[str] = None) -> dict:
         """Get staking status for all configured chains (or one)."""
 
@@ -1128,7 +1094,7 @@ def create_web_app(
             logger.exception("Staking status check failed")
             return {"error": "Staking status check failed"}
 
-    @app.get("/api/karma")
+    @protected_router.get("/karma")
     async def karma_status(chain: Optional[str] = None) -> dict:
         """Get mech karma and delivery counts for configured chains."""
 
@@ -1204,7 +1170,7 @@ def create_web_app(
             logger.exception("Karma check failed")
             return {"error": "Karma check failed"}
 
-    @app.get("/api/marketplace/pending-payments")
+    @protected_router.get("/marketplace/pending-payments")
     async def marketplace_pending_payments(chain: Optional[str] = None) -> dict:
         """Get pending xDAI claimable from the marketplace balance tracker for each chain."""
 
@@ -1247,7 +1213,7 @@ def create_web_app(
             logger.exception("Pending payments check failed")
             return {"error": "Pending payments check failed"}
 
-    @app.get("/api/health")
+    @public_router.get("/api/health")
     async def health_check() -> dict:
         """Health check with per-chain RPC status."""
         health: dict[str, Any] = {
@@ -1271,7 +1237,7 @@ def create_web_app(
 
     # --- Runtime Control API ---
 
-    @app.get("/api/runtime/status")
+    @protected_router.get("/runtime/status")
     async def runtime_status() -> dict:
         """Get runtime state (stopped, starting, running, error)."""
         if runtime_manager:
@@ -1280,15 +1246,12 @@ def create_web_app(
 
     _RUNTIME_ACTIONS = {"start", "stop", "restart"}
 
-    @app.post("/api/runtime/{action}")
-    async def runtime_control(
-        action: str,
-        request: Request,
-        x_micromech_action: Optional[str] = Header(None),
-    ) -> dict:
+    @protected_router.post(
+        "/runtime/{action}",
+        dependencies=[Depends(require_csrf_header)],
+    )
+    async def runtime_control(action: str, request: Request) -> dict:
         """Start, stop, or restart the mech runtime."""
-        if not x_micromech_action:
-            return JSONResponse({"error": "Missing X-Micromech-Action header"}, 403)
         if action not in _RUNTIME_ACTIONS:
             return JSONResponse({"error": "Unknown action"}, 404)
         if not runtime_manager:
@@ -1304,22 +1267,15 @@ def create_web_app(
 
     # --- Management API ---
 
-    @app.post("/api/management/{action}")
-    async def management_action(
-        action: str,
-        request: Request,
-        x_micromech_action: Optional[str] = Header(None),
-    ) -> dict:
+    @protected_router.post(
+        "/management/{action}",
+        dependencies=[Depends(require_csrf_header)],
+    )
+    async def management_action(action: str, request: Request) -> dict:
         """Execute a management action (stake, unstake, claim, checkpoint).
 
-        Requires X-Micromech-Action header (CSRF protection).
+        CSRF header enforced by dependency.
         """
-        if not x_micromech_action:
-            return JSONResponse(
-                {"success": False, "error": "Missing X-Micromech-Action header"},
-                403,
-            )
-
         body = await request.json() if request.headers.get("content-type") else {}
 
         def _run_action() -> dict:
@@ -1376,7 +1332,7 @@ def create_web_app(
             uv_logger.addHandler(stdlib_handler)
         _log_sink_registered = True
 
-    @app.get("/api/logs/stream")
+    @protected_router.get("/logs/stream")
     async def logs_stream(request: Request) -> StreamingResponse:
         """SSE stream of real-time loguru output."""
         if len(_log_queues) >= _MAX_SSE_CONNECTIONS:
@@ -1411,6 +1367,12 @@ def create_web_app(
                 "Connection": "keep-alive",
             },
         )
+
+    # Register routers on the app. Order does not matter for routing
+    # (paths are distinct), but public_router goes first by convention.
+    app.include_router(public_router)
+    app.include_router(setup_router)
+    app.include_router(protected_router)
 
     return app
 

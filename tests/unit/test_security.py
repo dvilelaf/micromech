@@ -470,11 +470,17 @@ class TestClientIPExtraction:
 
     @patch("micromech.web.app._TRUST_PROXY", True)
     def test_forwarded_for_chain(self):
+        """X-Forwarded-For chain — return the LAST (rightmost) entry.
+
+        The right-most hop is the one closest to our server (the last
+        trusted proxy). The left-most entry is client-controlled and
+        therefore spoofable, so we explicitly do NOT trust it.
+        """
         from micromech.web.app import _get_client_ip
 
         request = MagicMock()
         request.headers = {"X-Forwarded-For": "10.0.0.1, 172.16.0.1, 192.168.1.1"}
-        assert _get_client_ip(request) == "10.0.0.1"
+        assert _get_client_ip(request) == "192.168.1.1"
 
     def test_xff_ignored_without_trust(self):
         from micromech.web.app import _get_client_ip

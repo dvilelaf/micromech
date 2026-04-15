@@ -144,7 +144,8 @@ class TestSetupStateEndpoint:
         with patch.object(app_mod, "_rate_limited", return_value=True):
             resp = c.get("/api/setup/state")
         assert resp.status_code == 429
-        assert "error" in resp.json()
+        # rate_limit dependency raises HTTPException → {"detail": "..."}
+        assert "detail" in resp.json()
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_with_cached_key_storage(self, _mock):
@@ -264,7 +265,7 @@ class TestSetupSecretsEndpoint:
         with patch.object(app_mod, "_rate_limited", return_value=True):
             resp = c.get("/api/setup/secrets")
         assert resp.status_code == 429
-        assert "error" in resp.json()
+        assert "detail" in resp.json()
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_get_exception_returns_500(self, _mock):
@@ -281,7 +282,7 @@ class TestSetupSecretsEndpoint:
         with patch.object(app_mod, "_rate_limited", return_value=True):
             resp = c.post("/api/setup/secrets", json={}, headers=CSRF)
         assert resp.status_code == 429
-        assert "error" in resp.json()
+        assert "detail" in resp.json()
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_post_exception_returns_500(self, _mock):
