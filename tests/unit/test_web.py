@@ -58,7 +58,7 @@ def web_client() -> TestClient:
 
 
 class TestDashboard:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_renders_html(self, mock_setup, web_client: TestClient):
         resp = web_client.get("/")
         assert resp.status_code == 200

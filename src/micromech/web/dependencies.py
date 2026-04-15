@@ -86,19 +86,42 @@ def verify_auth_or_setup_mode(
     request: Request,
     authorization: Optional[str] = Header(None),
 ) -> None:
-    """Bypass auth while the wizard is still running; otherwise delegate to verify_auth.
+    """Bypass auth while the wizard is still running; otherwise require a token.
 
-    Setup endpoints must be reachable without credentials during the
-    initial wizard (no password exists yet). Once setup is complete and
-    WEBUI_PASSWORD is set, the same endpoints must require auth so an
-    attacker cannot replay ``POST /api/setup/wallet`` on a live install.
+    Two explicit branches, fail-closed on anything in between:
+
+    1. ``_needs_setup() == True``: the initial wizard is open — allow the
+       request through so ``POST /api/setup/wallet`` is reachable without
+       credentials (no password exists yet).
+    2. ``_needs_setup() == False``: the system is set up — demand a valid
+       Bearer token or ``?token=`` parameter. **Unlike** plain
+       ``verify_auth``, we do NOT honour the "password is None ⇒ allow"
+       fresh-install exception here: once setup is complete, a missing
+       ``webui_password`` must be treated as a misconfiguration, not a
+       free pass. Otherwise an operator clearing ``webui_password`` from
+       ``secrets.env`` post-deploy would silently expose every setup
+       endpoint (wallet re-creation, secrets rewrite) to unauthenticated
+       clients.
     """
     # Lazy import to avoid circular: dependencies -> app -> dependencies.
     from micromech.web.app import _needs_setup
 
     if _needs_setup():
         return
-    verify_auth(request, authorization)
+
+    password = _get_webui_password()
+    unauthorized = HTTPException(
+        status_code=401,
+        detail="Unauthorized",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if not password:
+        raise unauthorized
+
+    query_token = request.query_params.get("token")
+    if _check_token(authorization, query_token, password):
+        return
+    raise unauthorized
 
 
 def require_csrf_header(

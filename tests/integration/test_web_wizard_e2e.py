@@ -792,6 +792,43 @@ class TestWebWizardE2E:
             )
             assert r3.status_code == 401
 
+    def test_setup_endpoints_deny_when_password_missing_post_setup(
+        self, tmp_path: Path
+    ):
+        """Fail-closed regression: post-setup + no password ⇒ 401.
+
+        If an operator clears ``webui_password`` from ``secrets.env`` after
+        a completed deploy, ``verify_auth_or_setup_mode`` must NOT fall
+        through to the fresh-install branch and expose setup endpoints.
+        This reproduces security's concern #1 from the code review.
+        """
+        app = _make_web_app(tmp_path)
+        client = TestClient(app)
+
+        with (
+            patch("micromech.web.app._needs_setup", return_value=False),
+            patch("micromech.secrets.secrets.webui_password", None),
+        ):
+            # Even though WEBUI_PASSWORD is unset, post-setup setup
+            # endpoints must require a token — otherwise wallet re-creation
+            # and secrets rewrite are reachable by anyone.
+            resp = client.get("/api/setup/state")
+            assert resp.status_code == 401, (
+                "verify_auth_or_setup_mode must deny when "
+                "_needs_setup()==False AND password is missing — got "
+                f"{resp.status_code}"
+            )
+
+            resp = client.post(
+                "/api/setup/wallet",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Micromech-Action": "setup",
+                },
+                json={"password": WIZARD_PASSWORD},
+            )
+            assert resp.status_code == 401
+
     def test_every_api_route_has_auth_dependency(self, tmp_path: Path):
         """Fail-closed CI gate: every ``/api/*`` route must declare an auth dep.
 

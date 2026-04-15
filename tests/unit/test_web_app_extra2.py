@@ -135,7 +135,7 @@ class TestTokenQueryParamAuth:
 # ---------------------------------------------------------------------------
 
 class TestSetupStateEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_rate_limited_returns_429(self, _mock):
         """Rate limiting applies to setup/state."""
         from micromech.web import app as app_mod
@@ -147,7 +147,7 @@ class TestSetupStateEndpoint:
         # rate_limit dependency raises HTTPException → {"detail": "..."}
         assert "detail" in resp.json()
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_with_cached_key_storage(self, _mock):
         """setup_state reports wallet_exists=True when _cached_key_storage is set."""
         c = _client()
@@ -162,7 +162,7 @@ class TestSetupStateEndpoint:
         assert data["wallet_exists"] is True
         assert data["wallet_address"] is not None
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_with_cached_wallet(self, _mock):
         """setup_state reports wallet_exists=True when _cached_wallet is set."""
         c = _client()
@@ -176,7 +176,7 @@ class TestSetupStateEndpoint:
         data = resp.json()
         assert data["wallet_exists"] is True
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_step_complete_when_chain_setup(self, _mock):
         """Step = 'complete' when at least one chain is set up."""
         c = _client()
@@ -196,7 +196,7 @@ class TestSetupStateEndpoint:
         assert resp.status_code == 200
         assert resp.json()["step"] == "complete"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_step_deploy_when_chains_but_not_setup(self, _mock):
         """Step = 'deploy' when chains exist but none complete."""
         c = _client()
@@ -258,7 +258,7 @@ class TestSetupWalletEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestSetupSecretsEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_get_rate_limited(self, _mock):
         from micromech.web import app as app_mod
         c = _client()
@@ -267,7 +267,7 @@ class TestSetupSecretsEndpoint:
         assert resp.status_code == 429
         assert "detail" in resp.json()
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_get_exception_returns_500(self, _mock):
         c = _client()
         with patch("micromech.core.secrets_file.read_secrets_file", side_effect=Exception("io")):
@@ -275,7 +275,7 @@ class TestSetupSecretsEndpoint:
         assert resp.status_code == 500
         assert "error" in resp.json()
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_post_rate_limited(self, _mock):
         from micromech.web import app as app_mod
         c = _client()
@@ -284,7 +284,7 @@ class TestSetupSecretsEndpoint:
         assert resp.status_code == 429
         assert "detail" in resp.json()
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_post_exception_returns_500(self, _mock):
         c = _client()
         with patch("micromech.core.secrets_file.write_secrets", side_effect=Exception("io")):
@@ -298,7 +298,7 @@ class TestSetupSecretsEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestSetupToolsEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_get_tools_list(self, _mock):
         """GET /api/setup/tools returns list of tool packages."""
         c = _client()
@@ -317,14 +317,14 @@ class TestSetupToolsEndpoint:
         assert data[0]["name"] == "web_search"
         assert data[0]["enabled"] is True
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_post_tools_missing_csrf_returns_403(self, _mock):
         """POST /api/setup/tools without CSRF header returns 403."""
         c = _client()
         resp = c.post("/api/setup/tools", json={"disabled_tools": []})
         assert resp.status_code == 403
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_post_tools_invalid_list_returns_400(self, _mock):
         """POST /api/setup/tools with non-list disabled_tools returns 400."""
         c = _client()
@@ -337,7 +337,7 @@ class TestSetupToolsEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestKarmaEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_no_mech_address_returns_error(self, _mock):
         """Chain without mech_address returns karma=None."""
         mock_cfg = MagicMock()
@@ -352,7 +352,7 @@ class TestKarmaEndpoint:
         assert "gnosis" in data
         assert data["gnosis"]["karma"] is None
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_bridge_exception_returns_error(self, _mock):
         """Exception in karma check returns error key."""
         mock_cfg = MagicMock()
@@ -369,7 +369,7 @@ class TestKarmaEndpoint:
         assert "gnosis" in data
         assert data["gnosis"]["karma"] is None
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_outer_exception_returns_error(self, _mock):
         """Exception in thread returns error dict."""
         with patch("asyncio.to_thread", side_effect=Exception("thread fail")):
@@ -384,7 +384,7 @@ class TestKarmaEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestHealthCheckWithMetrics:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_health_includes_metrics_when_provided(self, _mock):
         """Health check includes uptime/requests/deliveries from metrics."""
         mock_metrics = MagicMock()
@@ -403,7 +403,7 @@ class TestHealthCheckWithMetrics:
         assert data["requests_received"] == 42
         assert data["deliveries_completed"] == 38
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_health_includes_chains(self, _mock):
         """Health check populates per-chain status."""
 
@@ -423,7 +423,7 @@ class TestHealthCheckWithMetrics:
 # ---------------------------------------------------------------------------
 
 class TestMetricsEndpointsWithQueue:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_metrics_events_with_since(self, _mock):
         """GET /api/metrics/events?since= calls get_events_since."""
         mock_metrics = MagicMock()
@@ -434,7 +434,7 @@ class TestMetricsEndpointsWithQueue:
         data = resp.json()
         assert len(data) == 1
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_metrics_tools_with_queue(self, _mock):
         """GET /api/metrics/tools returns queue.tool_stats()."""
         mock_queue = MagicMock()
@@ -444,7 +444,7 @@ class TestMetricsEndpointsWithQueue:
         assert resp.status_code == 200
         assert resp.json()[0]["tool"] == "web_search"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_metrics_daily_with_queue(self, _mock):
         """GET /api/metrics/daily returns queue.daily_stats()."""
         mock_queue = MagicMock()
@@ -454,7 +454,7 @@ class TestMetricsEndpointsWithQueue:
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_metrics_monthly_with_queue(self, _mock):
         """GET /api/metrics/monthly returns queue.monthly_stats()."""
         mock_queue = MagicMock()
@@ -464,7 +464,7 @@ class TestMetricsEndpointsWithQueue:
         assert resp.status_code == 200
         assert len(resp.json()) == 1
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_metrics_channels_with_queue(self, _mock):
         """GET /api/metrics/channels returns queue.onchain_offchain_counts()."""
         mock_queue = MagicMock()
@@ -480,7 +480,7 @@ class TestMetricsEndpointsWithQueue:
 # ---------------------------------------------------------------------------
 
 class TestManagementServiceKeyFallback:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_service_key_from_bridge_when_not_in_body(self, _mock):
         """Management action falls back to get_service_info for service_key."""
         mock_cfg = MagicMock()
@@ -504,7 +504,7 @@ class TestManagementServiceKeyFallback:
 # ---------------------------------------------------------------------------
 
 class TestResultNonJsonOutput:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_non_json_result_output_returns_raw(self, _mock):
         """Result with non-JSON output returns raw string."""
         mock_result = MagicMock()
@@ -534,7 +534,7 @@ class TestResultNonJsonOutput:
 # ---------------------------------------------------------------------------
 
 class TestSetupDeployInProgress:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_deploy_already_in_progress_returns_409(self, _mock):
         """Second deploy to same chain returns 409."""
         import asyncio

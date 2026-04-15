@@ -114,7 +114,7 @@ class TestNeedsSetupNoCompleteChain:
 # ---------------------------------------------------------------------------
 
 class TestSetupStateBridgeException:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_bridge_import_error_sets_needs_password(self, _mock):
         """When bridge access raises, setup_state sets needs_password=True."""
         c = _client()
@@ -147,7 +147,7 @@ class TestSetupStateBridgeException:
 # ---------------------------------------------------------------------------
 
 class TestSetupStateWalletPathException:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_wallet_path_import_error_is_swallowed(self, _mock):
         """Exception when importing WALLET_PATH is silently ignored."""
         c = _client()
@@ -276,7 +276,7 @@ class TestSetupWalletMnemonicAndSecretExceptions:
 # ---------------------------------------------------------------------------
 
 class TestSaveSecretsWebUiPasswordHotReload:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_webui_password_hot_reloaded(self, _mock):
         """Saving webui_password updates in-memory singleton immediately."""
         from micromech.core.secrets_file import EDITABLE_KEYS
@@ -302,7 +302,7 @@ class TestSaveSecretsWebUiPasswordHotReload:
         # webui_password should be in saved list
         assert "webui_password" in data["saved"]
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_webui_password_empty_sets_none(self, _mock):
         """Saving empty webui_password clears the in-memory singleton."""
         from micromech.core.secrets_file import EDITABLE_KEYS
@@ -323,7 +323,7 @@ class TestSaveSecretsWebUiPasswordHotReload:
             )
         assert resp.status_code == 200
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_save_secrets_value_error_returns_400(self, _mock):
         """ValueError from write_secrets returns 400."""
         c = _client()
@@ -336,7 +336,7 @@ class TestSaveSecretsWebUiPasswordHotReload:
         assert resp.status_code == 400
         assert "bad value" in resp.json()["error"]
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_save_secrets_non_string_value_returns_400(self, _mock):
         """Non-string value for an editable key returns 400."""
         from micromech.core.secrets_file import EDITABLE_KEYS
@@ -694,7 +694,7 @@ class TestMetricsStream:
 # ---------------------------------------------------------------------------
 
 class TestStakingStatusWithServiceKey:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_chain_with_service_key_returns_status(self, _mock):
         """When service_key exists, MechLifecycle.get_status is called."""
         c = _client()
@@ -716,7 +716,7 @@ class TestStakingStatusWithServiceKey:
         data = resp.json()
         assert data.get("gnosis", {}).get("status") == "staked"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_chain_mechlifecycle_exception_returns_error(self, _mock):
         """Exception in MechLifecycle.get_status returns {status: error}."""
         c = _client()
@@ -737,7 +737,7 @@ class TestStakingStatusWithServiceKey:
         data = resp.json()
         assert data.get("gnosis", {}).get("status") == "error"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_get_status_returns_none_uses_unknown(self, _mock):
         """When get_status returns None, result is {status: unknown}."""
         c = _client()
@@ -758,7 +758,7 @@ class TestStakingStatusWithServiceKey:
         data = resp.json()
         assert data.get("gnosis", {}).get("status") == "unknown"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_staking_status_with_chain_filter(self, _mock):
         """Passing ?chain= filters to specific chain."""
         c = _client()
@@ -783,7 +783,7 @@ class TestStakingStatusWithServiceKey:
 # ---------------------------------------------------------------------------
 
 class TestKarmaStatusBody:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_karma_with_mech_address_success(self, _mock):
         """Successful karma check returns karma, deliveries, timeouts."""
         c = _client()
@@ -825,7 +825,7 @@ class TestKarmaStatusBody:
         gnosis_data = data["gnosis"]
         assert "karma" in gnosis_data or "error" in gnosis_data
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_karma_chain_filter(self, _mock):
         """?chain= parameter filters karma to one chain."""
         mock_cfg = MagicMock()
@@ -843,7 +843,7 @@ class TestKarmaStatusBody:
         data = resp.json()
         assert "gnosis" in data
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_karma_no_multisig_skips_delivery_count(self, _mock):
         """When no multisig address, delivery count stays 0."""
         c = _client()
@@ -1088,7 +1088,7 @@ class TestRateLimited:
 # ---------------------------------------------------------------------------
 
 class TestBearerAuthValidToken:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_valid_bearer_token_allows_access(self, _mock):
         """A valid Bearer token in Authorization header grants access."""
         from pydantic import SecretStr
@@ -1107,7 +1107,7 @@ class TestBearerAuthValidToken:
         finally:
             _real_secrets.webui_password = original
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_invalid_bearer_token_returns_401(self, _mock):
         """An incorrect Bearer token returns 401."""
         from pydantic import SecretStr
@@ -1128,10 +1128,15 @@ class TestBearerAuthValidToken:
 
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_html_route_loads_when_no_auth(self, _mock):
-        """HTML routes (non /api/) are served directly — auth is handled client-side."""
+        """HTML routes (non /api/) are served directly — auth is handled client-side.
+
+        With ``_needs_setup==False`` the dashboard page is rendered (rather than
+        redirected to ``/setup``), so the HTML shell loads even without an
+        Authorization header: the login modal inside the page then handles
+        auth on the subsequent ``/api/*`` calls.
+        """
         c = _client()
         resp = c.get("/", follow_redirects=False)
-        # Auth middleware only covers /api/* — HTML routes always return 200
         assert resp.status_code == 200
 
 
@@ -1140,7 +1145,7 @@ class TestBearerAuthValidToken:
 # ---------------------------------------------------------------------------
 
 class TestGetSecretsMasking:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_sensitive_values_are_masked(self, _mock):
         """Sensitive keys are returned as '***' when non-empty."""
         from micromech.core.secrets_file import SENSITIVE_KEYS
@@ -1165,7 +1170,7 @@ class TestGetSecretsMasking:
         if sensitive_key in data:
             assert data[sensitive_key] == "***"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_non_sensitive_values_are_returned_plaintext(self, _mock):
         """Non-sensitive editable keys are returned as-is."""
         from micromech.core.secrets_file import EDITABLE_KEYS, SENSITIVE_KEYS
@@ -1193,7 +1198,7 @@ class TestGetSecretsMasking:
 # ---------------------------------------------------------------------------
 
 class TestSaveSecretsFiltering:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_unknown_keys_are_ignored(self, _mock):
         """Keys not in EDITABLE_KEYS are silently skipped."""
         c = _client()
@@ -1208,7 +1213,7 @@ class TestSaveSecretsFiltering:
         call_args = mock_write.call_args[0][0]
         assert "__unknown_key__" not in call_args
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_masked_values_are_skipped(self, _mock):
         """Values equal to '***' are not written (masked = no change)."""
         from micromech.core.secrets_file import EDITABLE_KEYS
@@ -1418,7 +1423,7 @@ class TestCreateOrUnlockBody:
 # ---------------------------------------------------------------------------
 
 class TestSetupStateBridgeRaisesOnAccess:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_exception_accessing_cached_key_storage_sets_needs_password(self, _mock):
         """If accessing _cached_key_storage raises, needs_password is set True."""
         c = _client()
@@ -1436,7 +1441,7 @@ class TestSetupStateBridgeRaisesOnAccess:
         # When bridge access fails, needs_password should be True
         assert "needs_password" in data
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_importerror_in_bridge_module_sets_needs_password(self, _mock):
         """ImportError on bridge module → needs_password=True."""
         c = _client()
@@ -1475,7 +1480,7 @@ class TestRateLimitOnSetupEndpoints:
             )
         assert resp.status_code == 429
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_save_secrets_post_rate_limited(self, _mock):
         """Rate limit on POST /api/setup/secrets returns 429."""
         from micromech.web import app as app_mod
@@ -1529,7 +1534,7 @@ class TestCsrfProtectionOnWalletAndSecrets:
         # require_csrf_header dependency raises HTTPException → {"detail": ...}
         assert "Missing" in resp.json()["detail"]
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_save_secrets_missing_csrf_returns_403(self, _mock):
         """POST /api/setup/secrets without X-Micromech-Action returns 403."""
         c = _client()

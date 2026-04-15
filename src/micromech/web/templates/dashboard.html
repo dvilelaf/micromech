@@ -1795,7 +1795,7 @@
             });
             if (!saveRes.ok) {
                 const err = await saveRes.json().catch(() => ({}));
-                throw new Error(err.error || ('HTTP ' + saveRes.status));
+                throw new Error(err.detail || err.error || ('HTTP ' + saveRes.status));
             }
 
             // 2) Hot-reload the registry
@@ -1807,7 +1807,7 @@
             });
             if (!reloadRes.ok) {
                 const err = await reloadRes.json().catch(() => ({}));
-                throw new Error(err.error || ('HTTP ' + reloadRes.status));
+                throw new Error(err.detail || err.error || ('HTTP ' + reloadRes.status));
             }
 
             // Commit: the snapshot is what the server now knows.
@@ -1875,7 +1875,7 @@
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                throw new Error(err.error || ('HTTP ' + res.status));
+                throw new Error(err.detail || err.error || ('HTTP ' + res.status));
             }
             const data = await res.json();
             const n = (data.tools || []).length;
@@ -1917,7 +1917,7 @@
             });
             if (!res.ok) {
                 const err = await res.json().catch(() => ({}));
-                return { success: false, error: err.error || ('HTTP ' + res.status) };
+                return { success: false, error: err.detail || err.error || ('HTTP ' + res.status) };
             }
             const reader = res.body.getReader();
             const decoder = new TextDecoder();
