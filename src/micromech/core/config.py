@@ -69,7 +69,7 @@ class MicromechConfig(BaseModel):
     fund_threshold_native: float = Field(default=0.1, ge=0, le=50)
     fund_target_native: float = Field(default=1.0, ge=0, le=50)
     payment_withdraw_enabled: bool = True
-    payment_withdraw_threshold_xdai: float = Field(default=50.0, ge=0)
+    payment_withdraw_threshold_xdai: float = Field(default=30.0, ge=0)
     payment_withdraw_interval_hours: int = Field(default=6, ge=1, le=168)
     xdai_sweep_enabled: bool = True
     xdai_sweep_tag: str = ""
