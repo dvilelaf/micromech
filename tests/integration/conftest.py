@@ -73,6 +73,35 @@ def _is_port_responding(port: int) -> bool:
         return False
 
 
+def _fork_is_stale(port: int, rpc_url: str, max_lag: int = 3) -> bool:
+    """Return True if the running fork on *port* is too far behind the live chain.
+
+    Some RPC providers (e.g. rpc.gnosis.gateway.fm) have a very short sliding
+    window — once the chain advances past the fork block the provider refuses
+    to serve it, causing BlockOutOfRangeError in every subsequent call.
+
+    We kill and restart the fork whenever it lags the live chain by more than
+    *max_lag* blocks.
+    """
+    try:
+        local_w3 = Web3(Web3.HTTPProvider(f"http://localhost:{port}", request_kwargs={"timeout": 2}))
+        local_block = local_w3.eth.block_number
+    except Exception:
+        return False  # can't connect locally — not our problem here
+
+    try:
+        live_w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 5}))
+        live_block = live_w3.eth.block_number
+    except Exception:
+        return False  # can't reach live RPC — leave the existing fork alone
+
+    lag = live_block - local_block
+    if lag > max_lag:
+        print(f"  anvil: port {port} fork is stale (local={local_block}, live={live_block}, lag={lag})")
+        return True
+    return False
+
+
 def _wait_ready(port: int, proc: subprocess.Popen, timeout: int = 30) -> None:
     """Block until Anvil fork responds on the given port."""
     deadline = time.monotonic() + timeout
@@ -110,19 +139,28 @@ def _anvil_forks():
     started: dict[str, subprocess.Popen] = {}  # only processes WE started
 
     for chain, port in _CHAIN_PORTS.items():
-        # Already running? Just set env var and move on.
-        if _is_port_responding(port):
-            env_var = f"ANVIL_{chain.upper()}"
-            os.environ[env_var] = f"http://localhost:{port}"
-            print(f"  anvil: {chain}:{port} already running (reusing)")
-            continue
-
         rpc_key = _RPC_KEYS[chain]
         rpc_url = secrets.get(rpc_key)
+
+        if _is_port_responding(port):
+            # Reuse if fresh; kill and restart if the fork is stale.
+            if rpc_url and not rpc_url.startswith("#") and _fork_is_stale(port, rpc_url):
+                subprocess.run(
+                    f"lsof -ti:{port} | xargs -r kill -9 2>/dev/null",
+                    shell=True,
+                    capture_output=True,
+                )
+                time.sleep(0.5)
+            else:
+                env_var = f"ANVIL_{chain.upper()}"
+                os.environ[env_var] = f"http://localhost:{port}"
+                print(f"  anvil: {chain}:{port} already running (reusing)")
+                continue
+
         if not rpc_url or rpc_url.startswith("#"):
             continue
 
-        # Kill stale listeners on the port
+        # Kill any stale listeners on the port (belt-and-suspenders)
         subprocess.run(
             f"lsof -ti:{port} | xargs -r kill 2>/dev/null",
             shell=True,
