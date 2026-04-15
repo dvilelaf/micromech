@@ -58,7 +58,7 @@ def web_client() -> TestClient:
 
 
 class TestDashboard:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_renders_html(self, mock_setup, web_client: TestClient):
         resp = web_client.get("/")
         assert resp.status_code == 200
@@ -446,7 +446,8 @@ class TestToolsHotReload:
             assert resp.status_code == 200
         resp = client.post("/api/tools/reload", headers=self.CSRF)
         assert resp.status_code == 429
-        assert "rate limit" in resp.json()["error"].lower()
+        # rate_limit dependency raises HTTPException, serialized as {"detail": ...}
+        assert "too many requests" in resp.json()["detail"].lower()
         _rate_counters.clear()
 
     @patch("micromech.web.app.MicromechConfig")

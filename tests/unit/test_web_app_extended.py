@@ -131,7 +131,7 @@ class TestModuleUtils:
 # ---------------------------------------------------------------------------
 
 class TestSetupBalanceEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_valid_chain_returns_balances(self, _mock):
         c = _client()
         with patch("micromech.core.bridge.check_balances", return_value=(2.0, 15.0)):
@@ -141,14 +141,14 @@ class TestSetupBalanceEndpoint:
         assert "native_balance" in data
         assert data["native_balance"] == pytest.approx(2.0)
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_unknown_chain_returns_error(self, _mock):
         c = _client()
         resp = c.get("/api/setup/balance?chain=unknownchain99")
         assert resp.status_code == 200
         assert resp.json()["error"] == "Unknown chain"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_balance_check_exception_returns_error(self, _mock):
         c = _client()
         with patch("micromech.core.bridge.check_balances", side_effect=Exception("rpc")):
@@ -156,7 +156,7 @@ class TestSetupBalanceEndpoint:
         assert resp.status_code == 200
         assert "error" in resp.json()
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_sufficient_flag_true_when_funded(self, _mock):
         c = _client()
         # Patch high balances so sufficient=True (MIN_OLAS_WHOLE=5000, min_native~0.1)
@@ -164,7 +164,7 @@ class TestSetupBalanceEndpoint:
             resp = c.get("/api/setup/balance?chain=gnosis")
         assert resp.json()["sufficient"] is True
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_sufficient_flag_false_when_underfunded(self, _mock):
         c = _client()
         with patch("micromech.core.bridge.check_balances", return_value=(0.0, 0.0)):
@@ -177,7 +177,7 @@ class TestSetupBalanceEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestStakingStatusEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_no_auth_required_without_password(self, _mock):
         """Endpoint accessible without auth when no password set."""
         c = _client()
@@ -192,7 +192,7 @@ class TestStakingStatusEndpoint:
             resp = c.get("/api/staking/status")
         assert resp.status_code == 200
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_not_configured_chain(self, _mock):
         c = _client()
         with (
@@ -207,7 +207,7 @@ class TestStakingStatusEndpoint:
         data = resp.json()
         assert data.get("gnosis", {}).get("status") == "not_configured"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_exception_returns_error(self, _mock):
         c = _client()
         with patch("micromech.web.app.MicromechConfig.load", side_effect=Exception("db error")):
@@ -221,14 +221,14 @@ class TestStakingStatusEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestRuntimeStatusEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_without_runtime_manager(self, _mock):
         c = _client()
         resp = c.get("/api/runtime/status")
         assert resp.status_code == 200
         assert resp.json()["state"] == "unavailable"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_with_runtime_manager(self, _mock):
         runtime = MagicMock()
         runtime.get_status.return_value = {"state": "running"}
@@ -238,25 +238,25 @@ class TestRuntimeStatusEndpoint:
 
 
 class TestRuntimeControlEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_missing_csrf_returns_403(self, _mock):
         c = _client()
         resp = c.post("/api/runtime/start")
         assert resp.status_code == 403
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_unknown_action_returns_404(self, _mock):
         c = _client()
         resp = c.post("/api/runtime/explode", headers=CSRF)
         assert resp.status_code == 404
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_no_runtime_manager_returns_503(self, _mock):
         c = _client()
         resp = c.post("/api/runtime/start", headers=CSRF)
         assert resp.status_code == 503
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_start_action(self, _mock):
         runtime = MagicMock()
         runtime.start = AsyncMock(return_value=True)
@@ -266,7 +266,7 @@ class TestRuntimeControlEndpoint:
         assert resp.status_code == 200
         assert resp.json()["success"] is True
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_stop_action(self, _mock):
         runtime = MagicMock()
         runtime.stop = AsyncMock(return_value=True)
@@ -275,7 +275,7 @@ class TestRuntimeControlEndpoint:
         resp = c.post("/api/runtime/stop", headers=CSRF)
         assert resp.status_code == 200
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_restart_action(self, _mock):
         runtime = MagicMock()
         runtime.restart = AsyncMock(return_value=True)
@@ -290,14 +290,14 @@ class TestRuntimeControlEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestMetadataEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_no_metadata_manager(self, _mock):
         c = _client()
         resp = c.get("/api/metadata")
         assert resp.status_code == 200
         assert "error" in resp.json()
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_with_metadata_manager_up_to_date(self, _mock):
         mm = MagicMock()
         status = MagicMock()
@@ -312,7 +312,7 @@ class TestMetadataEndpoint:
         resp = c.get("/api/metadata")
         assert resp.json()["status"] == "up_to_date"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_with_metadata_manager_stale(self, _mock):
         mm = MagicMock()
         status = MagicMock()
@@ -327,7 +327,7 @@ class TestMetadataEndpoint:
         resp = c.get("/api/metadata")
         assert resp.json()["status"] == "stale"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_with_metadata_manager_not_registered(self, _mock):
         mm = MagicMock()
         status = MagicMock()
@@ -342,7 +342,7 @@ class TestMetadataEndpoint:
         resp = c.get("/api/metadata")
         assert resp.json()["status"] == "not_registered"
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_exception_returns_error(self, _mock):
         mm = MagicMock()
         mm.get_status.side_effect = Exception("broken")
@@ -356,19 +356,19 @@ class TestMetadataEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestResultByIdEndpoint:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_invalid_id_returns_400(self, _mock):
         c = _client()
         resp = c.get("/result/'; DROP TABLE--")
         assert resp.status_code == 400
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_no_queue_returns_501(self, _mock):
         c = _client()
         resp = c.get("/result/" + "ab" * 32)
         assert resp.status_code == 501
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_not_found_returns_404(self, _mock):
         queue = MagicMock()
         queue.get_by_id.return_value = None
@@ -376,7 +376,7 @@ class TestResultByIdEndpoint:
         resp = c.get("/result/" + "ab" * 32)
         assert resp.status_code == 404
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_found_record_no_result(self, _mock):
         queue = MagicMock()
         record = MagicMock()
@@ -394,7 +394,7 @@ class TestResultByIdEndpoint:
         resp = c.get(f"/result/{'ab' * 32}")
         assert resp.status_code == 200
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_found_record_with_json_result(self, _mock):
         import json
         queue = MagicMock()
@@ -423,7 +423,7 @@ class TestResultByIdEndpoint:
 # ---------------------------------------------------------------------------
 
 class TestBearerAuthOnProtectedEndpoints:
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_staking_status_requires_auth_when_password_set(self, _mock):
         c = _client()
         original = _real_secrets.webui_password
@@ -434,7 +434,7 @@ class TestBearerAuthOnProtectedEndpoints:
         finally:
             _real_secrets.webui_password = original
 
-    @patch("micromech.web.app._needs_setup", return_value=False)
+    @patch("micromech.web.app._needs_setup", return_value=True)
     def test_runtime_status_requires_auth_when_password_set(self, _mock):
         c = _client()
         original = _real_secrets.webui_password
