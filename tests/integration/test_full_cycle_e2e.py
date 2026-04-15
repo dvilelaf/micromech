@@ -447,6 +447,8 @@ class TestFullMechCycle:
         }
         svc_patch = patch("micromech.core.bridge.get_service_info", return_value=svc_info)
         svc_patch.start()
+        flush_patch = patch("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0)
+        flush_patch.start()
 
         server = MechServer(config, bridges={chain_name: bridge})
 
@@ -576,6 +578,7 @@ class TestFullMechCycle:
 
         finally:
             svc_patch.stop()
+            flush_patch.stop()
             server.stop()
             try:
                 await asyncio.wait_for(server_task, timeout=5.0)
@@ -671,6 +674,8 @@ class TestFullMechCycle:
         }
         svc_patch2 = patch("micromech.core.bridge.get_service_info", return_value=svc_info2)
         svc_patch2.start()
+        flush_patch2 = patch("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0)
+        flush_patch2.start()
 
         server = MechServer(config, bridges={chain_name: bridge})
         server.listeners[chain_name]._last_block = block_before
@@ -735,6 +740,7 @@ class TestFullMechCycle:
 
         finally:
             svc_patch2.stop()
+            flush_patch2.stop()
             server.stop()
             try:
                 await asyncio.wait_for(server_task, timeout=5.0)

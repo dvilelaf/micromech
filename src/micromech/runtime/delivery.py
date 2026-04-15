@@ -131,13 +131,17 @@ class DeliveryManager:
     def _request_id_to_bytes(self, request_id: str) -> bytes:
         """Convert a request ID string to bytes32.
 
-        On-chain IDs come in as "0x" + 64 hex chars (bytes32) — converted directly.
-        Off-chain / non-hex IDs are sha256-hashed to get a deterministic bytes32.
-        Raises ValueError if a hex ID is not exactly 32 bytes (delivery mismatch risk).
+        On-chain IDs are stored as exactly 64 hex chars (bytes32), with or without
+        "0x" prefix — converted directly.  IDs with "0x" prefix but wrong length
+        raise ValueError (delivery mismatch risk).  Off-chain / non-hex IDs are
+        sha256-hashed to get a deterministic bytes32.
         """
-        if request_id.startswith("0x"):
+        has_prefix = request_id.startswith("0x")
+        hex_candidate = request_id[2:] if has_prefix else request_id
+
+        if has_prefix or len(hex_candidate) == 64:
             try:
-                req_id_bytes = bytes.fromhex(request_id[2:])
+                req_id_bytes = bytes.fromhex(hex_candidate)
                 if len(req_id_bytes) != 32:
                     msg = (
                         f"request_id {request_id[:20]}... is {len(req_id_bytes)} bytes "

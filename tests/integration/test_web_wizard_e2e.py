@@ -51,19 +51,26 @@ def _make_web_app(config_path: Path):
 
 @pytest.fixture(autouse=True)
 def _reset_bridge_caches():
-    """Clear bridge module caches before each test.
+    """Clear bridge module caches and rate counters before each test.
 
-    Without this, state from a previous test leaks into the next.
+    Without this, state from a previous test leaks into the next — either
+    cached wallet/interface state or accumulated rate-limiter buckets that
+    cause subsequent tests to receive 429 instead of the expected status.
     """
     import micromech.core.bridge as _bridge
+    import micromech.web.app as _app
 
     _bridge._cached_wallet = None
     _bridge._cached_interfaces = None
     _bridge._cached_key_storage = None
+    _app._rate_counters.clear()
+    _app._setup_needed = None  # reset _needs_setup() cache so each test sees a clean state
     yield
     _bridge._cached_wallet = None
     _bridge._cached_interfaces = None
     _bridge._cached_key_storage = None
+    _app._rate_counters.clear()
+    _app._setup_needed = None
 
 
 class TestWebWizardE2E:
@@ -548,16 +555,23 @@ class TestWebWizardE2E:
         assert data["step"] == "wallet"
 
     def test_auth_required(self, tmp_path: Path):
-        """State-changing endpoints require auth token."""
+        """Setup endpoints require auth once the system is already configured.
+
+        During initial setup _needs_setup() is True and the middleware passes
+        requests through so the wizard is reachable.  Once setup is complete,
+        _needs_setup() returns False and the middleware enforces Bearer auth.
+        """
         app = _make_web_app(tmp_path)
         client = TestClient(app)
 
-        # No auth token
-        resp = client.post(
-            "/api/setup/wallet",
-            headers={"Content-Type": "application/json", "X-Micromech-Action": "setup"},
-            json={"password": WIZARD_PASSWORD},
-        )
+        # Simulate post-setup state: _needs_setup() returns False.
+        # Without this the middleware intentionally skips auth on /api/setup/.
+        with patch("micromech.web.app._needs_setup", return_value=False):
+            resp = client.post(
+                "/api/setup/wallet",
+                headers={"Content-Type": "application/json", "X-Micromech-Action": "setup"},
+                json={"password": WIZARD_PASSWORD},
+            )
         assert resp.status_code == 401
 
     def test_csrf_required(self, tmp_path: Path):

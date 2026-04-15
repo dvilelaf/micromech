@@ -1551,7 +1551,7 @@ wheels = [
 
 [[package]]
 name = "iwa"
-version = "0.7.0"
+version = "0.7.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1587,9 +1587,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "web3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/7a/6eaaf0bacddec3108d6bffa55b14a6babed7cde0177a41fe47f456ec109a/iwa-0.7.0.tar.gz", hash = "sha256:5c5a63d95d9c5a5c5bdf587de83996978599e72b8b4d8a99a21e885e4e274562", size = 632334 }
+sdist = { url = "https://files.pythonhosted.org/packages/a6/d6/1c1b6b50d1296642398566ec5c32150c1c8584f3c4e9839d4e6ab171bd36/iwa-0.7.4.tar.gz", hash = "sha256:fb104985e1f3a0b020498e1baa3f4af5cf8bc5770bfe4fc4980823f2b881f1d4", size = 631924 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/6a/efe23e3562d7f07daa266ac7ddc79d8ba69f44411f66a01416735cb96eb1/iwa-0.7.0-py3-none-any.whl", hash = "sha256:c3caa95f40082a7a81c60e9b8079015e8c50914dbcdc27149ed847caa0808bf3", size = 761894 },
+    { url = "https://files.pythonhosted.org/packages/ba/3d/f05da498aafd481e31077aca2542a080b7ac524d7a1fe70fc85111b9e280/iwa-0.7.4-py3-none-any.whl", hash = "sha256:fc64b102aea6f7ea8c86b8b793eb982bf5043504053c617b56f1d5f63f8aa1ab", size = 761488 },
 ]
 
 [[package]]

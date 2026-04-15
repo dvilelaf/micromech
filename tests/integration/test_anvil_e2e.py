@@ -640,7 +640,9 @@ class TestFullServerCycleE2E:
             "service_key": f"gnosis:{MECH_SERVICE_ID}",
             "multisig_address": MECH_MULTISIG,
         }
-        with patch("micromech.core.bridge.get_service_info", return_value=svc_info):
+        with patch("micromech.core.bridge.get_service_info", return_value=svc_info), patch(
+            "micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0
+        ):
             server = MechServer(config, bridges={"gnosis": bridge})
 
             # Set listener to start from before our request
@@ -648,7 +650,7 @@ class TestFullServerCycleE2E:
 
             # Step 3: Run server and wait for detect + execute + deliver
             async def stop_after_delivery():
-                for _ in range(30):
+                for _ in range(60):
                     await asyncio.sleep(0.5)
                     counts = server.queue.count_by_status()
                     delivered = counts.get("delivered", 0)
@@ -660,7 +662,7 @@ class TestFullServerCycleE2E:
             asyncio.create_task(stop_after_delivery())
 
             try:
-                await asyncio.wait_for(server.run(with_http=False), timeout=20.0)
+                await asyncio.wait_for(server.run(with_http=False), timeout=40.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 

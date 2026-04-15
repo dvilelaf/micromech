@@ -496,6 +496,14 @@ class TestRequestIdToBytes:
         with pytest.raises(ValueError, match="expected 32"):
             dm._request_id_to_bytes("0x" + "ab" * 16)
 
+    def test_hex_id_without_prefix(self):
+        """On-chain IDs stored without 0x prefix (as stored by listener) convert correctly."""
+        dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), _make_bridge())
+        raw = "ab" * 32  # 64 hex chars, no 0x — as stored by listener's rid.hex()
+        result = dm._request_id_to_bytes(raw)
+        assert len(result) == 32
+        assert result == bytes.fromhex(raw)
+
 
 # ---------------------------------------------------------------------------
 # _prepare_onchain
