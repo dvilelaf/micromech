@@ -720,3 +720,50 @@ class TestWebWizardE2E:
         content = secrets_path.read_text(encoding="utf-8")
         assert "wallet_password=newpass123" in content
         assert "existing_key=existing_value" in content
+
+    def test_auth_enforced_when_mounted_as_sub_app(self, tmp_path: Path):
+        """Bearer auth must work when web_app is mounted at a path prefix.
+
+        In production, MechServer does ``app.mount("/dashboard", web_app)``.
+        Starlette's HTTPMiddleware receives the *full* path (e.g.
+        /dashboard/api/status), not the path relative to the mount point.
+        This test reproduces that exact topology and verifies that 401 is
+        returned when no token is provided and 200 when the correct token is
+        sent — ensuring the middleware correctly strips the root_path prefix.
+        """
+        from fastapi import FastAPI
+        from pydantic import SecretStr
+
+        web_app = _make_web_app(tmp_path)
+        main_app = FastAPI()
+        main_app.mount("/dashboard", web_app)
+        client = TestClient(main_app, raise_server_exceptions=False)
+
+        token = "test-webui-password-12345"
+
+        with (
+            patch("micromech.secrets.secrets.webui_password", SecretStr(token)),
+            patch("micromech.web.app._needs_setup", return_value=False),
+        ):
+            # No token → must be 401 (not 200)
+            r = client.get("/dashboard/api/status")
+            assert r.status_code == 401, (
+                f"Expected 401 without auth on mounted sub-app, got {r.status_code}. "
+                "The bearer_auth middleware is not stripping the mount prefix from the path."
+            )
+
+            # Correct token → must be 200
+            r2 = client.get(
+                "/dashboard/api/status",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            assert r2.status_code == 200, (
+                f"Expected 200 with valid Bearer token, got {r2.status_code}"
+            )
+
+            # Wrong token → must be 401
+            r3 = client.get(
+                "/dashboard/api/status",
+                headers={"Authorization": "Bearer wrong-token"},
+            )
+            assert r3.status_code == 401

@@ -256,7 +256,15 @@ def create_web_app(
 
     @app.middleware("http")
     async def bearer_auth(request: Request, call_next):
-        path = request.scope.get("path", "")
+        # When mounted as a sub-app (e.g. app.mount("/dashboard", web_app)),
+        # scope["path"] contains the FULL path (/dashboard/api/…) while
+        # scope["root_path"] holds the mount prefix (/dashboard).
+        # Strip the prefix so every downstream check works uniformly.
+        full_path = request.scope.get("path", "")
+        root_path = request.scope.get("root_path", "")
+        path = full_path[len(root_path):] if root_path and full_path.startswith(root_path) else full_path
+        if not path or path == "/":
+            path = full_path  # keep original if stripping leaves nothing sensible
 
         # Only protect /api/* endpoints — HTML pages are public so the login modal can load
         if not path.startswith("/api/"):
