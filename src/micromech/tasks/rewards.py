@@ -39,11 +39,11 @@ async def rewards_task(
                 continue
 
             accrued = status.get("rewards", 0.0)
-            olas_price = get_olas_price_eur()
+            olas_price = await asyncio.to_thread(get_olas_price_eur)
             if olas_price is None:
                 logger.warning(f"OLAS price unavailable for {chain_name}, skipping claim check")
                 continue
-            accrued_eur = float(accrued) * olas_price
+            accrued_eur = accrued * olas_price
             if accrued_eur < threshold_eur:
                 logger.debug(
                     f"Rewards on {chain_name}: {accrued:.4f} OLAS (~{accrued_eur:.2f}€) "

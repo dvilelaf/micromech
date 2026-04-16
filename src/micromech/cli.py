@@ -96,7 +96,7 @@ _REMOVED_FIELDS: dict[str, str | None] = {
 }
 
 
-def _run_migrations(config_path: Optional[Path] = None) -> None:
+def _run_migrations() -> None:
     """Apply config migrations before loading."""
     from micromech.migrations import migrate_removed_fields, migrate_schema
 
@@ -114,7 +114,7 @@ def _load_config(config_path: Optional[Path] = None) -> MicromechConfig:
     """Load config via iwa plugin system (or fallback file)."""
     from micromech.core.config import register_plugin
 
-    _run_migrations(config_path)
+    _run_migrations()
     register_plugin()
     return MicromechConfig.load(config_path)
 

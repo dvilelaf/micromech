@@ -168,6 +168,54 @@ class TestRewardsTask:
         lifecycle.claim_rewards.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_claim_returns_false_no_notification(self):
+        from micromech.tasks.rewards import rewards_task
+
+        # 5 OLAS * 4.0 €/OLAS = 20€ >= 10€ threshold → proceeds to claim
+        lifecycle = _make_lifecycle(rewards=5.0)
+        lifecycle.claim_rewards.return_value = False
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        config = _make_config(claim_threshold_eur=10.0)
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value=_svc_info_for("0xkey"),
+            ),
+            patch("micromech.core.bridge.get_olas_price_eur", return_value=4.0),
+        ):
+            await rewards_task({"gnosis": lifecycle}, notification, config)
+
+        lifecycle.claim_rewards.assert_called_once()
+        notification.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_withdraw_fails_no_transfer_line(self):
+        from micromech.tasks.rewards import rewards_task
+
+        # 5 OLAS * 4.0 €/OLAS = 20€ >= 10€ threshold → claims OK, withdraw fails
+        lifecycle = _make_lifecycle(rewards=5.0)
+        lifecycle.withdraw_rewards.return_value = (False, 0.0)
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        config = _make_config(claim_threshold_eur=10.0)
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value=_svc_info_for("0xkey"),
+            ),
+            patch("micromech.core.bridge.get_olas_price_eur", return_value=4.0),
+        ):
+            await rewards_task({"gnosis": lifecycle}, notification, config)
+
+        lifecycle.claim_rewards.assert_called_once()
+        notification.send.assert_called_once()
+        # No "Transferred" line when withdraw fails
+        assert "Transferred" not in notification.send.call_args[0][1]
+
+    @pytest.mark.asyncio
     async def test_handles_exception(self):
         from micromech.tasks.rewards import rewards_task
 
