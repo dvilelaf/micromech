@@ -251,9 +251,8 @@ class TestStatusCommand:
 
     @pytest.mark.asyncio
     async def test_no_chains(self):
-        from micromech.core.config import MicromechConfig
-
         from micromech.bot.commands.status import status_command
+        from micromech.core.config import MicromechConfig
 
         update = _make_update()
         ctx = _make_context(config=MicromechConfig(chains={}))
@@ -443,9 +442,8 @@ class TestWalletCommand:
 
     @pytest.mark.asyncio
     async def test_no_chains(self):
-        from micromech.core.config import MicromechConfig
-
         from micromech.bot.commands.wallet import wallet_command
+        from micromech.core.config import MicromechConfig
 
         update = _make_update()
         ctx = _make_context(config=MicromechConfig(chains={}))
@@ -550,9 +548,8 @@ class TestContractsCommand:
 
     @pytest.mark.asyncio
     async def test_no_chains(self):
-        from micromech.core.config import MicromechConfig
-
         from micromech.bot.commands.contracts import contracts_command
+        from micromech.core.config import MicromechConfig
 
         update = _make_update()
         ctx = _make_context(config=MicromechConfig(chains={}))
@@ -588,7 +585,6 @@ class TestContractsCommand:
     async def test_contract_fetch_success(self):
         from micromech.bot.commands.contracts import contracts_command
 
-        staking_address = "0x" + "a" * 40
         update = _make_update()
         sent = _sent_msg()
         update.message.reply_text = AsyncMock(return_value=sent)
@@ -690,9 +686,8 @@ class TestLastRewardsCommand:
 
     @pytest.mark.asyncio
     async def test_no_chains(self):
-        from micromech.core.config import MicromechConfig
-
         from micromech.bot.commands.last_rewards import last_rewards_command
+        from micromech.core.config import MicromechConfig
 
         update = _make_update()
         ctx = _make_context(config=MicromechConfig(chains={}))

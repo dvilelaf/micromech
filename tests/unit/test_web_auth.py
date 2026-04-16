@@ -334,7 +334,7 @@ class TestWalletCreationWritesWebUIPassword:
             patch("micromech.core.secrets_file.write_secret") as mock_write,
         ):
             # After setup, /api/setup/* requires a valid Bearer token
-            resp = client.post(
+            client.post(
                 "/api/setup/wallet",
                 json={"password": "TestPassword123"},
                 headers={"X-Micromech-Action": "wallet", "Authorization": f"Bearer {PASSWORD}"},
