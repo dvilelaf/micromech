@@ -99,6 +99,13 @@ class TestGetBalanceTrackerAddress:
         result = get_balance_tracker_address(bridge, "gnosis", MECH, MARKETPLACE)
         assert result is None
 
+    def test_returns_none_when_rpc_fails(self):
+        """RPC failure inside with_retry is caught — returns None instead of raising."""
+        bridge = _make_bridge()
+        bridge.with_retry.side_effect = Exception("RPC timeout")
+        result = get_balance_tracker_address(bridge, "gnosis", MECH, MARKETPLACE)
+        assert result is None
+
 
 # ---------------------------------------------------------------------------
 # get_pending_balance
@@ -113,6 +120,13 @@ class TestGetPendingBalance:
 
     def test_zero_balance(self):
         bridge = _make_bridge(mech_balance_raw=0)
+        result = get_pending_balance(bridge, BT_ADDR, MECH)
+        assert result == 0.0
+
+    def test_returns_zero_when_rpc_fails(self):
+        """RPC failure inside with_retry is caught — returns 0.0 instead of raising."""
+        bridge = _make_bridge()
+        bridge.with_retry.side_effect = Exception("connection refused")
         result = get_pending_balance(bridge, BT_ADDR, MECH)
         assert result == 0.0
 
