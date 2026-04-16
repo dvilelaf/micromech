@@ -61,7 +61,7 @@ def _transfer_to_master(
     )
 
     web3 = bridge.web3
-    receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    receipt = bridge.with_retry(lambda: web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120))
     if receipt["status"] != 1:
         logger.warning("[{}] xDAI transfer to master reverted: {}", chain_name, tx_hash_str)
 
@@ -100,7 +100,7 @@ def _withdraw(
     logger.info("[{}] processPaymentByMultisig TX: {}", chain_name, tx_hash_str)
 
     # Wait for receipt and return mech payment amount
-    receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    receipt = bridge.with_retry(lambda: web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120))
     if receipt["status"] != 1:
         msg = f"[{chain_name}] processPaymentByMultisig reverted: {tx_hash_str}"
         raise RuntimeError(msg)

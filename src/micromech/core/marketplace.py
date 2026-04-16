@@ -58,19 +58,27 @@ def get_balance_tracker_address(
     bridge: IwaBridge, chain_name: str, mech_address: str, marketplace_address: str
 ) -> str | None:
     """Resolve balance tracker address for the mech's payment type."""
+
+    def _fetch() -> str:
+        web3 = bridge.web3
+        mech = web3.eth.contract(
+            address=web3.to_checksum_address(mech_address),
+            abi=MECH_ABI_FRAGMENT,
+        )
+        payment_type = mech.functions.paymentType().call()
+        marketplace = web3.eth.contract(
+            address=web3.to_checksum_address(marketplace_address),
+            abi=MARKETPLACE_ABI_FRAGMENT,
+        )
+        return marketplace.functions.mapPaymentTypeBalanceTrackers(payment_type).call()
+
+    try:
+        bt_addr = bridge.with_retry(_fetch)
+    except Exception as e:
+        logger.warning("[{}] Failed to resolve balance tracker: {}", chain_name, e)
+        return None
+
     web3 = bridge.web3
-    mech = web3.eth.contract(
-        address=web3.to_checksum_address(mech_address),
-        abi=MECH_ABI_FRAGMENT,
-    )
-    payment_type = mech.functions.paymentType().call()
-
-    marketplace = web3.eth.contract(
-        address=web3.to_checksum_address(marketplace_address),
-        abi=MARKETPLACE_ABI_FRAGMENT,
-    )
-    bt_addr = marketplace.functions.mapPaymentTypeBalanceTrackers(payment_type).call()
-
     zero = "0x" + "0" * 40
     if bt_addr == zero or bt_addr == web3.to_checksum_address(zero):
         logger.warning(
@@ -82,10 +90,18 @@ def get_balance_tracker_address(
 
 def get_pending_balance(bridge: IwaBridge, bt_address: str, mech_address: str) -> float:
     """Return pending xDAI balance (in ether units) for the mech in the balance tracker."""
-    web3 = bridge.web3
-    bt = web3.eth.contract(
-        address=web3.to_checksum_address(bt_address),
-        abi=BALANCE_TRACKER_ABI,
-    )
-    raw = bt.functions.mapMechBalances(web3.to_checksum_address(mech_address)).call()
+
+    def _fetch() -> int:
+        web3 = bridge.web3
+        bt = web3.eth.contract(
+            address=web3.to_checksum_address(bt_address),
+            abi=BALANCE_TRACKER_ABI,
+        )
+        return bt.functions.mapMechBalances(web3.to_checksum_address(mech_address)).call()
+
+    try:
+        raw = bridge.with_retry(_fetch)
+    except Exception as e:
+        logger.warning("Failed to fetch pending balance for {}: {}", mech_address, e)
+        return 0.0
     return raw / 1e18

@@ -67,6 +67,7 @@ def _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18)):
     bridge = MagicMock()
     bridge.web3 = web3
     bridge.wallet = wallet
+    bridge.with_retry.side_effect = lambda fn, **kw: fn()
     return bridge
 
 
@@ -276,7 +277,8 @@ class TestPaymentWithdrawTask:
         cfg.chains = {"gnosis": chain_cfg}
 
         bridge = MagicMock()
-        bridge.web3.to_checksum_address.side_effect = RuntimeError("network error")
+        bridge.web3.to_checksum_address.side_effect = lambda x: x
+        bridge.with_retry.side_effect = RuntimeError("network error")
         bridge.wallet.safe_service = MagicMock()
         bridges = {"gnosis": bridge}
         notification = NotificationService()
