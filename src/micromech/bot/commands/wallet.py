@@ -122,7 +122,7 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if isinstance(res, Exception):
             results_by_key[key] = None
         else:
-            results_by_key[key] = res
+            results_by_key[key] = res  # type: ignore[assignment]
 
     for chain_name, chain_config, svc_info in chain_infos:
         multisig = svc_info.get("multisig_address")

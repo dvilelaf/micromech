@@ -28,7 +28,10 @@ async def low_balance_alert_task(
     for chain_name, lifecycle in lifecycles.items():
         try:
             # Check balances
-            native, olas = await asyncio.to_thread(check_balances, chain_name)
+            balances = await asyncio.to_thread(check_balances, chain_name)
+            if balances is None:
+                continue
+            native, olas = balances
 
             if native < config.fund_threshold_native:
                 await notification_service.send(

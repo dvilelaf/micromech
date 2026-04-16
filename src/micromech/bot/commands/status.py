@@ -1,7 +1,7 @@
 """Status command handler — show per-chain mech status (triton-style)."""
 
 import asyncio
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 from telegram import Update
@@ -132,7 +132,9 @@ async def _fetch_chain_status_dict(
     # are handled per-task below.
     status_task = asyncio.to_thread(lifecycle.get_status, svc_key)
     balances_task = asyncio.to_thread(lifecycle.get_balances)
-    status, balances = await asyncio.gather(status_task, balances_task, return_exceptions=True)
+    _gather_results = await asyncio.gather(status_task, balances_task, return_exceptions=True)
+    status: Any = _gather_results[0]
+    balances: Any = _gather_results[1]
 
     if isinstance(status, Exception):
         return (chain_name, None, user_error(f"status {chain_name}", status))
@@ -210,7 +212,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     results = await asyncio.gather(*all_tasks, return_exceptions=True)
 
     n = len(chain_names)
-    olas_price = results[0] if not isinstance(results[0], Exception) else None
+    olas_price: Optional[float] = results[0] if not isinstance(results[0], Exception) else None  # type: ignore[assignment]
     pending_payments = results[1] if not isinstance(results[1], Exception) else {}
     chain_results = results[2 : 2 + n]
     master_results = results[2 + n :]
@@ -224,17 +226,17 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if isinstance(result, Exception):
             blocks.append(user_error("status gather", result))
             continue
-        chain_name, status, err = result
+        chain_name, status, err = result  # type: ignore[misc]
         if err:
             blocks.append(f"{bold_md(chain_name.upper())}\n{err}")
         else:
             blocks.append(
                 _format_chain_status(
                     chain_name,
-                    status,
+                    status,  # type: ignore[arg-type]
                     olas_price,
                     pending_payment=pending_payments.get(chain_name),
-                    master_balances=master_by_chain.get(chain_name),
+                    master_balances=master_by_chain.get(chain_name),  # type: ignore[arg-type]
                 )
             )
 

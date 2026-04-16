@@ -113,7 +113,7 @@ async def contracts_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             # R2-L1: consistent server-side log + categorized user message.
             blocks.append(user_error("contracts gather", result))
         else:
-            _, block = result
+            _, block = result  # type: ignore[misc]
             blocks.append(block)
 
     header = bold_md("Staking Contracts") + "\n"

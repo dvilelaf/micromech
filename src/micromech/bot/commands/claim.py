@@ -171,8 +171,8 @@ async def handle_claim_callback(
         olas_price = await asyncio.to_thread(get_olas_price_eur)
 
         # Build parallel claim tasks for each staked chain with a lifecycle.
-        tasks = []
-        labels = []
+        tasks: list = []
+        labels: list = []
         for chain_name in enabled:
             svc_key = get_service_info(chain_name).get("service_key")
             if not svc_key:
@@ -203,7 +203,7 @@ async def handle_claim_callback(
                 # R2-L1: route to user_error for consistent log + categorized message.
                 results.append(user_error("claim", r))
                 continue
-            line, amount = r
+            line, amount = r  # type: ignore[misc]
             results.append(line)
             total_claimed += amount
             if amount > 0:

@@ -303,7 +303,7 @@ class DeliveryManager:
                 # mark_failed permanently after MAX_RETRIES consecutive failures.
                 self._increment_failure(record.request.request_id, f"ipfs_prep: {result}")
             else:
-                req_id_bytes, delivery_data, ipfs_cid_hex = result
+                req_id_bytes, delivery_data, ipfs_cid_hex = result  # type: ignore[misc]
                 good.append((record, req_id_bytes, delivery_data, ipfs_cid_hex))
 
         if not good:
