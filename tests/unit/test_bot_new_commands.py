@@ -54,8 +54,10 @@ def _make_context(config=None, lifecycles=None, **extra_bot_data):
 @contextlib.contextmanager
 def _auth():
     """Context manager that bypasses @authorized_only and @rate_limited."""
-    with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-         patch("micromech.bot.security._rate_limit_cache", {}):
+    with (
+        patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+        patch("micromech.bot.security._rate_limit_cache", {}),
+    ):
         yield
 
 
@@ -111,7 +113,15 @@ class TestContractsCommand:
         update = _make_update()
         ctx = _make_context(config=cfg)
 
-        with _auth(), patch.object(type(cfg), "enabled_chains", new_callable=PropertyMock, return_value={"gnosis": fake_chain}):
+        with (
+            _auth(),
+            patch.object(
+                type(cfg),
+                "enabled_chains",
+                new_callable=PropertyMock,
+                return_value={"gnosis": fake_chain},
+            ),
+        ):
             await contracts_command(update, ctx)
 
         sent_msg = update.message.reply_text.return_value
@@ -121,10 +131,20 @@ class TestContractsCommand:
 
     @pytest.mark.asyncio
     async def test_chain_success(self):
-        """Happy path: to_thread returns valid contract data."""
+        """Happy path: _fetch_contract returns dict with contract data."""
+        from datetime import datetime, timedelta, timezone
+
         from micromech.bot.commands.contracts import contracts_command
 
-        fetch_result = (3, 10, 5000.0, 100.0, "2h 0m")
+        epoch_end = datetime.now(timezone.utc) + timedelta(hours=2)
+        fetch_result = {
+            "staked": 3,
+            "max": 10,
+            "balance_olas": 5000.0,
+            "min_stake_olas": 100.0,
+            "epoch_end": epoch_end,
+            "name": "TestContract",
+        }
 
         update = _make_update()
         ctx = _make_context()
@@ -139,7 +159,7 @@ class TestContractsCommand:
         sent_msg.edit_text.assert_called_once()
         text = sent_msg.edit_text.call_args[0][0]
         assert "GNOSIS" in text
-        assert "Slots" in text
+        assert "Used slots" in text
 
     @pytest.mark.asyncio
     async def test_chain_error(self):
@@ -161,34 +181,36 @@ class TestContractsCommand:
         assert "Error" in text or "rpc boom" in text
 
     def test_format_epoch_countdown_future(self):
-        from micromech.bot.commands.contracts import _format_epoch_countdown
+        from micromech.bot.commands.contracts import _epoch_countdown
 
-        future = datetime.now(timezone.utc) + timedelta(hours=3, minutes=30)
-        result = _format_epoch_countdown(future)
+        future = datetime.now(timezone.utc) + timedelta(hours=3)
+        result = _epoch_countdown(future)
         assert "h" in result
         assert "m" in result
-        assert "overdue" not in result
+        assert "⚠️" not in result
 
     def test_format_epoch_countdown_overdue(self):
-        from micromech.bot.commands.contracts import _format_epoch_countdown
+        from micromech.bot.commands.contracts import _epoch_countdown
 
         past = datetime.now(timezone.utc) - timedelta(hours=1, minutes=15)
-        result = _format_epoch_countdown(past)
-        assert "overdue" in result
+        result = _epoch_countdown(past)
+        assert "⚠️" in result
+        assert "-" in result
 
-    def test_explorer_link_known_chain(self):
-        from micromech.bot.commands.contracts import _explorer_link
+    def test_explorer_urls_known_chain(self):
+        from micromech.bot.formatting import EXPLORER_URLS
 
-        link = _explorer_link("gnosis", "0xABCDef", "short")
-        assert "gnosisscan.io" in link
-        assert "0xABCDef" in link
+        assert "gnosisscan.io" in EXPLORER_URLS["gnosis"]
+        assert "basescan.org" in EXPLORER_URLS["base"]
 
-    def test_explorer_link_unknown_chain_falls_back(self):
-        from micromech.bot.commands.contracts import _explorer_link
+    def test_explorer_urls_fallback_default(self):
+        from micromech.bot.formatting import EXPLORER_URLS, explorer_link_md
 
-        link = _explorer_link("polygon", "0x1234", "lbl")
-        # falls back to gnosis explorer
-        assert "gnosisscan.io" in link
+        # Unknown chain: helper fails closed to plain code (no misleading link)
+        result = explorer_link_md("polygon", "0xdeadbeef")
+        assert "gnosisscan.io" not in result  # no longer misleading fallback
+        fallback = EXPLORER_URLS.get("polygon", EXPLORER_URLS["gnosis"])
+        assert "gnosisscan.io" in fallback
 
 
 # ---------------------------------------------------------------------------
@@ -243,9 +265,12 @@ class TestLastRewardsCommand:
         update = _make_update()
         ctx = _make_context(lifecycles={})  # gnosis key absent
 
-        with _auth(), patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"service_key": "0xkey"},
+        with (
+            _auth(),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey"},
+            ),
         ):
             await last_rewards_command(update, ctx)
 
@@ -259,23 +284,24 @@ class TestLastRewardsCommand:
         from micromech.bot.commands.last_rewards import last_rewards_command
 
         lifecycle = MagicMock()
-        status = {
+        lifecycle.get_status.return_value = {
             "staking_state": "NOT_STAKED",
             "rewards": 0,
             "requests_this_epoch": 0,
             "required_requests": 10,
         }
 
-        async def fake_to_thread(fn, *args, **kwargs):
-            return status
-
         update = _make_update()
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with _auth(), patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"service_key": "0xkey"},
-        ), patch("asyncio.to_thread", side_effect=fake_to_thread):
+        with (
+            _auth(),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey"},
+            ),
+            patch("micromech.bot.commands.last_rewards.get_olas_price_eur", return_value=None),
+        ):
             await last_rewards_command(update, ctx)
 
         sent_msg = update.message.reply_text.return_value
@@ -290,23 +316,24 @@ class TestLastRewardsCommand:
         from micromech.bot.commands.last_rewards import last_rewards_command
 
         lifecycle = MagicMock()
-        status = {
+        lifecycle.get_status.return_value = {
             "staking_state": "STAKED",
-            "rewards": 1_500_000_000_000_000_000,  # 1.5e18 wei
+            "rewards": 1.5,  # OLAS float (not raw wei)
             "requests_this_epoch": 10,
             "required_requests": 10,
         }
 
-        async def fake_to_thread(fn, *args, **kwargs):
-            return status
-
         update = _make_update()
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with _auth(), patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"service_key": "0xkey"},
-        ), patch("asyncio.to_thread", side_effect=fake_to_thread):
+        with (
+            _auth(),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey"},
+            ),
+            patch("micromech.bot.commands.last_rewards.get_olas_price_eur", return_value=None),
+        ):
             await last_rewards_command(update, ctx)
 
         sent_msg = update.message.reply_text.return_value
@@ -320,23 +347,24 @@ class TestLastRewardsCommand:
         from micromech.bot.commands.last_rewards import last_rewards_command
 
         lifecycle = MagicMock()
-        status = {
+        lifecycle.get_status.return_value = {
             "staking_state": "STAKED",
             "rewards": 0,
             "requests_this_epoch": 3,
             "required_requests": 10,
         }
 
-        async def fake_to_thread(fn, *args, **kwargs):
-            return status
-
         update = _make_update()
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with _auth(), patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"service_key": "0xkey"},
-        ), patch("asyncio.to_thread", side_effect=fake_to_thread):
+        with (
+            _auth(),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey"},
+            ),
+            patch("micromech.bot.commands.last_rewards.get_olas_price_eur", return_value=None),
+        ):
             await last_rewards_command(update, ctx)
 
         sent_msg = update.message.reply_text.return_value
@@ -346,21 +374,23 @@ class TestLastRewardsCommand:
 
     @pytest.mark.asyncio
     async def test_chain_status_none(self):
-        """to_thread returns None → 'Could not fetch status'."""
+        """lifecycle.get_status returns None → 'Could not fetch status'."""
         from micromech.bot.commands.last_rewards import last_rewards_command
 
         lifecycle = MagicMock()
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return None
+        lifecycle.get_status.return_value = None
 
         update = _make_update()
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with _auth(), patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"service_key": "0xkey"},
-        ), patch("asyncio.to_thread", side_effect=fake_to_thread):
+        with (
+            _auth(),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey"},
+            ),
+            patch("micromech.bot.commands.last_rewards.get_olas_price_eur", return_value=None),
+        ):
             await last_rewards_command(update, ctx)
 
         sent_msg = update.message.reply_text.return_value
@@ -369,196 +399,25 @@ class TestLastRewardsCommand:
 
     @pytest.mark.asyncio
     async def test_chain_error(self):
-        """to_thread raises → error block in message."""
+        """lifecycle.get_status raises → error block in message."""
         from micromech.bot.commands.last_rewards import last_rewards_command
 
         lifecycle = MagicMock()
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            raise RuntimeError("chain gone")
+        lifecycle.get_status.side_effect = RuntimeError("chain gone")
 
         update = _make_update()
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with _auth(), patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"service_key": "0xkey"},
-        ), patch("asyncio.to_thread", side_effect=fake_to_thread):
+        with (
+            _auth(),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey"},
+            ),
+            patch("micromech.bot.commands.last_rewards.get_olas_price_eur", return_value=None),
+        ):
             await last_rewards_command(update, ctx)  # must not raise
 
         sent_msg = update.message.reply_text.return_value
         text = sent_msg.edit_text.call_args[0][0]
         assert "Error" in text or "chain gone" in text
-
-
-# ---------------------------------------------------------------------------
-# /schedule
-# ---------------------------------------------------------------------------
-
-
-class TestScheduleCommand:
-    @pytest.mark.asyncio
-    async def test_no_message_returns_early(self):
-        from micromech.bot.commands.schedule import schedule_command
-
-        update = _make_update(has_message=False)
-        ctx = _make_context()
-
-        with _auth():
-            await schedule_command(update, ctx)  # must not raise
-
-    @pytest.mark.asyncio
-    async def test_no_chains_enabled(self):
-        from micromech.bot.commands.schedule import schedule_command
-
-        update = _make_update()
-        ctx = _make_context(config=_no_chains_config())
-
-        with _auth():
-            await schedule_command(update, ctx)
-
-        update.message.reply_text.assert_called_once()
-        assert "No chains" in update.message.reply_text.call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_no_staking_address_shows_no_contracts(self):
-        """All chains lack staking_address → 'No staking contracts configured'."""
-        from micromech.bot.commands.schedule import schedule_command
-
-        # staking_address is a validated Ethereum address so it can't be empty string.
-        # We simulate the "no staking address" branch by mocking enabled_chains with
-        # a fake chain config that has falsy staking_address.
-        fake_chain = MagicMock()
-        fake_chain.staking_address = None
-
-        cfg = make_test_config()
-        update = _make_update()
-        ctx = _make_context(config=cfg)
-
-        with _auth(), patch.object(type(cfg), "enabled_chains", new_callable=PropertyMock, return_value={"gnosis": fake_chain}):
-            await schedule_command(update, ctx)
-
-        sent_msg = update.message.reply_text.return_value
-        sent_msg.edit_text.assert_called_once()
-        assert "No staking contracts" in sent_msg.edit_text.call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_epoch_in_future(self):
-        """to_thread returns epoch in future → countdown shows 'in Xh Ym'."""
-        from micromech.bot.commands.schedule import schedule_command
-
-        future_epoch = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return future_epoch
-
-        update = _make_update()
-        ctx = _make_context()
-
-        with _auth(), patch("asyncio.to_thread", side_effect=fake_to_thread):
-            await schedule_command(update, ctx)
-
-        sent_msg = update.message.reply_text.return_value
-        sent_msg.edit_text.assert_called_once()
-        text = sent_msg.edit_text.call_args[0][0]
-        assert "GNOSIS" in text
-        assert "in " in text
-
-    @pytest.mark.asyncio
-    async def test_epoch_in_past(self):
-        """to_thread returns epoch in past → countdown shows 'overdue'."""
-        from micromech.bot.commands.schedule import schedule_command
-
-        past_epoch = datetime.now(timezone.utc) - timedelta(hours=1, minutes=20)
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return past_epoch
-
-        update = _make_update()
-        ctx = _make_context()
-
-        with _auth(), patch("asyncio.to_thread", side_effect=fake_to_thread):
-            await schedule_command(update, ctx)
-
-        sent_msg = update.message.reply_text.return_value
-        text = sent_msg.edit_text.call_args[0][0]
-        assert "overdue" in text
-
-    @pytest.mark.asyncio
-    async def test_chain_error(self):
-        """to_thread raises → error entry with datetime.max sentinel."""
-        from micromech.bot.commands.schedule import schedule_command
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            raise ConnectionError("node down")
-
-        update = _make_update()
-        ctx = _make_context()
-
-        with _auth(), patch("asyncio.to_thread", side_effect=fake_to_thread):
-            await schedule_command(update, ctx)  # must not raise
-
-        sent_msg = update.message.reply_text.return_value
-        sent_msg.edit_text.assert_called_once()
-        text = sent_msg.edit_text.call_args[0][0]
-        assert "Error" in text or "node down" in text
-
-    @pytest.mark.asyncio
-    async def test_multiple_chains_both_appear(self):
-        """Multiple chains each appear in output."""
-        from micromech.bot.commands.schedule import schedule_command
-        from micromech.core.config import ChainConfig, MicromechConfig
-
-        now = datetime.now(timezone.utc)
-        epochs = [now + timedelta(hours=1), now + timedelta(hours=3)]
-        idx = iter(epochs)
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            return next(idx)
-
-        cfg = MicromechConfig(
-            chains={
-                "base": ChainConfig(
-                    chain="base",
-                    marketplace_address="0x9c7d6D8E5B8b3b75F1a1Bd9e8E8D8d8B8b8B8b8B",
-                    factory_address="0x9c7d6D8E5B8b3b75F1a1Bd9e8E8D8d8B8b8B8b8B",
-                    staking_address="0x2Ef503950Be67a98746F484DA0bB62d9d969E1C0",
-                ),
-                "gnosis": ChainConfig(
-                    chain="gnosis",
-                    marketplace_address="0x9c7d6D8E5B8b3b75F1a1Bd9e8E8D8d8B8b8B8b8B",
-                    factory_address="0x9c7d6D8E5B8b3b75F1a1Bd9e8E8D8d8B8b8B8b8B",
-                    staking_address="0x2Ef503950Be67a98746F484DA0bB62d9d969E1C0",
-                ),
-            }
-        )
-
-        update = _make_update()
-        ctx = _make_context(config=cfg)
-
-        with _auth(), patch("asyncio.to_thread", side_effect=fake_to_thread):
-            await schedule_command(update, ctx)
-
-        sent_msg = update.message.reply_text.return_value
-        text = sent_msg.edit_text.call_args[0][0]
-        # Both chains should appear in output
-        assert "BASE" in text
-        assert "GNOSIS" in text
-
-    def test_format_timedelta_future(self):
-        from micromech.bot.commands.schedule import _format_timedelta
-
-        result = _format_timedelta(7380)  # 2h 3m
-        assert result == "in 2h 3m"
-
-    def test_format_timedelta_past(self):
-        from micromech.bot.commands.schedule import _format_timedelta
-
-        result = _format_timedelta(-3660)  # 1h 1m overdue
-        assert result == "overdue 1h 1m ⚠️"
-
-    def test_format_timedelta_zero(self):
-        from micromech.bot.commands.schedule import _format_timedelta
-
-        result = _format_timedelta(0)
-        assert result == "in 0h 0m"

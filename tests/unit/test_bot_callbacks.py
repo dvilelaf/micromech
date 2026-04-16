@@ -43,6 +43,7 @@ def _make_context(**bot_data_extras):
 # Claim callbacks
 # ===========================================================================
 
+
 class TestClaimCallbacks:
     @pytest.mark.asyncio
     async def test_cancel_deletes_message(self):
@@ -71,8 +72,7 @@ class TestClaimCallbacks:
         update = _make_update_with_query("all")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_claim_callback(update, ctx, "all")
 
         update.callback_query.edit_message_text.assert_called()
@@ -86,8 +86,7 @@ class TestClaimCallbacks:
         update = _make_update_with_query("all")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_claim_callback(update, ctx, "all")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -100,8 +99,7 @@ class TestClaimCallbacks:
         update = _make_update_with_query("all")
         ctx = _make_context(lifecycles={})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_claim_callback(update, ctx, "all")
 
         update.callback_query.edit_message_text.assert_called()
@@ -128,8 +126,7 @@ class TestClaimCallbacks:
         update = _make_update_with_query("all")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_claim_callback(update, ctx, "all")
 
         # Error included in report
@@ -157,8 +154,7 @@ class TestClaimCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_claim_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -171,8 +167,7 @@ class TestClaimCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_claim_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -187,12 +182,12 @@ class TestClaimCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_claim_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
-        assert "failed" in text.lower() or "Claim failed" in text
+        # H1: user_error produces "Error (claim ...) — check logs"
+        assert "Error" in text or "check logs" in text
 
     @pytest.mark.asyncio
     async def test_claim_command_no_staked_services(self):
@@ -204,8 +199,10 @@ class TestClaimCallbacks:
         update.effective_user.id = 1
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.core.bridge.get_service_info", return_value={}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.core.bridge.get_service_info", return_value={}),
+        ):
             await claim_command(update, ctx)
 
         update.message.reply_text.assert_called_once()
@@ -225,9 +222,10 @@ class TestClaimCallbacks:
         update.effective_user.id = 1
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}),
+        ):
             await claim_command(update, ctx)
 
         update.message.reply_text.assert_called()
@@ -241,6 +239,7 @@ class TestClaimCallbacks:
         # Add a second chain so multi-chain keyboard appears
         config = make_test_config()
         from micromech.core.constants import CHAIN_DEFAULTS
+
         config.chains["base"] = ChainConfig(
             chain="base",
             marketplace_address=CHAIN_DEFAULTS["base"]["marketplace"],
@@ -254,9 +253,10 @@ class TestClaimCallbacks:
         update.effective_user.id = 1
         ctx = _make_context(config=config)
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}),
+        ):
             await claim_command(update, ctx)
 
         update.message.reply_text.assert_called()
@@ -272,6 +272,7 @@ class TestClaimCallbacks:
 # ===========================================================================
 # Checkpoint callbacks
 # ===========================================================================
+
 
 class TestCheckpointCallbacks:
     @pytest.mark.asyncio
@@ -301,8 +302,7 @@ class TestCheckpointCallbacks:
         update = _make_update_with_query("all")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_checkpoint_callback(update, ctx, "all")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -317,8 +317,7 @@ class TestCheckpointCallbacks:
         update = _make_update_with_query("all")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_checkpoint_callback(update, ctx, "all")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -331,8 +330,7 @@ class TestCheckpointCallbacks:
         update = _make_update_with_query("all")
         ctx = _make_context(lifecycles={})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_checkpoint_callback(update, ctx, "all")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -347,8 +345,7 @@ class TestCheckpointCallbacks:
         update = _make_update_with_query("all")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_checkpoint_callback(update, ctx, "all")
 
         # Chain goes to skipped list
@@ -376,8 +373,7 @@ class TestCheckpointCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_checkpoint_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -392,8 +388,7 @@ class TestCheckpointCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_checkpoint_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -408,12 +403,12 @@ class TestCheckpointCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_checkpoint_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
-        assert "failed" in text.lower()
+        # R2-H1: user_error produces "Error (checkpoint ...) — check logs"
+        assert "Error" in text or "check logs" in text
 
     @pytest.mark.asyncio
     async def test_single_chain_no_lifecycle(self):
@@ -422,8 +417,7 @@ class TestCheckpointCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_checkpoint_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -433,6 +427,7 @@ class TestCheckpointCallbacks:
 # ===========================================================================
 # Manage callbacks
 # ===========================================================================
+
 
 class TestManageCallbacks:
     @pytest.mark.asyncio
@@ -499,8 +494,7 @@ class TestManageCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_manage_callback(update, ctx, "gnosis")
 
         update.callback_query.edit_message_text.assert_called()
@@ -512,8 +506,7 @@ class TestManageCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_manage_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -537,8 +530,7 @@ class TestManageCallbacks:
         update = _make_update_with_query("gnosis:stake")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_manage_callback(update, ctx, "gnosis:stake")
 
         update.callback_query.edit_message_text.assert_called()
@@ -562,8 +554,7 @@ class TestManageCallbacks:
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
         ctx.user_data = {"manage_chain": "gnosis", "manage_action": "unstake"}
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_manage_confirm_callback(update, ctx, "yes")
 
         update.callback_query.edit_message_text.assert_called()
@@ -579,8 +570,7 @@ class TestManageCallbacks:
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
         ctx.user_data = {"manage_chain": "gnosis", "manage_action": "restake"}
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_manage_confirm_callback(update, ctx, "yes")
 
         update.callback_query.edit_message_text.assert_called()
@@ -595,8 +585,7 @@ class TestManageCallbacks:
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
         ctx.user_data = {"manage_chain": "gnosis", "manage_action": "restake"}
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_manage_confirm_callback(update, ctx, "yes")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -633,10 +622,8 @@ class TestManageCallbacks:
         query = _make_query("yes")
         config = make_test_config()
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
-            await _execute_action(query, config, "gnosis", "stake",
-                                  {"gnosis": lifecycle})
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
+            await _execute_action(query, config, "gnosis", "stake", {"gnosis": lifecycle})
 
         text = query.edit_message_text.call_args[0][0]
         assert "failed" in text.lower()
@@ -650,8 +637,7 @@ class TestManageCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_manage_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]
@@ -666,8 +652,7 @@ class TestManageCallbacks:
         update = _make_update_with_query("gnosis")
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}):
             await handle_manage_callback(update, ctx, "gnosis")
 
         text = update.callback_query.edit_message_text.call_args[0][0]

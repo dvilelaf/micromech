@@ -28,6 +28,7 @@ AUTHORIZED_USER_ID = 1
 # Test helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_update(has_message=True):
     """Return a MagicMock that looks like a Telegram Update."""
     update = MagicMock()
@@ -63,6 +64,7 @@ def _auth_patches():
 # /status
 # ---------------------------------------------------------------------------
 
+
 class TestStatusCommand:
     @pytest.mark.asyncio
     async def test_no_chains_enabled(self):
@@ -73,8 +75,10 @@ class TestStatusCommand:
         update = _make_update()
         ctx = _make_context(config=config)
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await status_command(update, ctx)
 
         update.message.reply_text.assert_called_once()
@@ -87,8 +91,10 @@ class TestStatusCommand:
         update = _make_update(has_message=False)
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await status_command(update, ctx)  # must not raise
 
     @pytest.mark.asyncio
@@ -107,9 +113,11 @@ class TestStatusCommand:
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
         svc_info = {"service_key": "0xkey"}
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}), \
-             patch("micromech.core.bridge.get_service_info", return_value=svc_info):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("micromech.core.bridge.get_service_info", return_value=svc_info),
+        ):
             await status_command(update, ctx)
 
         update.message.reply_text.assert_called_once_with("Fetching status...")
@@ -122,9 +130,11 @@ class TestStatusCommand:
         ctx = _make_context(lifecycles={})  # no lifecycle for gnosis
         svc_info = {"service_key": "0xkey"}
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}), \
-             patch("micromech.core.bridge.get_service_info", return_value=svc_info):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("micromech.core.bridge.get_service_info", return_value=svc_info),
+        ):
             await status_command(update, ctx)
 
         update.message.reply_text.assert_called()
@@ -137,9 +147,11 @@ class TestStatusCommand:
         ctx = _make_context(lifecycles={})
         svc_info = {}  # no service_key
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}), \
-             patch("micromech.core.bridge.get_service_info", return_value=svc_info):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("micromech.core.bridge.get_service_info", return_value=svc_info),
+        ):
             await status_command(update, ctx)
 
         update.message.reply_text.assert_called()
@@ -154,9 +166,11 @@ class TestStatusCommand:
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
         svc_info = {"service_key": "0xkey"}
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}), \
-             patch("micromech.core.bridge.get_service_info", return_value=svc_info):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("micromech.core.bridge.get_service_info", return_value=svc_info),
+        ):
             await status_command(update, ctx)  # must not raise
 
     @pytest.mark.asyncio
@@ -171,40 +185,52 @@ class TestStatusCommand:
         ctx = _make_context(lifecycles={"gnosis": lifecycle}, metrics=metrics)
         svc_info = {"service_key": "0xkey"}
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}), \
-             patch("micromech.core.bridge.get_service_info", return_value=svc_info):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("micromech.core.bridge.get_service_info", return_value=svc_info),
+        ):
             await status_command(update, ctx)
 
     def test_format_chain_status_evicted(self):
         from micromech.bot.commands.status import _format_chain_status
 
-        result = _format_chain_status("gnosis", {
-            "staking_state": "EVICTED",
-            "is_staked": False,
-            "requests_this_epoch": 0,
-            "required_requests": 10,
-            "rewards": 0.0,
-        })
+        result = _format_chain_status(
+            "gnosis",
+            {
+                "staking_state": "EVICTED",
+                "is_staked": False,
+                "requests_this_epoch": 0,
+                "required_requests": 10,
+                "rewards": 0.0,
+            },
+            olas_price=None,
+        )
         assert "EVICTED" in result
-        assert "🔴" in result
+        assert "❌" in result  # 0 requests → idle emoji
 
     def test_format_chain_status_not_staked(self):
         from micromech.bot.commands.status import _format_chain_status
 
-        result = _format_chain_status("gnosis", {
-            "staking_state": "NOT_STAKED",
-            "is_staked": False,
-            "requests_this_epoch": 0,
-            "required_requests": 10,
-            "rewards": 0.0,
-        })
-        assert "⚪" in result
+        result = _format_chain_status(
+            "gnosis",
+            {
+                "staking_state": "NOT_STAKED",
+                "is_staked": False,
+                "requests_this_epoch": 0,
+                "required_requests": 10,
+                "rewards": 0.0,
+            },
+            olas_price=None,
+        )
+        assert "NOT_STAKED" in result
+        assert "❌" in result  # 0 requests → idle emoji
 
 
 # ---------------------------------------------------------------------------
 # /info
 # ---------------------------------------------------------------------------
+
 
 class TestInfoCommand:
     @pytest.mark.asyncio
@@ -214,9 +240,11 @@ class TestInfoCommand:
         update = _make_update()
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}), \
-             patch("importlib.metadata.version", return_value="1.2.3"):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("importlib.metadata.version", return_value="1.2.3"),
+        ):
             await info_command(update, ctx)
 
         update.message.reply_text.assert_called_once()
@@ -233,9 +261,11 @@ class TestInfoCommand:
         update = _make_update()
         ctx = _make_context(metrics=metrics, queue=queue)
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}), \
-             patch("importlib.metadata.version", return_value="0.1.0"):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("importlib.metadata.version", return_value="0.1.0"),
+        ):
             await info_command(update, ctx)
 
         text = update.message.reply_text.call_args[0][0]
@@ -248,8 +278,10 @@ class TestInfoCommand:
         update = _make_update(has_message=False)
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await info_command(update, ctx)  # must not raise
 
     @pytest.mark.asyncio
@@ -261,9 +293,11 @@ class TestInfoCommand:
         update = _make_update()
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}), \
-             patch("importlib.metadata.version", side_effect=PackageNotFoundError):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("importlib.metadata.version", side_effect=PackageNotFoundError),
+        ):
             await info_command(update, ctx)
 
         text = update.message.reply_text.call_args[0][0]
@@ -273,6 +307,7 @@ class TestInfoCommand:
 # ---------------------------------------------------------------------------
 # /restart
 # ---------------------------------------------------------------------------
+
 
 class TestRestartCommand:
     @pytest.mark.asyncio
@@ -326,8 +361,10 @@ class TestRestartCommand:
 
         trigger = tmp_path / ".update-request"
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.commands.restart.RESTART_TRIGGER", trigger):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.commands.restart.RESTART_TRIGGER", trigger),
+        ):
             await restart_command(update, ctx)
 
         assert trigger.exists()
@@ -348,6 +385,7 @@ class TestRestartCommand:
 # /queue
 # ---------------------------------------------------------------------------
 
+
 class TestQueueCommand:
     @pytest.mark.asyncio
     async def test_no_queue_available(self):
@@ -356,8 +394,10 @@ class TestQueueCommand:
         update = _make_update()
         ctx = _make_context()  # no queue key
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await queue_command(update, ctx)
 
         update.message.reply_text.assert_called_once()
@@ -374,8 +414,10 @@ class TestQueueCommand:
         update = _make_update()
         ctx = _make_context(queue=queue)
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await queue_command(update, ctx)
 
         text = update.message.reply_text.call_args[0][0]
@@ -396,8 +438,10 @@ class TestQueueCommand:
         update = _make_update()
         ctx = _make_context(queue=queue)
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await queue_command(update, ctx)
 
         text = update.message.reply_text.call_args[0][0]
@@ -410,8 +454,10 @@ class TestQueueCommand:
         update = _make_update(has_message=False)
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await queue_command(update, ctx)  # must not raise
 
     @pytest.mark.asyncio
@@ -429,8 +475,10 @@ class TestQueueCommand:
         update = _make_update()
         ctx = _make_context(queue=queue)
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await queue_command(update, ctx)
 
         text = update.message.reply_text.call_args[0][0]
@@ -440,6 +488,7 @@ class TestQueueCommand:
 # ---------------------------------------------------------------------------
 # /update
 # ---------------------------------------------------------------------------
+
 
 class TestUpdateCommand:
     @pytest.mark.asyncio
@@ -461,12 +510,14 @@ class TestUpdateCommand:
         update = _make_update()
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.commands.update.TRIGGER_PATH", trigger), \
-             patch("micromech.bot.commands.update.RESULT_PATH", result_path), \
-             patch("micromech.bot.commands.update.POLL_ATTEMPTS", 1), \
-             patch("micromech.bot.commands.update.POLL_INTERVAL", 0), \
-             patch("asyncio.sleep", AsyncMock()):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.commands.update.TRIGGER_PATH", trigger),
+            patch("micromech.bot.commands.update.RESULT_PATH", result_path),
+            patch("micromech.bot.commands.update.POLL_ATTEMPTS", 1),
+            patch("micromech.bot.commands.update.POLL_INTERVAL", 0),
+            patch("asyncio.sleep", AsyncMock()),
+        ):
             await update_command(update, ctx)
 
         sent_msg = update.message.reply_text.return_value
@@ -486,12 +537,14 @@ class TestUpdateCommand:
         async def fake_sleep(_interval):
             result_path.write_text("updated:0.0.15:0.0.16")
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.commands.update.TRIGGER_PATH", trigger), \
-             patch("micromech.bot.commands.update.RESULT_PATH", result_path), \
-             patch("micromech.bot.commands.update.POLL_ATTEMPTS", 1), \
-             patch("micromech.bot.commands.update.POLL_INTERVAL", 0), \
-             patch("asyncio.sleep", side_effect=fake_sleep):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.commands.update.TRIGGER_PATH", trigger),
+            patch("micromech.bot.commands.update.RESULT_PATH", result_path),
+            patch("micromech.bot.commands.update.POLL_ATTEMPTS", 1),
+            patch("micromech.bot.commands.update.POLL_INTERVAL", 0),
+            patch("asyncio.sleep", side_effect=fake_sleep),
+        ):
             await update_command(update, ctx)
 
         sent_msg = update.message.reply_text.return_value
@@ -509,12 +562,14 @@ class TestUpdateCommand:
         async def fake_sleep(_interval):
             result_path.write_text("current:0.0.16")
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.commands.update.TRIGGER_PATH", trigger), \
-             patch("micromech.bot.commands.update.RESULT_PATH", result_path), \
-             patch("micromech.bot.commands.update.POLL_ATTEMPTS", 1), \
-             patch("micromech.bot.commands.update.POLL_INTERVAL", 0), \
-             patch("asyncio.sleep", side_effect=fake_sleep):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.commands.update.TRIGGER_PATH", trigger),
+            patch("micromech.bot.commands.update.RESULT_PATH", result_path),
+            patch("micromech.bot.commands.update.POLL_ATTEMPTS", 1),
+            patch("micromech.bot.commands.update.POLL_INTERVAL", 0),
+            patch("asyncio.sleep", side_effect=fake_sleep),
+        ):
             await update_command(update, ctx)
 
         sent_msg = update.message.reply_text.return_value
@@ -532,12 +587,14 @@ class TestUpdateCommand:
         async def fake_sleep(_interval):
             result_path.write_text("error:network failure")
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.commands.update.TRIGGER_PATH", trigger), \
-             patch("micromech.bot.commands.update.RESULT_PATH", result_path), \
-             patch("micromech.bot.commands.update.POLL_ATTEMPTS", 1), \
-             patch("micromech.bot.commands.update.POLL_INTERVAL", 0), \
-             patch("asyncio.sleep", side_effect=fake_sleep):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.commands.update.TRIGGER_PATH", trigger),
+            patch("micromech.bot.commands.update.RESULT_PATH", result_path),
+            patch("micromech.bot.commands.update.POLL_ATTEMPTS", 1),
+            patch("micromech.bot.commands.update.POLL_INTERVAL", 0),
+            patch("asyncio.sleep", side_effect=fake_sleep),
+        ):
             await update_command(update, ctx)
 
         sent_msg = update.message.reply_text.return_value
@@ -547,6 +604,7 @@ class TestUpdateCommand:
 # ---------------------------------------------------------------------------
 # /logs
 # ---------------------------------------------------------------------------
+
 
 class TestLogsCommand:
     @pytest.mark.asyncio
@@ -566,8 +624,10 @@ class TestLogsCommand:
         update = _make_update()
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.commands.logs._collect_logs", return_value=[]):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.commands.logs._collect_logs", return_value=[]),
+        ):
             await logs_command(update, ctx)
 
         calls = [c[0][0] for c in update.message.reply_text.call_args_list]
@@ -581,9 +641,11 @@ class TestLogsCommand:
         ctx = _make_context()
         fake_files = [("micromech.log", b"log line 1\nlog line 2\n")]
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.commands.logs._collect_logs", return_value=fake_files), \
-             patch("micromech.web.app._redact_sensitive", side_effect=lambda x: x):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.commands.logs._collect_logs", return_value=fake_files),
+            patch("micromech.web.app._redact_sensitive", side_effect=lambda x: x),
+        ):
             await logs_command(update, ctx)
 
         update.message.reply_document.assert_called_once()
@@ -598,10 +660,12 @@ class TestLogsCommand:
         big_zip = MagicMock()
         big_zip.getbuffer.return_value = MagicMock(nbytes=MAX_ZIP_BYTES + 1)
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.commands.logs._collect_logs", return_value=[("a.log", b"x")]), \
-             patch("micromech.bot.commands.logs._build_zip", return_value=big_zip), \
-             patch("micromech.web.app._redact_sensitive", side_effect=lambda x: x):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.commands.logs._collect_logs", return_value=[("a.log", b"x")]),
+            patch("micromech.bot.commands.logs._build_zip", return_value=big_zip),
+            patch("micromech.web.app._redact_sensitive", side_effect=lambda x: x),
+        ):
             await logs_command(update, ctx)
 
         calls = [c[0][0] for c in update.message.reply_text.call_args_list]
@@ -610,8 +674,10 @@ class TestLogsCommand:
     def test_collect_logs_no_files(self, tmp_path):
         from micromech.bot.commands.logs import _collect_logs
 
-        with patch("micromech.bot.commands.logs.LOG_FILE", tmp_path / "nonexistent.log"), \
-             patch("micromech.bot.commands.logs.LOG_DIR", tmp_path):
+        with (
+            patch("micromech.bot.commands.logs.LOG_FILE", tmp_path / "nonexistent.log"),
+            patch("micromech.bot.commands.logs.LOG_DIR", tmp_path),
+        ):
             result = _collect_logs()
         assert result == []
 
@@ -621,8 +687,10 @@ class TestLogsCommand:
         log_file = tmp_path / "micromech.log"
         log_file.write_bytes(b"some logs")
 
-        with patch("micromech.bot.commands.logs.LOG_FILE", log_file), \
-             patch("micromech.bot.commands.logs.LOG_DIR", tmp_path):
+        with (
+            patch("micromech.bot.commands.logs.LOG_FILE", log_file),
+            patch("micromech.bot.commands.logs.LOG_DIR", tmp_path),
+        ):
             result = _collect_logs()
 
         assert len(result) == 1
@@ -646,6 +714,7 @@ class TestLogsCommand:
 # /wallet
 # ---------------------------------------------------------------------------
 
+
 class TestWalletCommand:
     @pytest.mark.asyncio
     async def test_no_chains(self):
@@ -656,8 +725,10 @@ class TestWalletCommand:
         update = _make_update()
         ctx = _make_context(config=config)
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await wallet_command(update, ctx)
 
         update.message.reply_text.assert_called_once()
@@ -670,8 +741,10 @@ class TestWalletCommand:
         update = _make_update(has_message=False)
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await wallet_command(update, ctx)
 
     @pytest.mark.asyncio
@@ -683,33 +756,37 @@ class TestWalletCommand:
         update = _make_update()
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}), \
-             patch("micromech.bot.commands.wallet.get_wallet", return_value=wallet), \
-             patch("micromech.bot.commands.wallet.check_balances", return_value=(1.0, 2.0)), \
-             patch("micromech.core.bridge.get_service_info", return_value={}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("micromech.bot.commands.wallet.get_wallet", return_value=wallet),
+            patch("micromech.bot.commands.wallet.check_balances", return_value=(1.0, 2.0)),
+            patch("micromech.core.bridge.get_service_info", return_value={}),
+        ):
             await wallet_command(update, ctx)
 
         update.message.reply_text.assert_called_with("Fetching wallet info...")
 
-    def test_explorer_link(self):
-        from micromech.bot.commands.wallet import _explorer_link
+    def test_explorer_link_md(self):
+        from micromech.bot.formatting import explorer_link_md
 
-        link = _explorer_link("gnosis", "0xabc", "short")
+        link = explorer_link_md("gnosis", "0xabc", "short")
         assert "gnosisscan" in link
         assert "0xabc" in link
 
-    def test_explorer_link_unknown_chain(self):
-        from micromech.bot.commands.wallet import _explorer_link
+    def test_explorer_link_md_unknown_chain(self):
+        from micromech.bot.formatting import explorer_link_md
 
-        link = _explorer_link("unknownchain", "0xabc", "addr")
-        # Falls back to gnosis explorer
-        assert "gnosisscan" in link
+        link = explorer_link_md("unknownchain", "0xabc", "addr")
+        # H5/security-md L3: fail closed — unknown chain returns plain code, no
+        # misleading fallback link to gnosisscan.
+        assert "gnosisscan" not in link
 
 
 # ---------------------------------------------------------------------------
 # /manage
 # ---------------------------------------------------------------------------
+
 
 class TestManageCommand:
     @pytest.mark.asyncio
@@ -782,6 +859,7 @@ class TestManageCommand:
 # /checkpoint
 # ---------------------------------------------------------------------------
 
+
 class TestCheckpointCommand:
     @pytest.mark.asyncio
     async def test_no_staked_services(self):
@@ -790,8 +868,10 @@ class TestCheckpointCommand:
         update = _make_update()
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.core.bridge.get_service_info", return_value={}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.core.bridge.get_service_info", return_value={}),
+        ):
             await checkpoint_command(update, ctx)
 
         assert "No staked" in update.message.reply_text.call_args[0][0]
@@ -805,9 +885,10 @@ class TestCheckpointCommand:
         update = _make_update()
         ctx = _make_context(lifecycles={"gnosis": lifecycle})
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey"}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}),
+        ):
             await checkpoint_command(update, ctx)
 
         update.message.reply_text.assert_called()
@@ -843,6 +924,7 @@ class TestCheckpointCommand:
 # /settings
 # ---------------------------------------------------------------------------
 
+
 class TestSettingsCommand:
     def test_format_settings(self):
         from micromech.bot.commands.settings import _format_settings
@@ -870,6 +952,7 @@ class TestSettingsCommand:
 # bot/app.py — module constants and start_command
 # ---------------------------------------------------------------------------
 
+
 class TestBotApp:
     def test_action_constants_defined(self):
         from micromech.bot import app as bot_app
@@ -885,8 +968,10 @@ class TestBotApp:
         update = _make_update()
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await start_command(update, ctx)
 
         update.message.reply_text.assert_called_once()
@@ -899,6 +984,8 @@ class TestBotApp:
         update = _make_update(has_message=False)
         ctx = _make_context()
 
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID), \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             await start_command(update, ctx)  # must not raise

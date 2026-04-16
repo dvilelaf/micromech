@@ -28,6 +28,29 @@ def make_test_config(**kwargs) -> MicromechConfig:
 
 
 @pytest.fixture(autouse=True)
+def _reset_rate_limit_cache():
+    """Clear the bot rate-limit cache between tests.
+
+    _rate_limit_cache is a module-level dict that persists across tests.
+    Without this reset, sequential tests using the same user_id get rate-limited
+    and commands return early without calling reply_text.
+    """
+    try:
+        from micromech.bot import security
+
+        security._rate_limit_cache.clear()
+    except (ImportError, AttributeError):
+        pass
+    yield
+    try:
+        from micromech.bot import security
+
+        security._rate_limit_cache.clear()
+    except (ImportError, AttributeError):
+        pass
+
+
+@pytest.fixture(autouse=True)
 def _reset_global_sessions():
     """Reset iwa's cached aiohttp session before each test.
 

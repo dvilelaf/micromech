@@ -189,18 +189,14 @@ class TestGetWalletPathB:
     def test_wallet_attribute_error_falls_through(self, tmp_path):
         (tmp_path / "wallet.json").touch()
         with patch("iwa.core.constants.WALLET_PATH", str(tmp_path / "wallet.json")):
-            with patch(
-                "micromech.core.bridge.Wallet", side_effect=AttributeError("no attr")
-            ):
+            with patch("micromech.core.bridge.Wallet", side_effect=AttributeError("no attr")):
                 with pytest.raises(RuntimeError, match="No wallet"):
                     bridge.get_wallet()
 
     def test_wallet_type_error_falls_through(self, tmp_path):
         (tmp_path / "wallet.json").touch()
         with patch("iwa.core.constants.WALLET_PATH", str(tmp_path / "wallet.json")):
-            with patch(
-                "micromech.core.bridge.Wallet", side_effect=TypeError("bad type")
-            ):
+            with patch("micromech.core.bridge.Wallet", side_effect=TypeError("bad type")):
                 with pytest.raises(RuntimeError, match="No wallet"):
                     bridge.get_wallet()
 
@@ -211,34 +207,39 @@ class TestGetWalletPathB:
 
 
 class TestCheckBalancesFull:
+    """H4/B3: check_balances now returns None on RPC failure (not (0.0, 0.0))."""
+
     def test_uses_cached_wallet_address(self):
         mock_wallet = MagicMock()
         mock_wallet.master_account.address = "0x" + "aa" * 20
         bridge._cached_wallet = mock_wallet
+        bridge._cached_key_storage = None
 
         mock_ci = MagicMock()
-        mock_ci.get.return_value = None  # chain not found → early exit
+        mock_ci.get.return_value = None  # chain not found → returns None
         bridge._cached_interfaces = mock_ci
 
-        assert bridge.check_balances("gnosis") == (0.0, 0.0)
+        assert bridge.check_balances("gnosis") is None
 
-    def test_returns_zero_when_no_address_sources(self):
+    def test_returns_none_when_no_address_sources(self):
         bridge._cached_wallet = None
         bridge._cached_key_storage = None
         with patch("micromech.core.bridge._IWA_AVAILABLE", True):
-            assert bridge.check_balances("gnosis") == (0.0, 0.0)
+            assert bridge.check_balances("gnosis") is None
 
-    def test_returns_zero_when_address_is_falsy(self):
+    def test_returns_none_when_address_is_falsy(self):
         mock_ks = MagicMock()
         mock_ks.get_address_by_tag.return_value = None
         bridge._cached_key_storage = mock_ks
+        bridge._cached_wallet = None
         with patch("micromech.core.bridge._IWA_AVAILABLE", True):
-            assert bridge.check_balances("gnosis") == (0.0, 0.0)
+            assert bridge.check_balances("gnosis") is None
 
-    def test_returns_zero_when_chain_not_found(self):
+    def test_returns_none_when_chain_not_found(self):
         mock_ks = MagicMock()
         mock_ks.get_address_by_tag.return_value = "0x" + "bb" * 20
         bridge._cached_key_storage = mock_ks
+        bridge._cached_wallet = None
 
         mock_interfaces = MagicMock()
         mock_interfaces.get.return_value = None
@@ -246,7 +247,7 @@ class TestCheckBalancesFull:
             patch("micromech.core.bridge._IWA_AVAILABLE", True),
             patch("micromech.core.bridge.ChainInterfaces", return_value=mock_interfaces),
         ):
-            assert bridge.check_balances("gnosis") == (0.0, 0.0)
+            assert bridge.check_balances("gnosis") is None
 
     def test_returns_native_and_olas_balances(self):
         mock_ks = MagicMock()
@@ -263,9 +264,7 @@ class TestCheckBalancesFull:
         mock_ci_instance.chain = mock_chain_model
 
         mock_contract = MagicMock()
-        mock_contract.functions.balanceOf.return_value.call.return_value = (
-            2_000_000_000_000_000_000
-        )
+        mock_contract.functions.balanceOf.return_value.call.return_value = 2_000_000_000_000_000_000
         mock_ci_instance.web3.eth.contract.return_value = mock_contract
 
         mock_interfaces = MagicMock()
@@ -310,6 +309,7 @@ class TestCheckBalancesFull:
         mock_ks = MagicMock()
         mock_ks.get_address_by_tag.return_value = "0x" + "ee" * 20
         bridge._cached_key_storage = mock_ks
+        bridge._cached_wallet = None
         bridge._cached_interfaces = None
 
         mock_ci_instance = MagicMock()
@@ -319,7 +319,7 @@ class TestCheckBalancesFull:
             patch("micromech.core.bridge.ChainInterfaces", return_value=mock_ci_instance),
         ):
             result = bridge.check_balances("gnosis")
-        assert result == (0.0, 0.0)
+        assert result is None
         assert bridge._cached_interfaces is mock_ci_instance
 
 
@@ -350,9 +350,7 @@ class TestCheckSafeBalance:
         ):
             mock_interfaces = MagicMock()
             mock_interfaces.get.return_value = None
-            with patch(
-                "micromech.core.bridge.ChainInterfaces", return_value=mock_interfaces
-            ):
+            with patch("micromech.core.bridge.ChainInterfaces", return_value=mock_interfaces):
                 assert bridge.check_safe_balance("gnosis") is None
 
     def test_returns_balance(self):
@@ -371,9 +369,7 @@ class TestCheckSafeBalance:
             mock_interfaces = MagicMock()
             mock_interfaces.get.return_value = mock_ci_instance
 
-            with patch(
-                "micromech.core.bridge.ChainInterfaces", return_value=mock_interfaces
-            ):
+            with patch("micromech.core.bridge.ChainInterfaces", return_value=mock_interfaces):
                 balance = bridge.check_safe_balance("gnosis")
             assert balance == pytest.approx(3.0)
 
@@ -404,9 +400,7 @@ class TestCheckSafeBalance:
             mock_interfaces = MagicMock()
             mock_interfaces.get.return_value = mock_ci_instance
 
-            with patch(
-                "micromech.core.bridge.ChainInterfaces", return_value=mock_interfaces
-            ):
+            with patch("micromech.core.bridge.ChainInterfaces", return_value=mock_interfaces):
                 bridge.check_safe_balance("gnosis")
             assert bridge._cached_interfaces is mock_interfaces
 
@@ -668,7 +662,8 @@ class TestWalletCommand:
         status_msg = update.message.reply_text.return_value
         status_msg.edit_text.assert_called_once()
         text = status_msg.edit_text.call_args[0][0]
-        assert "Unavailable" in text or "unavailable" in text.lower()
+        # H1: user_error now produces "Error (wallet) — check logs"
+        assert "Error" in text or "check logs" in text
 
     @pytest.mark.asyncio
     async def test_wallet_chain_with_mech_address(self):
@@ -709,42 +704,84 @@ class TestWalletCommand:
         text = status_msg.edit_text.call_args[0][0]
         assert "Mech" in text
 
-    def test_format_chain_wallet_not_deployed(self):
-        """Cover 'Not deployed' branch (line 45) in _format_chain_wallet."""
-        from micromech.bot.commands.wallet import _format_chain_wallet
-        from micromech.core.constants import CHAIN_DEFAULTS
+    @pytest.mark.asyncio
+    async def test_wallet_chain_not_deployed(self):
+        """Wallet command with no multisig and no mech → shows 'Not deployed'."""
+        from unittest.mock import AsyncMock, MagicMock, patch
 
-        gnosis = CHAIN_DEFAULTS["gnosis"]
-        chain_cfg = ChainConfig(
-            chain="gnosis",
-            marketplace_address=gnosis["marketplace"],
-            factory_address=gnosis["factory"],
-            staking_address=gnosis["staking"],
-            mech_address=None,
-        )
-        with patch("micromech.core.bridge.get_service_info", return_value={}):
-            result = _format_chain_wallet("gnosis", chain_cfg)
-        assert "Not deployed" in result
+        from micromech.bot.commands.wallet import wallet_command
 
-    def test_format_chain_wallet_with_multisig(self):
-        """Cover multisig branch in _format_chain_wallet (lines 35-37)."""
-        from micromech.bot.commands.wallet import _format_chain_wallet
-        from micromech.core.constants import CHAIN_DEFAULTS
+        wallet_mock = MagicMock()
+        wallet_mock.master_account.address = "0x" + "a" * 40
 
-        gnosis = CHAIN_DEFAULTS["gnosis"]
-        chain_cfg = ChainConfig(
-            chain="gnosis",
-            marketplace_address=gnosis["marketplace"],
-            factory_address=gnosis["factory"],
-            staking_address=gnosis["staking"],
-            mech_address=None,
-        )
-        with patch(
-            "micromech.core.bridge.get_service_info",
-            return_value={"multisig_address": "0x" + "ff" * 20},
+        update = MagicMock()
+        update.message = AsyncMock()
+        sent = AsyncMock()
+        sent.edit_text = AsyncMock()
+        update.message.reply_text = AsyncMock(return_value=sent)
+        update.effective_chat.id = 42
+        update.effective_user.id = 99
+
+        ctx = MagicMock()
+        from tests.conftest import make_test_config
+
+        ctx.bot_data = {"config": make_test_config()}
+
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=42),
+            patch("micromech.bot.commands.wallet.get_wallet", return_value=wallet_mock),
+            patch("micromech.bot.commands.wallet.check_balances", return_value=(1.0, 0.0)),
+            patch(
+                "micromech.bot.commands.wallet.check_address_balances",
+                return_value=(None, None),
+            ),
+            patch("micromech.core.bridge.get_service_info", return_value={}),
         ):
-            result = _format_chain_wallet("gnosis", chain_cfg)
-        assert "Multisig" in result
+            await wallet_command(update, ctx)
+
+        text = sent.edit_text.call_args[0][0]
+        assert "Not deployed" in text
+
+    @pytest.mark.asyncio
+    async def test_wallet_chain_with_multisig(self):
+        """Wallet command with a multisig address → shows 'Multisig'."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from micromech.bot.commands.wallet import wallet_command
+
+        wallet_mock = MagicMock()
+        wallet_mock.master_account.address = "0x" + "a" * 40
+
+        update = MagicMock()
+        update.message = AsyncMock()
+        sent = AsyncMock()
+        sent.edit_text = AsyncMock()
+        update.message.reply_text = AsyncMock(return_value=sent)
+        update.effective_chat.id = 42
+        update.effective_user.id = 99
+
+        ctx = MagicMock()
+        from tests.conftest import make_test_config
+
+        ctx.bot_data = {"config": make_test_config()}
+
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=42),
+            patch("micromech.bot.commands.wallet.get_wallet", return_value=wallet_mock),
+            patch("micromech.bot.commands.wallet.check_balances", return_value=(1.0, 0.0)),
+            patch(
+                "micromech.bot.commands.wallet.check_address_balances",
+                return_value=(0.5, 1.0),
+            ),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "ff" * 20},
+            ),
+        ):
+            await wallet_command(update, ctx)
+
+        text = sent.edit_text.call_args[0][0]
+        assert "Multisig" in text
 
 
 # ---------------------------------------------------------------------------
