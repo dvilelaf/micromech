@@ -191,6 +191,46 @@ class TestFormatChainStatus:
         result = _format_chain_status("gnosis", status, olas_price=None, pending_payment=None)
         assert "Pending payment" not in result
 
+    def test_rewards_none_shows_question_mark(self):
+        """Bug C: rewards=None (staking unavailable) must show '? OLAS', not '0.00 OLAS'."""
+        from micromech.bot.commands.status import _format_chain_status
+
+        # Simulate a "not_staked" or failed staking status dict — no "rewards" key
+        status = {
+            "requests_this_epoch": 0,
+            "required_requests": 0,
+        }
+        result = _format_chain_status("gnosis", status, olas_price=None)
+        assert "? OLAS" in result
+        assert "0.00 OLAS" not in result
+
+    def test_rewards_zero_shows_zero(self):
+        """Bug C: rewards=0 (confirmed zero on-chain) must show '0.00 OLAS', not '? OLAS'."""
+        from micromech.bot.commands.status import _format_chain_status
+
+        status = {
+            "requests_this_epoch": 0,
+            "required_requests": 0,
+            "rewards": 0.0,
+        }
+        result = _format_chain_status("gnosis", status, olas_price=None)
+        assert "0.00 OLAS" in result
+        assert "? OLAS" not in result
+
+    def test_rewards_zero_with_olas_price_does_not_show_eur(self):
+        """Bug C: rewards=0.0 with olas_price set should NOT show EUR (rewards > 0 guard)."""
+        from micromech.bot.commands.status import _format_chain_status
+
+        status = {
+            "requests_this_epoch": 0,
+            "required_requests": 0,
+            "rewards": 0.0,
+        }
+        result = _format_chain_status("gnosis", status, olas_price=2.5)
+        # 0 rewards → no EUR conversion, no parenthesized EUR value
+        assert "0.00 OLAS" in result
+        assert "€" not in result
+
     def test_master_balances_shown(self):
         from micromech.bot.commands.status import _format_chain_status
 

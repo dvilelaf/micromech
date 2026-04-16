@@ -62,6 +62,8 @@ def _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18)):
 
     wallet = MagicMock()
     wallet.safe_service = safe_service
+    # Bug B fix: _transfer_to_master must use wallet.send, not execute_safe_transaction
+    wallet.send.return_value = "0xtxhash_transfer"
     wallet.master_account = master_account
 
     bridge = MagicMock()
@@ -214,11 +216,49 @@ class TestPaymentWithdrawTask:
         ):
             await payment_withdraw_task(bridges, notification, cfg)
 
-        # Called twice: processPaymentByMultisig + transfer to master
-        assert bridge.wallet.safe_service.execute_safe_transaction.call_count == 2
+        # Bug B: processPaymentByMultisig goes through execute_safe_transaction (contract call),
+        # but _transfer_to_master must use wallet.send (native transfer via iwa pipeline).
+        bridge.wallet.safe_service.execute_safe_transaction.assert_called_once()
+        bridge.wallet.send.assert_called_once()
         notification.send.assert_awaited_once()
         msg = notification.send.call_args[0][1]
         assert "0.500000" in msg
+
+    @pytest.mark.asyncio
+    async def test_transfer_to_master_uses_wallet_send_not_execute_safe_tx(self):
+        """Bug B: _transfer_to_master must use wallet.send, not execute_safe_transaction.
+
+        Direct execute_safe_transaction calls bypass iwa's signing pipeline and cause
+        GS013 (Invalid signatures) on-chain. wallet.send handles Safe account lookup
+        and signing correctly.
+        """
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 0.01
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18))
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch(
+            "micromech.core.bridge.get_service_info", return_value={"multisig_address": MULTISIG}
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        # wallet.send must be called for the master transfer
+        bridge.wallet.send.assert_called_once()
+        send_kwargs = bridge.wallet.send.call_args[1]
+        assert send_kwargs["from_address_or_tag"] == MULTISIG
+        assert send_kwargs["chain_name"] == "gnosis"
+        # Amount must be > 0 (non-trivial xDAI balance)
+        assert send_kwargs["amount_wei"] > 0
+
+        # execute_safe_transaction should be called only once: processPaymentByMultisig
+        # (not for transfer_to_master, which is now handled by wallet.send)
+        bridge.wallet.safe_service.execute_safe_transaction.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_skips_when_zero_address_balance_tracker(self):
@@ -302,3 +342,33 @@ class TestPaymentWithdrawTask:
         await payment_withdraw_task(bridges, notification, cfg)
 
         notification.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_wallet_send_none_raises_and_is_caught(self):
+        """Bug B: wallet.send returning None raises RuntimeError caught by outer handler.
+
+        The xDAI stays in the Safe (withdrawal still completed) but the sweep to
+        master fails with a warning notification.
+        """
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 0.01
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18))
+        bridge.wallet.send.return_value = None  # Simulate wallet.send failure
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch(
+            "micromech.core.bridge.get_service_info", return_value={"multisig_address": MULTISIG}
+        ):
+            # Should not raise — outer except catches RuntimeError from _transfer_to_master
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        # The xDAI transfer to master failed → warning notification sent
+        notification.send.assert_awaited_once()
+        msg = notification.send.call_args[0][1]
+        assert "WARNING" in msg or "failed" in msg.lower()

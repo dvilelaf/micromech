@@ -54,10 +54,9 @@ def _format_chain_status(
         lines.append(f"Pending payment: {code_md(format_token(pending_payment, 'xDAI'))}")
 
     rewards_raw = status.get("rewards")
-    rewards = rewards_raw if rewards_raw is not None else 0.0
-    reward_str = format_token(rewards, "OLAS")
-    if olas_price and rewards > 0:
-        eur = rewards * olas_price
+    reward_str = format_token(rewards_raw, "OLAS")  # None → "? OLAS", 0.0 → "0.00 OLAS"
+    if olas_price and rewards_raw is not None and rewards_raw > 0:
+        eur = rewards_raw * olas_price
         lines.append(f"Rewards: {code_md(reward_str)} \\({escape_md(format_currency(eur))}\\)")
     else:
         lines.append(f"Rewards: {code_md(reward_str)}")
@@ -176,8 +175,8 @@ def _fetch_pending_payments(config: MicromechConfig) -> dict[str, float]:
             if bt_addr:
                 results[name] = round(get_pending_balance(bridge, bt_addr, cfg.mech_address), 6)
         except Exception as e:
-            logger.debug(
-                "Pending payment fetch failed for {}: {}", name, type(e).__name__
+            logger.warning(
+                "Pending payment fetch failed for {}: {}", name, e
             )
     return results
 

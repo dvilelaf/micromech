@@ -327,6 +327,86 @@ class TestFundTask:
             # Should not raise
             await fund_task({"gnosis": bridge}, notification, config)
 
+    @pytest.mark.asyncio
+    async def test_decimal_balance_no_type_error_when_ok(self):
+        """iwa 0.7.5 returns Decimal from get_native_balance_eth — must not crash when balance OK."""
+        from decimal import Decimal
+
+        from micromech.tasks.fund import fund_task
+
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        bridge = MagicMock()
+        config = _make_config(fund_threshold_native=0.1)
+        wallet = MagicMock()
+        wallet.master_account.address = MASTER_ADDR
+        wallet.get_native_balance_eth.side_effect = lambda addr, chain: (
+            Decimal("1.0") if addr == AGENT_ADDR else Decimal("10.0")
+        )
+
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value=_SVC_INFO_WITH_AGENT),
+            patch("micromech.core.bridge.get_wallet", return_value=wallet),
+        ):
+            # Should not raise TypeError: unsupported operand type(s) for >=: 'decimal.Decimal' and 'float'
+            await fund_task({"gnosis": bridge}, notification, config)
+
+        notification.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_decimal_balance_no_type_error_when_low(self):
+        """iwa 0.7.5: Decimal balance triggers fund transfer without TypeError."""
+        from decimal import Decimal
+
+        from micromech.tasks.fund import fund_task
+
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        bridge = MagicMock()
+        bridge.wallet.send.return_value = "0xtxhash"
+        config = _make_config(fund_threshold_native=0.1, fund_target_native=0.5)
+        wallet = MagicMock()
+        wallet.master_account.address = MASTER_ADDR
+        wallet.get_native_balance_eth.side_effect = lambda addr, chain: (
+            Decimal("0.01") if addr == AGENT_ADDR else Decimal("10.0")
+        )
+
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value=_SVC_INFO_WITH_AGENT),
+            patch("micromech.core.bridge.get_wallet", return_value=wallet),
+        ):
+            # Should not raise TypeError: unsupported operand type(s) for -: 'float' and 'decimal.Decimal'
+            await fund_task({"gnosis": bridge}, notification, config)
+
+        bridge.wallet.send.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_decimal_balance_master_too_low(self):
+        """iwa 0.7.5: Decimal balance comparison for master insufficient funds — no TypeError."""
+        from decimal import Decimal
+
+        from micromech.tasks.fund import fund_task
+
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        bridge = MagicMock()
+        config = _make_config(fund_threshold_native=0.1, fund_target_native=0.5)
+        wallet = MagicMock()
+        wallet.master_account.address = MASTER_ADDR
+        wallet.get_native_balance_eth.side_effect = lambda addr, chain: (
+            Decimal("0.01") if addr == AGENT_ADDR else Decimal("0.001")
+        )
+
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value=_SVC_INFO_WITH_AGENT),
+            patch("micromech.core.bridge.get_wallet", return_value=wallet),
+        ):
+            await fund_task({"gnosis": bridge}, notification, config)
+
+        bridge.wallet.send.assert_not_called()
+        notification.send.assert_called_once()
+        assert "Insufficient Master" in notification.send.call_args[0][0]
+
 
 # ── Checkpoint Task ───────────────────────────────────────────────────────
 

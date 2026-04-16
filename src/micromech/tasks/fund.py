@@ -50,7 +50,8 @@ async def fund_task(
             from micromech.core.bridge import get_wallet
 
             wallet = get_wallet()
-            native = wallet.get_native_balance_eth(agent_address, chain_name)
+            _raw_native = wallet.get_native_balance_eth(agent_address, chain_name)
+            native = float(_raw_native) if _raw_native is not None else 0.0
 
             if native >= config.fund_threshold_native:
                 continue
@@ -65,7 +66,8 @@ async def fund_task(
                 continue
 
             master_address = str(wallet.master_account.address)
-            master_native = wallet.get_native_balance_eth(master_address, chain_name)
+            _raw_master = wallet.get_native_balance_eth(master_address, chain_name)
+            master_native = float(_raw_master) if _raw_master is not None else 0.0
             if master_native < amount:
                 logger.warning(
                     f"[{chain_name}] Master balance too low: "

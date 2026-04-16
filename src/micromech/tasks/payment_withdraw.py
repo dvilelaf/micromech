@@ -15,6 +15,7 @@ These earnings accumulate in the balance tracker until withdrawn.
 """
 
 import asyncio
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -39,18 +40,23 @@ def _transfer_to_master(
 ) -> None:
     """Transfer native xDAI from the Safe to the master wallet.
 
-    Sends a value-only Safe transaction (empty calldata) to master.
+    Uses wallet.send() (iwa's managed transfer pipeline) to ensure
+    the Safe transaction is signed correctly. Direct execute_safe_transaction
+    calls bypass the pipeline and can cause GS013 (Invalid signatures).
     """
     master = str(bridge.wallet.master_account.address)
-    amount_wei = int(amount_xdai * 1e18)
+    amount_wei = int(Decimal(str(amount_xdai)) * Decimal(10**18))
 
-    tx_hash = bridge.wallet.safe_service.execute_safe_transaction(
-        safe_address_or_tag=multisig_address,
-        to=master,
-        value=amount_wei,
+    tx_hash = bridge.wallet.send(
+        from_address_or_tag=multisig_address,
+        to_address_or_tag=master,
+        amount_wei=amount_wei,
         chain_name=chain_name,
-        data=b"",
     )
+    if not tx_hash:
+        raise RuntimeError(
+            f"[{chain_name}] Safe→master transfer returned no tx hash"
+        )
     tx_hash_str = tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
     logger.info(
         "[{}] Transferred {:.6f} xDAI to master {}. TX: {}",
