@@ -1303,8 +1303,8 @@ def create_web_app(
                 ok = lc.unstake(service_key, body.get("contract"))
                 return {"success": ok, "action": "unstake"}
             elif action == "claim":
-                ok = lc.claim_rewards(service_key)
-                return {"success": ok, "action": "claim"}
+                amount = lc.claim_rewards(service_key)
+                return {"success": amount > 0, "action": "claim", "amount_olas": amount}
             elif action == "checkpoint":
                 ok = lc.checkpoint(service_key)
                 return {"success": ok, "action": "checkpoint"}
