@@ -13,6 +13,7 @@ All external I/O (bridge calls, wallet, filesystem) is mocked so tests run
 without real credentials or network access.
 """
 
+import os
 import zipfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -600,6 +601,37 @@ class TestUpdateCommand:
         sent_msg = update.message.reply_text.return_value
         assert "failed" in sent_msg.edit_text.call_args[0][0]
 
+    def test_disk_warning_suffix_no_file(self, tmp_path):
+        from micromech.bot.commands.update import _disk_warning_suffix
+
+        with patch("micromech.bot.commands.update.DISK_WARNING_PATH", tmp_path / ".disk-warning"):
+            result = _disk_warning_suffix()
+
+        assert result == ""
+
+    def test_disk_warning_suffix_with_file(self, tmp_path):
+        from micromech.bot.commands.update import _disk_warning_suffix
+
+        warning_file = tmp_path / ".disk-warning"
+        warning_file.write_text("12")
+
+        with patch("micromech.bot.commands.update.DISK_WARNING_PATH", warning_file):
+            result = _disk_warning_suffix()
+
+        assert "12GB" in result
+        assert not warning_file.exists()  # file deleted after reading
+
+    def test_disk_warning_suffix_exception(self):
+        from micromech.bot.commands.update import _disk_warning_suffix
+
+        bad_path = MagicMock()
+        bad_path.exists.side_effect = OSError("permission denied")
+
+        with patch("micromech.bot.commands.update.DISK_WARNING_PATH", bad_path):
+            result = _disk_warning_suffix()
+
+        assert result == ""
+
 
 # ---------------------------------------------------------------------------
 # /logs
@@ -707,6 +739,62 @@ class TestLogsCommand:
         with zipfile.ZipFile(buf) as zf:
             names = zf.namelist()
         assert "test.log" in names
+
+    def test_collect_updater_logs_both_files(self, tmp_path):
+        import time as real_time
+
+        from micromech.bot.commands.logs import _collect_updater_logs
+
+        main_log = tmp_path / "updater.log"
+        main_log.write_bytes(b"updater output")
+        rotated = tmp_path / "updater.log.1"
+        rotated.write_bytes(b"rotated output")
+        # Set mtime within 24h
+        os.utime(rotated, (real_time.time() - 3600,) * 2)
+
+        with (
+            patch("micromech.bot.commands.logs.UPDATER_LOG", main_log),
+            patch("micromech.bot.commands.logs.UPDATER_LOG_ROTATED", rotated),
+        ):
+            result = _collect_updater_logs()
+
+        names = [f[0] for f in result]
+        assert "updater.log" in names
+        assert "updater.log.1" in names
+
+    def test_collect_updater_logs_no_files(self, tmp_path):
+        from micromech.bot.commands.logs import _collect_updater_logs
+
+        with (
+            patch("micromech.bot.commands.logs.UPDATER_LOG", tmp_path / "nonexistent.log"),
+            patch("micromech.bot.commands.logs.UPDATER_LOG_ROTATED", tmp_path / "nonexistent.1"),
+        ):
+            result = _collect_updater_logs()
+
+        assert result == []
+
+    def test_collect_updater_logs_skips_old_rotated(self, tmp_path):
+        import time as real_time
+
+        from micromech.bot.commands.logs import _collect_updater_logs
+
+        main_log = tmp_path / "updater.log"
+        main_log.write_bytes(b"current")
+        rotated = tmp_path / "updater.log.1"
+        rotated.write_bytes(b"old")
+        # Set mtime > 24h ago
+        old_mtime = real_time.time() - 90000
+        os.utime(rotated, (old_mtime, old_mtime))
+
+        with (
+            patch("micromech.bot.commands.logs.UPDATER_LOG", main_log),
+            patch("micromech.bot.commands.logs.UPDATER_LOG_ROTATED", rotated),
+        ):
+            result = _collect_updater_logs()
+
+        names = [f[0] for f in result]
+        assert "updater.log" in names
+        assert "updater.log.1" not in names
 
 
 # ---------------------------------------------------------------------------
@@ -852,6 +940,45 @@ class TestManageCommand:
         kb = _build_actions_keyboard("gnosis", {"staking_state": "NOT_STAKED", "is_staked": False})
         buttons = [btn.text for row in kb.inline_keyboard for btn in row]
         assert any("Stake" in b for b in buttons)
+
+    def test_clear_manage_state_removes_all_manage_keys(self):
+        from micromech.bot.commands.manage import _clear_manage_state
+
+        ctx = MagicMock()
+        ctx.user_data = {
+            "manage_chain": "gnosis",
+            "manage_action": "unstake",
+            "manage_contracts": [],
+            "other_key": "preserved",
+        }
+        _clear_manage_state(ctx)
+
+        assert "manage_chain" not in ctx.user_data
+        assert "manage_action" not in ctx.user_data
+        assert "manage_contracts" not in ctx.user_data
+        assert ctx.user_data["other_key"] == "preserved"
+
+    def test_clear_manage_state_no_user_data(self):
+        from micromech.bot.commands.manage import _clear_manage_state
+
+        ctx = MagicMock()
+        ctx.user_data = None
+        _clear_manage_state(ctx)  # must not raise
+
+    def test_manage_command_clears_state_on_start(self):
+        from micromech.bot.commands.manage import manage_command
+
+        update = _make_update()
+        ctx = _make_context()
+        ctx.user_data = {"manage_chain": "stale", "manage_action": "stale"}
+
+        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID):
+            import asyncio
+
+            asyncio.get_event_loop().run_until_complete(manage_command(update, ctx))
+
+        assert "manage_chain" not in ctx.user_data
+        assert "manage_action" not in ctx.user_data
 
 
 # ---------------------------------------------------------------------------
