@@ -105,6 +105,43 @@ class TestMechLifecycleWithMocks:
         assert lc.checkpoint("svc-1") is True
 
     @patch("micromech.management._get_service_manager")
+    def test_checkpoint_false_still_invalidates_cache(self, mock_get_mgr):
+        """Bug: when checkpoint() returns False (another instance already called it on
+        the same staking contract), the staking status cache must still be invalidated.
+
+        Without this fix, services B and C (on the same staking contract as A) see stale
+        epoch data for up to CacheTTL.STAKING_STATUS (60s) after the checkpoint TX, which
+        delays their traders from sending requests in the new epoch.
+        """
+        mock_mgr = MagicMock()
+        mock_mgr.call_checkpoint.return_value = False  # Another instance beat us to it
+        mock_get_mgr.return_value = mock_mgr
+
+        with patch("micromech.management.response_cache") as mock_cache:
+            lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+            result = lc.checkpoint("gnosis:101")
+
+        assert result is False
+        mock_cache.invalidate.assert_called_once_with("staking_status:gnosis:101")
+
+    @patch("micromech.management._get_service_manager")
+    def test_checkpoint_success_also_invalidates_cache(self, mock_get_mgr):
+        """When checkpoint() succeeds (this instance called it), iwa invalidates its own
+        cache key. Verify our explicit invalidation also fires so the guarantee holds
+        regardless of iwa's internal implementation details.
+        """
+        mock_mgr = MagicMock()
+        mock_mgr.call_checkpoint.return_value = True
+        mock_get_mgr.return_value = mock_mgr
+
+        with patch("micromech.management.response_cache") as mock_cache:
+            lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+            result = lc.checkpoint("gnosis:100")
+
+        assert result is True
+        mock_cache.invalidate.assert_called_once_with("staking_status:gnosis:100")
+
+    @patch("micromech.management._get_service_manager")
     def test_get_status(self, mock_get_mgr):
         mock_mgr = MagicMock()
         mock_mgr.service.service_id = 42

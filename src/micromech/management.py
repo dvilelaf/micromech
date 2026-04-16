@@ -9,6 +9,7 @@ Each MechLifecycle targets a specific chain via ChainConfig.
 import time
 from typing import Any, Callable, Optional
 
+from iwa.web.cache import response_cache
 from loguru import logger
 
 MAX_RETRIES = 3
@@ -439,7 +440,20 @@ class MechLifecycle:
         return result
 
     def checkpoint(self, service_key: str) -> bool:
-        """Call checkpoint on the staking contract."""
+        """Call checkpoint on the staking contract.
+
+        Always invalidates the local staking status cache after the call,
+        regardless of whether this instance sent the TX or another instance
+        already did (call_checkpoint returns False in that case).
+
+        All services share a single staking contract. When any one of them
+        triggers the checkpoint TX the epoch resets for everyone on that
+        contract. Without explicit invalidation here, instances that got
+        False back would keep serving stale epoch data (mech_requests_this_epoch
+        from the previous epoch) for up to CacheTTL.STAKING_STATUS (60s),
+        which delays their traders from detecting the new epoch and sending
+        liveness requests.
+        """
         mgr = _get_service_manager(self.config, service_key)
         try:
             result = mgr.call_checkpoint()
@@ -448,6 +462,10 @@ class MechLifecycle:
         except Exception as e:
             logger.error("Failed to checkpoint on {}: {}", self.chain_name, e)
             return False
+        finally:
+            # Epoch was (or already is) reset — always purge local cache so the
+            # next get_staking_status() call returns fresh epoch data.
+            response_cache.invalidate(f"staking_status:{service_key}")
 
     def rollback_deploy(
         self,
