@@ -47,8 +47,9 @@ async def fund_task(
                 logger.debug(f"[{chain_name}] No agent_address in service info, skipping fund")
                 continue
 
-            from micromech.core.bridge import get_wallet
             from iwa.core.types import EthereumAddress
+
+            from micromech.core.bridge import get_wallet
 
             wallet = get_wallet()
             agent_tag = (
