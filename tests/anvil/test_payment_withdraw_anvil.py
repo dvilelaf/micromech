@@ -32,8 +32,12 @@ MECH_ADDR = Web3.to_checksum_address("0x33Ca1E117c4254b2eE8CD7Ef1621739431a37396
 SAFE_ADDR = Web3.to_checksum_address("0x0EE0CA8A2fc8a5d9aa92a80Ae4e6A86DcAc81953")
 # Well-funded address available on any recent Gnosis fork
 RICH_ACCOUNT = Web3.to_checksum_address("0xe1CB04A0fA36DdD16a06ea828007E35e1a3cBC37")
-# Standard Anvil test account (always has funds on a fresh fork)
+# Standard Anvil test account (always funded on a fresh fork)
 ANVIL_ACCOUNT_0 = Web3.to_checksum_address("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")
+# Test master wallet — plain address with no contract code on Gnosis mainnet.
+# Standard Foundry accounts (0xf39Fd..., 0x70997...) have EIP-7702 delegations
+# on Gnosis and don't receive xDAI cleanly; this address is genuinely empty.
+TEST_MASTER = Web3.to_checksum_address("0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF")
 
 # Extend the shared ABI with getOperator for the operator-verification test
 _ANVIL_TEST_ABI = MECH_EXEC_ABI + [
@@ -188,6 +192,80 @@ class TestDrainMechToSafeAnvil:
 
         assert receipt["status"] == 1
         assert w3.eth.get_balance(MECH_ADDR) == 0
+
+    def test_full_flow_mech_to_safe_to_master(self, w3):
+        """End-to-end: the real 41.79 xDAI from the mech reaches the master wallet.
+
+        Simulates the complete payment_withdraw_task flow on a real Gnosis fork:
+          Step 1 — mech.exec(to=Safe, value=mech_balance) drains the mech.
+          Step 2 — Safe sends that exact amount to a test master wallet.
+
+        The mech has 41.79 xDAI on production (the amount stranded by the bug
+        this PR fixes). After both steps master must hold exactly mech_balance
+        more xDAI than it started with.
+        """
+        master = TEST_MASTER  # plain address with no contract code on Gnosis
+
+        mech_balance = w3.eth.get_balance(MECH_ADDR)
+        assert mech_balance > 0, (
+            "Mech has no balance on this fork — fork may be past the withdrawal block"
+        )
+
+        gas_price = w3.eth.gas_price
+        gas_reserve = w3.to_wei(0.01, "ether")  # gas budget for two txs
+
+        # Ensure Safe has at least gas_reserve for paying tx fees.
+        # In production the Safe is always funded; on a fresh fork it may not be.
+        if w3.eth.get_balance(SAFE_ADDR) < gas_reserve:
+            w3.eth.send_transaction({
+                "from": ANVIL_ACCOUNT_0,
+                "to": SAFE_ADDR,
+                "value": gas_reserve,
+                "gas": 21_000,
+                "gasPrice": gas_price,
+            })
+
+        safe_before = w3.eth.get_balance(SAFE_ADDR)
+        master_before = w3.eth.get_balance(master)
+
+        # Step 1: mech → Safe via mech.exec()
+        mech = w3.eth.contract(address=MECH_ADDR, abi=_ANVIL_TEST_ABI)
+        tx1 = mech.functions.exec(
+            SAFE_ADDR, mech_balance, b"", 0, 100_000
+        ).build_transaction({"from": SAFE_ADDR, "gas": 200_000, "gasPrice": gas_price})
+        r1 = w3.eth.wait_for_transaction_receipt(
+            w3.eth.send_transaction(tx1), timeout=30
+        )
+        assert r1["status"] == 1, "mech.exec() reverted"
+        assert w3.eth.get_balance(MECH_ADDR) == 0, "Mech must be empty after full drain"
+
+        gas1 = r1["gasUsed"] * gas_price
+        safe_after_drain = w3.eth.get_balance(SAFE_ADDR)
+        assert safe_after_drain == safe_before + mech_balance - gas1, (
+            f"Safe should hold {w3.from_wei(safe_before + mech_balance - gas1, 'ether')} "
+            f"xDAI after drain, got {w3.from_wei(safe_after_drain, 'ether')}"
+        )
+
+        # Step 2: Safe → master (native transfer, simulates wallet.send()).
+        # Use 100_000 gas: Foundry test accounts on Gnosis have contract code
+        # deployed and require more than the standard 21_000 for EOA transfers.
+        tx2 = {
+            "from": SAFE_ADDR,
+            "to": master,
+            "value": mech_balance,
+            "gas": 100_000,
+            "gasPrice": gas_price,
+        }
+        r2 = w3.eth.wait_for_transaction_receipt(
+            w3.eth.send_transaction(tx2), timeout=30
+        )
+        assert r2["status"] == 1, "Safe→master transfer reverted"
+
+        master_after = w3.eth.get_balance(master)
+        assert master_after == master_before + mech_balance, (
+            f"Master should have received {w3.from_wei(mech_balance, 'ether')} xDAI "
+            f"but got {w3.from_wei(master_after - master_before, 'ether')} xDAI"
+        )
 
     def test_exec_fails_when_called_by_non_operator(self, w3):
         """Only the mech operator (Safe) can call exec — other callers revert."""
