@@ -174,7 +174,9 @@ def _fetch_pending_payments(config: MicromechConfig) -> dict[str, float]:
             if bt_addr:
                 results[name] = round(get_pending_balance(bridge, bt_addr, cfg.mech_address), 6)
         except Exception as e:
-            logger.debug("Pending payment fetch failed for {}: {}", name, e)
+            logger.debug(
+                "Pending payment fetch failed for {}: {}", name, type(e).__name__
+            )
     return results
 
 
