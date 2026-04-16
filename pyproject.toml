@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "micromech"
-version = "0.0.19"
+version = "0.0.20"
 description = "Lightweight OLAS mech runtime"
 requires-python = ">=3.12,<4.0"
 license = "MIT"
@@ -25,7 +25,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "aiohttp>=3.9.0",
     "ddgs>=9.12.1",
-    "iwa>=0.7.0",
+    "iwa>=0.7.5",
 ]
 
 [project.urls]
@@ -33,7 +33,7 @@ Repository = "https://github.com/dvilelaf/micromech"
 
 [project.optional-dependencies]
 chain = [
-    "iwa>=0.7.0",
+    "iwa>=0.7.5",
 ]
 telegram = [
     "python-telegram-bot>=21.0",

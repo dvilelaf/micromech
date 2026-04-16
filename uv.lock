@@ -1551,7 +1551,7 @@ wheels = [
 
 [[package]]
 name = "iwa"
-version = "0.7.4"
+version = "0.7.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1587,9 +1587,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "web3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a6/d6/1c1b6b50d1296642398566ec5c32150c1c8584f3c4e9839d4e6ab171bd36/iwa-0.7.4.tar.gz", hash = "sha256:fb104985e1f3a0b020498e1baa3f4af5cf8bc5770bfe4fc4980823f2b881f1d4", size = 631924 }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/de/4df6e5288d1fa46a32bf159a8d1a71a8734435edee88da3a7a3edf91d02e/iwa-0.7.5.tar.gz", hash = "sha256:73efd0508b1ac393d3ef911eeacd68086644eb66399b6f5e0787811a2e22844b", size = 632754 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ba/3d/f05da498aafd481e31077aca2542a080b7ac524d7a1fe70fc85111b9e280/iwa-0.7.4-py3-none-any.whl", hash = "sha256:fc64b102aea6f7ea8c86b8b793eb982bf5043504053c617b56f1d5f63f8aa1ab", size = 761488 },
+    { url = "https://files.pythonhosted.org/packages/78/84/de8462ec16996a0a1169c89512c3a28700f4dbd3adf9e01eead5ed9df0f0/iwa-0.7.5-py3-none-any.whl", hash = "sha256:8cc1f8661bf0818b8ede98e0d2c57c2e11768e320abca385e7ed206666810621", size = 762520 },
 ]
 
 [[package]]
@@ -2092,7 +2092,7 @@ wheels = [
 
 [[package]]
 name = "micromech"
-version = "0.0.19"
+version = "0.0.20"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -2151,8 +2151,8 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'genai'", specifier = ">=1.0.0" },
     { name = "httpx", marker = "extra == 'tasks'", specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'llm'", specifier = ">=0.19.0" },
-    { name = "iwa", specifier = ">=0.7.0" },
-    { name = "iwa", marker = "extra == 'chain'", specifier = ">=0.7.0" },
+    { name = "iwa", specifier = ">=0.7.5" },
+    { name = "iwa", marker = "extra == 'chain'", specifier = ">=0.7.5" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.0" },
     { name = "llama-cpp-python", marker = "extra == 'llm'", specifier = ">=0.2.0" },
     { name = "loguru", specifier = ">=0.7.0" },
