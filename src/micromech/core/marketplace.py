@@ -55,6 +55,25 @@ MECH_ABI_FRAGMENT = [
     },
 ]
 
+# Minimal ABI for mech.exec() — used to drain xDAI from the mech back to the Safe.
+# processPaymentByMultisig() sends xDAI to the mech (not msg.sender/Safe), so the
+# Safe (as mech operator) must call exec() to pull the funds back out.
+MECH_EXEC_ABI = [
+    {
+        "name": "exec",
+        "type": "function",
+        "inputs": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"},
+            {"name": "operation", "type": "uint8"},
+            {"name": "txGas", "type": "uint256"},
+        ],
+        "outputs": [{"name": "returnData", "type": "bytes"}],
+        "stateMutability": "nonpayable",
+    }
+]
+
 
 def get_balance_tracker_address(
     bridge: IwaBridge,

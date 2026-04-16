@@ -8,10 +8,16 @@ Flow:
   2. Look up balance tracker: marketplace.mapPaymentTypeBalanceTrackers(paymentType)
   3. Read mapMechBalances(mech) from balance tracker
   4. If balance >= threshold: call processPaymentByMultisig(mech) from multisig via Safe
-  5. Notify
+  5. Drain xDAI from mech to Safe via mech.exec()
+  6. Transfer xDAI from Safe to master wallet
+  7. Notify
 
 The mech earns xDAI for every delivered request (at maxDeliveryRate per delivery).
 These earnings accumulate in the balance tracker until withdrawn.
+
+NOTE: processPaymentByMultisig() sends xDAI to the mech contract (not the Safe).
+The Safe (as mech operator) must call mech.exec() to pull the funds to the Safe
+before the standard Safe→master transfer can happen.
 """
 
 import asyncio
@@ -22,6 +28,7 @@ from loguru import logger
 
 from micromech.core.marketplace import (
     BALANCE_TRACKER_ABI,
+    MECH_EXEC_ABI,
     get_balance_tracker_address,
     get_pending_balance,
 )
@@ -67,9 +74,15 @@ def _transfer_to_master(
     )
 
     web3 = bridge.web3
-    receipt = bridge.with_retry(lambda: web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120))
+    receipt = bridge.with_retry(
+        lambda: web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    )
     if receipt["status"] != 1:
-        logger.warning("[{}] xDAI transfer to master reverted: {}", chain_name, tx_hash_str)
+        logger.warning(
+            "[{}] xDAI transfer to master reverted: {}",
+            chain_name,
+            tx_hash_str,
+        )
 
 
 def _withdraw(
@@ -78,22 +91,23 @@ def _withdraw(
     bt_address: str,
     mech_address: str,
     multisig_address: str,
-    balance: float = 0.0,
-) -> float:
+) -> None:
     """Call processPaymentByMultisig(mech) from the multisig via Safe.
 
-    Returns the mechPayment amount in xDAI (ether units).
-    Raises on failure.
+    xDAI goes to the mech contract (not the Safe) — caller must follow up
+    with _drain_mech_to_safe() to pull the funds back to the Safe.
     """
     web3 = bridge.web3
     bt = web3.eth.contract(
         address=web3.to_checksum_address(bt_address),
         abi=BALANCE_TRACKER_ABI,
     )
-    fn_call = bt.functions.processPaymentByMultisig(web3.to_checksum_address(mech_address))
-    calldata = fn_call.build_transaction({"from": web3.to_checksum_address(multisig_address)})[
-        "data"
-    ]
+    fn_call = bt.functions.processPaymentByMultisig(
+        web3.to_checksum_address(mech_address)
+    )
+    calldata = fn_call.build_transaction(
+        {"from": web3.to_checksum_address(multisig_address)}
+    )["data"]
 
     tx_hash = bridge.wallet.safe_service.execute_safe_transaction(
         safe_address_or_tag=multisig_address,
@@ -105,14 +119,62 @@ def _withdraw(
     tx_hash_str = tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
     logger.info("[{}] processPaymentByMultisig TX: {}", chain_name, tx_hash_str)
 
-    # Wait for receipt and return mech payment amount
-    receipt = bridge.with_retry(lambda: web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120))
+    receipt = bridge.with_retry(
+        lambda: web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    )
     if receipt["status"] != 1:
-        msg = f"[{chain_name}] processPaymentByMultisig reverted: {tx_hash_str}"
+        msg = (
+            f"[{chain_name}] processPaymentByMultisig reverted: {tx_hash_str}"
+        )
         raise RuntimeError(msg)
 
-    # Return the pending balance that was withdrawn (reading from receipt logs is complex)
-    return balance
+
+def _drain_mech_to_safe(
+    bridge: "IwaBridge",
+    chain_name: str,
+    mech_address: str,
+    multisig_address: str,
+    amount_wei: int,
+) -> None:
+    """Pull xDAI from the mech contract to the Safe via mech.exec().
+
+    processPaymentByMultisig() sends xDAI to the mech contract (not the Safe).
+    Since the Safe is the mech operator, it can call mech.exec() to transfer
+    the native xDAI from the mech to the Safe.
+    """
+    web3 = bridge.web3
+    mech = web3.eth.contract(
+        address=web3.to_checksum_address(mech_address),
+        abi=MECH_EXEC_ABI,
+    )
+    fn_call = mech.functions.exec(
+        web3.to_checksum_address(multisig_address),
+        amount_wei,
+        b"",
+        0,        # operation = Call
+        100_000,  # txGas — 21k for native transfer + margin for Safe fallback/receive handler
+    )
+    calldata = fn_call.build_transaction(
+        {"from": web3.to_checksum_address(multisig_address)}
+    )["data"]
+
+    tx_hash = bridge.wallet.safe_service.execute_safe_transaction(
+        safe_address_or_tag=multisig_address,
+        to=mech_address,
+        value=0,
+        chain_name=chain_name,
+        data=calldata,
+    )
+    tx_hash_str = tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
+    logger.info("[{}] mech.exec drain TX: {}", chain_name, tx_hash_str)
+
+    receipt = bridge.with_retry(
+        lambda: web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    )
+    if receipt["status"] != 1:
+        raise RuntimeError(
+            f"[{chain_name}] mech.exec drain reverted: {tx_hash_str}"
+        )
 
 
 async def payment_withdraw_task(
@@ -125,16 +187,27 @@ async def payment_withdraw_task(
 
     for chain_name, chain_config in config.enabled_chains.items():
         if not chain_config.mech_address:
-            logger.debug("[{}] No mech_address configured, skipping payment withdraw", chain_name)
+            logger.debug(
+                "[{}] No mech_address configured, skipping payment withdraw",
+                chain_name,
+            )
             continue
 
         bridge = bridges.get(chain_name)
         if bridge is None:
-            logger.debug("[{}] No bridge for chain, skipping payment withdraw", chain_name)
+            logger.debug(
+                "[{}] No bridge for chain, skipping payment withdraw",
+                chain_name,
+            )
             continue
 
-        if not hasattr(bridge, "wallet") or not hasattr(bridge.wallet, "safe_service"):
-            logger.debug("[{}] No safe_service on bridge, skipping payment withdraw", chain_name)
+        if not hasattr(bridge, "wallet") or not hasattr(
+            bridge.wallet, "safe_service"
+        ):
+            logger.debug(
+                "[{}] No safe_service on bridge, skipping payment withdraw",
+                chain_name,
+            )
             continue
 
         try:
@@ -155,12 +228,15 @@ async def payment_withdraw_task(
                 chain_config.mech_address,
             )
             logger.debug(
-                "[{}] Pending mech payment in balance tracker: {:.6f} xDAI", chain_name, balance
+                "[{}] Pending mech payment in balance tracker: {:.6f} xDAI",
+                chain_name,
+                balance,
             )
 
             if balance < threshold:
                 logger.debug(
-                    "[{}] Pending payment {:.6f} xDAI below threshold {:.4f} xDAI — skipping",
+                    "[{}] Pending payment {:.6f} xDAI below threshold"
+                    " {:.4f} xDAI — skipping",
                     chain_name,
                     balance,
                     threshold,
@@ -173,7 +249,10 @@ async def payment_withdraw_task(
             svc_info = await asyncio.to_thread(get_service_info, chain_name)
             multisig = svc_info.get("multisig_address")
             if not multisig:
-                logger.warning("[{}] No multisig_address — cannot withdraw payment", chain_name)
+                logger.warning(
+                    "[{}] No multisig_address — cannot withdraw payment",
+                    chain_name,
+                )
                 continue
 
             logger.info(
@@ -183,6 +262,7 @@ async def payment_withdraw_task(
                 multisig,
             )
 
+            # Step 1: processPaymentByMultisig → xDAI lands in mech contract
             await asyncio.to_thread(
                 _withdraw,
                 bridge,
@@ -190,12 +270,40 @@ async def payment_withdraw_task(
                 bt_address,
                 chain_config.mech_address,
                 multisig,
+            )
+
+            # Read actual mech balance in exact wei — avoids float round-trip
+            # precision loss and accounts for marketplace fees or concurrent txs.
+            web3 = bridge.web3
+            mech_actual_wei = await asyncio.to_thread(
+                bridge.with_retry,
+                lambda: web3.eth.get_balance(
+                    web3.to_checksum_address(chain_config.mech_address)
+                ),
+            )
+            logger.debug(
+                "[{}] Mech actual balance for drain: {} wei",
+                chain_name,
+                mech_actual_wei,
+            )
+
+            # Step 2: mech.exec → pull xDAI from mech to Safe
+            await asyncio.to_thread(
+                _drain_mech_to_safe,
+                bridge,
+                chain_name,
+                chain_config.mech_address,
+                multisig,
+                mech_actual_wei,
+            )
+
+            logger.info(
+                "[{}] Payment withdraw complete: {:.6f} xDAI",
+                chain_name,
                 balance,
             )
 
-            logger.info("[{}] Payment withdraw complete: {:.6f} xDAI", chain_name, balance)
-
-            # Transfer the xDAI from Safe to master immediately after
+            # Step 3: transfer xDAI from Safe to master
             try:
                 await asyncio.to_thread(
                     _transfer_to_master,
@@ -213,7 +321,9 @@ async def payment_withdraw_task(
                     ),
                 )
             except Exception as e:
-                logger.error("[{}] xDAI transfer to master failed: {}", chain_name, e)
+                logger.error(
+                    "[{}] xDAI transfer to master failed: {}", chain_name, e
+                )
                 await notification_service.send(
                     "Mech Payment Withdrawn",
                     (
@@ -224,4 +334,6 @@ async def payment_withdraw_task(
                 )
 
         except Exception as e:
-            logger.error("[{}] Payment withdraw task error: {}", chain_name, e)
+            logger.error(
+                "[{}] Payment withdraw task error: {}", chain_name, e
+            )
