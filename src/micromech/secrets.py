@@ -39,4 +39,5 @@ class MicromechSecrets(BaseSettings):
             raise ValueError(msg)
         return v
 
+
 secrets = MicromechSecrets()

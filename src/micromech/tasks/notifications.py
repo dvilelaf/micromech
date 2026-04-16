@@ -70,8 +70,7 @@ class NotificationService:
                 if is_transient and attempt < MAX_RETRIES:
                     delay = RETRY_BACKOFF_BASE * attempt
                     logger.warning(
-                        "Telegram send failed (attempt {}/{}): {}."
-                        " Retrying in {}s...",
+                        "Telegram send failed (attempt {}/{}): {}. Retrying in {}s...",
                         attempt,
                         MAX_RETRIES,
                         e,
@@ -93,16 +92,12 @@ class NotificationService:
                         )
                     return
 
-    async def send_messages(
-        self, messages: List[str], parse_mode: str = _PARSE_MODE_HTML
-    ) -> None:
+    async def send_messages(self, messages: List[str], parse_mode: str = _PARSE_MODE_HTML) -> None:
         """Send multiple messages sequentially."""
         for msg in messages:
             await self.notify(msg, parse_mode)
 
-    async def send_message(
-        self, text: str, parse_mode: str = _PARSE_MODE_HTML
-    ) -> None:
+    async def send_message(self, text: str, parse_mode: str = _PARSE_MODE_HTML) -> None:
         """Alias for notify — matches triton interface."""
         await self.notify(text, parse_mode)
 

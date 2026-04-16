@@ -44,9 +44,7 @@ async def fund_task(
             svc_info = await asyncio.to_thread(get_service_info, chain_name)
             agent_address = svc_info.get("agent_address")
             if not agent_address:
-                logger.debug(
-                    f"[{chain_name}] No agent_address in service info, skipping fund"
-                )
+                logger.debug(f"[{chain_name}] No agent_address in service info, skipping fund")
                 continue
 
             from micromech.core.bridge import get_wallet
@@ -95,8 +93,7 @@ async def fund_task(
 
                 if tx_hash:
                     logger.info(
-                        f"[{chain_name}] Funded agent EOA: "
-                        f"{amount:.4f} native (tx: {tx_hash})"
+                        f"[{chain_name}] Funded agent EOA: {amount:.4f} native (tx: {tx_hash})"
                     )
                     await notification_service.send(
                         "Auto-Fund Agent",
@@ -106,9 +103,7 @@ async def fund_task(
                         f"Tx: {tx_hash}",
                     )
                 else:
-                    logger.error(
-                        f"[{chain_name}] Fund transfer returned no tx hash"
-                    )
+                    logger.error(f"[{chain_name}] Fund transfer returned no tx hash")
                     await notification_service.send(
                         "Auto-Fund Failed",
                         f"Chain: {chain_name}\n"
@@ -121,9 +116,7 @@ async def fund_task(
                 logger.error(f"[{chain_name}] Fund transfer failed: {e}")
                 await notification_service.send(
                     "Auto-Fund Failed",
-                    f"Chain: {chain_name}\n"
-                    f"Agent balance: {native:.4f} native\n"
-                    f"Error: {e}",
+                    f"Chain: {chain_name}\nAgent balance: {native:.4f} native\nError: {e}",
                     level="warning",
                 )
 

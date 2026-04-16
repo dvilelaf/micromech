@@ -148,6 +148,7 @@ class MechServer:
         if llama-cpp-python is not installed (non-Docker / dev environments).
         The model is cached in data/models/ — subsequent startups are instant.
         """
+
         def _download():
             try:
                 from micromech.tools.local_llm.local_llm import _get_llm

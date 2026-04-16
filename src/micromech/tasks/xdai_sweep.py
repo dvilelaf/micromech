@@ -47,9 +47,7 @@ async def xdai_sweep_task(
         except Exception:
             dest_addr = None
         if not dest_addr:
-            logger.error(
-                "xDAI sweep tag '{}' not found in wallet or iwa whitelist", tag
-            )
+            logger.error("xDAI sweep tag '{}' not found in wallet or iwa whitelist", tag)
             return
 
     dest_addr = str(dest_addr)
@@ -62,9 +60,7 @@ async def xdai_sweep_task(
         return
 
     try:
-        balance = await asyncio.to_thread(
-            wallet.get_native_balance_eth, master_address, "gnosis"
-        )
+        balance = await asyncio.to_thread(wallet.get_native_balance_eth, master_address, "gnosis")
         logger.debug("xDAI sweep: master balance = {:.6f} xDAI", balance)
 
         if balance <= config.xdai_sweep_threshold_xdai:

@@ -210,9 +210,7 @@ class ToolRegistry:
             entry_point = spec.get("entry_point", f"{name}.py")
             # Block path traversal via a crafted component.yaml.
             if not _is_safe_entry_point(entry_point, tool_dir):
-                logger.warning(
-                    "Skipping tool {}: unsafe entry_point {!r}", name, entry_point
-                )
+                logger.warning("Skipping tool {}: unsafe entry_point {!r}", name, entry_point)
                 continue
             entry_module = entry_point.removesuffix(".py")
             description = spec.get("description", "")

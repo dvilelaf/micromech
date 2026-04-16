@@ -98,9 +98,9 @@ DELIVERY_MARKETPLACE: Final = "marketplace"
 DELIVERY_LEGACY: Final = "legacy"
 
 # Gas limits
-GAS_FLOOR_CREATE2: Final[int] = 2_000_000   # floor for CREATE2 operations (mech creation)
-GAS_FLOOR_DELIVERY: Final[int] = 100_000    # floor for delivery transactions
-GAS_FALLBACK: Final[int] = 500_000          # fallback when gas estimation fails
+GAS_FLOOR_CREATE2: Final[int] = 2_000_000  # floor for CREATE2 operations (mech creation)
+GAS_FLOOR_DELIVERY: Final[int] = 100_000  # floor for delivery transactions
+GAS_FALLBACK: Final[int] = 500_000  # fallback when gas estimation fails
 
 # Minimum funding requirements per chain (native token in wei, OLAS in whole units)
 # These cover gas for the full lifecycle + some buffer

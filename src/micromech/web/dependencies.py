@@ -44,9 +44,7 @@ def _get_webui_password() -> Optional[str]:
     return None
 
 
-def _check_token(
-    authorization: Optional[str], query_token: Optional[str], password: str
-) -> bool:
+def _check_token(authorization: Optional[str], query_token: Optional[str], password: str) -> bool:
     """Timing-safe check of Bearer header or ?token= query param."""
     if authorization:
         scheme, _, param = authorization.partition(" ")

@@ -388,20 +388,21 @@ class PersistentQueue:
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         query = RequestRow.select(
             pw.fn.COUNT(RequestRow.request_id).alias("total"),
-            pw.fn.SUM(
-                pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)
-            ).alias("delivered"),
-            pw.fn.SUM(
-                pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)
-            ).alias("failed"),
+            pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_DELIVERED, 1)], 0)).alias(
+                "delivered"
+            ),
+            pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)).alias("failed"),
             pw.fn.AVG(RequestRow.result_time).alias("avg_time"),
         ).where(RequestRow.created_at >= cutoff)
         query = _chain_filter(query, chain)
         row = query.tuples().first()
         if not row:
             return {
-                "received": 0, "delivered": 0, "failed": 0,
-                "avg_time": 0.0, "success_rate": 0.0,
+                "received": 0,
+                "delivered": 0,
+                "failed": 0,
+                "avg_time": 0.0,
+                "success_rate": 0.0,
             }
         total, delivered, failed, avg_time = row
         total = int(total or 0)

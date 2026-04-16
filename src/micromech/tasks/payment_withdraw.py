@@ -135,9 +135,7 @@ def _transfer_to_master(
     web3 = bridge.web3
     receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
     if receipt["status"] != 1:
-        logger.warning(
-            "[{}] xDAI transfer to master reverted: {}", chain_name, tx_hash_str
-        )
+        logger.warning("[{}] xDAI transfer to master reverted: {}", chain_name, tx_hash_str)
 
 
 def _withdraw(
@@ -261,9 +259,7 @@ async def payment_withdraw_task(
                 balance,
             )
 
-            logger.info(
-                "[{}] Payment withdraw complete: {:.6f} xDAI", chain_name, balance
-            )
+            logger.info("[{}] Payment withdraw complete: {:.6f} xDAI", chain_name, balance)
 
             # Transfer the xDAI from Safe to master immediately after
             try:
@@ -283,9 +279,7 @@ async def payment_withdraw_task(
                     ),
                 )
             except Exception as e:
-                logger.error(
-                    "[{}] xDAI transfer to master failed: {}", chain_name, e
-                )
+                logger.error("[{}] xDAI transfer to master failed: {}", chain_name, e)
                 await notification_service.send(
                     "Mech Payment Withdrawn",
                     (

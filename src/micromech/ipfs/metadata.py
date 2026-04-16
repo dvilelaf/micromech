@@ -18,9 +18,7 @@ from micromech.ipfs.client import cid_hex_to_multihash_bytes, compute_cid, compu
 # Accept only simple file names: alnum / underscore / hyphen / dot, ending in .py.
 # Rejects path separators, parent refs (..), absolute paths, hidden files,
 # and consecutive dots (via negative lookahead).
-_SAFE_ENTRY_POINT_RE = re.compile(
-    r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_.\-]*\.py$"
-)
+_SAFE_ENTRY_POINT_RE = re.compile(r"^(?!.*\.\.)[A-Za-z0-9_][A-Za-z0-9_.\-]*\.py$")
 
 
 def _is_safe_entry_point(entry_point: str, tool_dir: Path) -> bool:
@@ -123,9 +121,7 @@ def scan_tool_packages(
         # Validate entry_point is a plain filename inside tool_dir (blocks
         # crafted component.yaml with "entry_point: ../../etc/passwd").
         if not _is_safe_entry_point(entry_point, tool_dir):
-            logger.warning(
-                "Skipping tool {}: unsafe entry_point {!r}", name, entry_point
-            )
+            logger.warning("Skipping tool {}: unsafe entry_point {!r}", name, entry_point)
             continue
 
         # Extract ALLOWED_TOOLS via AST (no code execution)

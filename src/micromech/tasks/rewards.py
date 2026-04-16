@@ -41,8 +41,7 @@ async def rewards_task(
             accrued = status.get("rewards", 0.0)
             if accrued < threshold:
                 logger.debug(
-                    f"Rewards on {chain_name}: {accrued:.4f} OLAS "
-                    f"(below threshold {threshold})"
+                    f"Rewards on {chain_name}: {accrued:.4f} OLAS (below threshold {threshold})"
                 )
                 continue
 
@@ -52,15 +51,9 @@ async def rewards_task(
 
             if success:
                 # Transfer OLAS from Safe to master (mirrors triton's behaviour)
-                _ok, transferred = await asyncio.to_thread(
-                    lifecycle.withdraw_rewards, svc_key
-                )
-                transfer_line = (
-                    f"\nTransferred to master: {transferred:.4f} OLAS" if _ok else ""
-                )
-                logger.info(
-                    f"Rewards claimed on {chain_name}: {accrued:.4f} OLAS"
-                )
+                _ok, transferred = await asyncio.to_thread(lifecycle.withdraw_rewards, svc_key)
+                transfer_line = f"\nTransferred to master: {transferred:.4f} OLAS" if _ok else ""
+                logger.info(f"Rewards claimed on {chain_name}: {accrued:.4f} OLAS")
                 await notification_service.send(
                     "Rewards Claimed",
                     f"Chain: {chain_name}\nAmount: {accrued:.4f} OLAS{transfer_line}",
