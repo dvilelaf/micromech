@@ -502,6 +502,101 @@ class TestParseMarketplaceEventEdgeCases:
         assert reqs[1].prompt == ""  # Missing data -> empty
 
 
+class TestBlockPersistence:
+    def test_load_last_block_reads_file(self, tmp_path):
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
+        listener._block_state_path = tmp_path / ".last_block_gnosis"
+        listener._block_state_path.write_text("12345")
+        assert listener._load_last_block() == 12345
+
+    def test_load_last_block_returns_none_when_missing(self, tmp_path):
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
+        listener._block_state_path = tmp_path / ".last_block_gnosis"
+        assert listener._load_last_block() is None
+
+    def test_load_last_block_returns_none_on_empty_file(self, tmp_path):
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
+        listener._block_state_path = tmp_path / ".last_block_gnosis"
+        listener._block_state_path.write_text("")
+        assert listener._load_last_block() is None
+
+    def test_load_last_block_returns_none_on_corrupt_file(self, tmp_path):
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
+        listener._block_state_path = tmp_path / ".last_block_gnosis"
+        listener._block_state_path.write_text("not_a_number")
+        assert listener._load_last_block() is None
+
+    def test_save_last_block_writes_file(self, tmp_path):
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
+        state = tmp_path / ".last_block_gnosis"
+        listener._block_state_path = state
+        listener._save_last_block(99999)
+        assert state.read_text() == "99999"
+
+    def test_save_last_block_handles_write_error(self, tmp_path):
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
+        listener._block_state_path = (
+            tmp_path / "nonexistent_dir" / ".last_block_gnosis"
+        )
+        # Should not raise — write errors are silently logged
+        listener._save_last_block(100)
+
+    def test_advance_block_persists_to_disk(self, tmp_path):
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
+        state = tmp_path / ".last_block_gnosis"
+        listener._block_state_path = state
+        listener._polled_to_block = 42000
+        listener.advance_block()
+        assert listener._last_block == 42000
+        assert state.read_text() == "42000"
+
+    @pytest.mark.asyncio
+    async def test_poll_once_uses_persisted_block(self, tmp_path):
+        """On startup, poll_once loads _last_block from disk instead of lookback."""
+        bridge = MagicMock()
+        bridge.with_retry.side_effect = lambda fn, **kw: fn()
+        bridge.web3.eth.block_number = 50000
+
+        listener = EventListener(
+            MicromechConfig(), CHAIN_CFG_MECH, bridge=bridge
+        )
+        state = tmp_path / ".last_block_gnosis"
+        listener._block_state_path = state
+        state.write_text("49900")
+
+        with patch.object(
+            listener, "_fetch_events", return_value=[]
+        ) as mock_fetch:
+            await listener.poll_once()
+
+        # Should scan from 49901 (persisted + 1), not from 50000 - lookback
+        mock_fetch.assert_called_once_with(49901, 50000)
+
+    @pytest.mark.asyncio
+    async def test_poll_once_falls_back_to_lookback_when_no_persist(
+        self, tmp_path
+    ):
+        """Without persisted state, poll_once uses DEFAULT_EVENT_LOOKBACK_BLOCKS."""
+        from micromech.core.constants import DEFAULT_EVENT_LOOKBACK_BLOCKS
+
+        bridge = MagicMock()
+        bridge.with_retry.side_effect = lambda fn, **kw: fn()
+        bridge.web3.eth.block_number = 50000
+
+        listener = EventListener(
+            MicromechConfig(), CHAIN_CFG_MECH, bridge=bridge
+        )
+        listener._block_state_path = tmp_path / ".last_block_gnosis"
+
+        with patch.object(
+            listener, "_fetch_events", return_value=[]
+        ) as mock_fetch:
+            await listener.poll_once()
+
+        expected_from = 50000 - DEFAULT_EVENT_LOOKBACK_BLOCKS + 1
+        mock_fetch.assert_called_once_with(expected_from, 50000)
+
+
 class TestAdaptivePolling:
     """Test adaptive polling interval in EventListener.run()."""
 

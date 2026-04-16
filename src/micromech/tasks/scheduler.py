@@ -21,7 +21,6 @@ from micromech.tasks.low_balance_alert import low_balance_alert_task
 from micromech.tasks.metadata_check import metadata_check_task
 from micromech.tasks.notifications import NotificationService
 from micromech.tasks.payment_withdraw import payment_withdraw_task
-from micromech.tasks.profitability_check import profitability_check_task
 from micromech.tasks.rewards import rewards_task
 from micromech.tasks.update_check import (
     AUTO_UPDATE_POLL_MINUTES,
@@ -172,28 +171,6 @@ class TaskScheduler:
             )
             startup_delay += 20
 
-        # Profitability Check Task (daily at noon local time)
-        try:
-            local_tz = ZoneInfo(os.environ.get("TZ", "Europe/Madrid"))
-        except Exception:
-            local_tz = ZoneInfo("Europe/Madrid")
-        if self.queue:
-            self.scheduler.add_job(
-                profitability_check_task,
-                "cron",
-                hour=12,
-                timezone=local_tz,
-                args=[
-                    self.queue,
-                    self.lifecycles,
-                    self.bridges,
-                    self.notification_service,
-                    cfg,
-                ],
-                id="profitability_check_task",
-                replace_existing=True,
-            )
-
         # Metadata Staleness Check (every 6 hours)
         from micromech.core.constants import CUSTOM_TOOLS_DIR
         from micromech.metadata_manager import _BUILTIN_TOOLS_DIR, MetadataManager
@@ -214,6 +191,10 @@ class TaskScheduler:
         startup_delay += 20
 
         # Update Check Task (daily at 8 AM local time)
+        try:
+            local_tz = ZoneInfo(os.environ.get("TZ", "Europe/Madrid"))
+        except Exception:
+            local_tz = ZoneInfo("Europe/Madrid")
         if cfg.update_check_enabled:
             self.scheduler.add_job(
                 update_check_task,

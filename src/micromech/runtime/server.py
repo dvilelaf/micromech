@@ -205,13 +205,17 @@ class MechServer:
 
         # Fast dedup: already in-flight
         if req_id in self._queued_ids:
-            logger.debug("Skipping duplicate request {}", req_id)
+            logger.debug("Skipping in-flight duplicate {}", req_id)
             return
 
         # DB dedup: already processed
         existing = self.queue.get_by_id(req_id)
         if existing and existing.request.status != STATUS_PENDING:
-            logger.debug("Skipping already-processed request {}", req_id)
+            logger.info(
+                "Skipping already-{} on-chain event {}",
+                existing.request.status,
+                req_id[:16],
+            )
             return
 
         self.queue.add_request(request)

@@ -13,6 +13,7 @@ from loguru import logger
 
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import (
+    DEFAULT_CONFIG_DIR,
     DEFAULT_EVENT_LOOKBACK_BLOCKS,
     DEFAULT_EVENT_POLL_INTERVAL,
     IPFS_GATEWAY,
@@ -40,6 +41,39 @@ class EventListener:
         self._polled_to_block: Optional[int] = None
         self._running = False
         self._marketplace_contract: Optional[Any] = None
+        self._block_state_path = (
+            DEFAULT_CONFIG_DIR / f".last_block_{chain_config.chain}"
+        )
+
+    def _load_last_block(self) -> Optional[int]:
+        """Load persisted last block from disk (survives restarts)."""
+        try:
+            if self._block_state_path.exists():
+                val = int(self._block_state_path.read_text().strip())
+                logger.info(
+                    "Resuming from persisted block {} for chain {}",
+                    val,
+                    self.chain_config.chain,
+                )
+                return val
+        except Exception as e:
+            logger.warning(
+                "Could not read persisted block state for {}: {}",
+                self.chain_config.chain,
+                e,
+            )
+        return None
+
+    def _save_last_block(self, block: int) -> None:
+        """Persist last processed block to disk."""
+        try:
+            self._block_state_path.write_text(str(block))
+        except Exception as e:
+            logger.warning(
+                "Could not save block state for {}: {}",
+                self.chain_config.chain,
+                e,
+            )
 
     def _get_marketplace_contract(self) -> Any:
         """Lazy-load the marketplace contract for event filtering."""
@@ -68,7 +102,17 @@ class EventListener:
             current_block = self.bridge.with_retry(lambda: web3.eth.block_number)
 
             if self._last_block is None:
-                self._last_block = max(0, current_block - DEFAULT_EVENT_LOOKBACK_BLOCKS)
+                persisted = self._load_last_block()
+                if persisted is not None:
+                    self._last_block = persisted
+                else:
+                    self._last_block = max(0, current_block - DEFAULT_EVENT_LOOKBACK_BLOCKS)
+                    logger.warning(
+                        "No persisted block for {} — lookback {} blocks"
+                        " (first run or data loss)",
+                        self.chain_config.chain,
+                        DEFAULT_EVENT_LOOKBACK_BLOCKS,
+                    )
 
             if current_block <= self._last_block:
                 return []
@@ -89,14 +133,14 @@ class EventListener:
 
             if resolved:
                 logger.info(
-                    "Found {} new requests (blocks {}-{})",
+                    "Found {} on-chain events (blocks {}-{})",
                     len(resolved),
                     from_block,
                     to_block,
                 )
                 for req in resolved:
-                    logger.info(
-                        "  Request {} tool={} prompt={}",
+                    logger.debug(
+                        "  Event {} tool={} prompt={}",
                         req.request_id[:16] + "...",
                         req.tool or "(ipfs)",
                         (req.prompt[:60] + "...")
@@ -139,9 +183,10 @@ class EventListener:
         return req
 
     def advance_block(self) -> None:
-        """Advance _last_block to the last polled block."""
+        """Advance _last_block to the last polled block and persist to disk."""
         if self._polled_to_block is not None:
             self._last_block = self._polled_to_block
+            self._save_last_block(self._last_block)
             self._polled_to_block = None
 
     def _fetch_events(self, from_block: int, to_block: int) -> list[MechRequest]:
