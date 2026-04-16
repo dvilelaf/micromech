@@ -1,12 +1,12 @@
-"""Checkpoint command handler — call staking checkpoint per chain."""
+"""Checkpoint command handler — call staking checkpoint per chain (MarkdownV2)."""
 
 import asyncio
 
-from loguru import logger
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from micromech.bot.formatting import bold, escape_html
+from micromech.bot.formatting import bold_md, user_error
 from micromech.bot.security import authorized_only
 from micromech.core.config import MicromechConfig
 
@@ -38,10 +38,10 @@ async def checkpoint_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Handle /checkpoint command."""
     if not update.message:
         return
+    from micromech.core.bridge import get_service_info
 
     config: MicromechConfig = context.bot_data["config"]
     enabled = config.enabled_chains
-    from micromech.core.bridge import get_service_info
 
     staked = {k: v for k, v in enabled.items() if get_service_info(k).get("service_key")}
 
@@ -56,9 +56,9 @@ async def checkpoint_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     keyboard = _build_chain_keyboard(staked)
     await update.message.reply_text(
-        bold("Select chain to checkpoint:"),
+        bold_md("Select chain to checkpoint:"),
         reply_markup=keyboard,
-        parse_mode="HTML",
+        parse_mode=ParseMode.MARKDOWN_V2,
     )
 
 
@@ -74,6 +74,8 @@ async def handle_checkpoint_callback(
         await query.delete_message()
         return
 
+    from micromech.core.bridge import get_service_info
+
     config: MicromechConfig = context.bot_data["config"]
     enabled = config.enabled_chains
     lifecycles = context.bot_data.get("lifecycles", {})
@@ -83,9 +85,8 @@ async def handle_checkpoint_callback(
         await query.edit_message_text("Calling checkpoint for all chains...")
         called = []
         skipped = []
-        from micromech.core.bridge import get_service_info
 
-        for chain_name, chain_config in enabled.items():
+        for chain_name, _chain_config in enabled.items():
             svc_key = get_service_info(chain_name).get("service_key")
             if not svc_key:
                 continue
@@ -100,22 +101,29 @@ async def handle_checkpoint_callback(
                 else:
                     skipped.append(chain_name.upper())
             except Exception:
+                # R3-L3: ASYMMETRIC with the single-chain path, which uses
+                # user_error(). Here we silently skip rather than render the
+                # categorized error, because the all-chains UX is a short
+                # summary ("called: X / not needed: Y") — propagating even a
+                # categorized error line per chain would clutter it. The
+                # server-side loguru log (configured at app startup) still
+                # captures the full traceback for debugging. Do NOT replace
+                # with `user_error(...)` without re-thinking the UX of the
+                # summary line — that would re-introduce R2-H1 in spirit.
                 skipped.append(chain_name.upper())
 
         lines = []
         if called:
-            lines.append(f"Checkpoint called: {bold(', '.join(called))}")
+            lines.append(f"Checkpoint called: {bold_md(', '.join(called))}")
         if skipped:
             lines.append(f"Not needed: {', '.join(skipped)}")
         if not lines:
             lines.append("No chains to checkpoint.")
-        await query.edit_message_text("\n".join(lines), parse_mode="HTML")
+        await query.edit_message_text("\n".join(lines), parse_mode=ParseMode.MARKDOWN_V2)
         return
 
     # Single chain
     chain_name = payload
-    from micromech.core.bridge import get_service_info
-
     svc_key = get_service_info(chain_name).get("service_key")
     if chain_name not in enabled or not svc_key:
         await query.answer("Chain not found or not staked")
@@ -123,7 +131,8 @@ async def handle_checkpoint_callback(
 
     await query.answer("Checkpointing...")
     await query.edit_message_text(
-        f"Calling checkpoint for {bold(chain_name.upper())}...", parse_mode="HTML"
+        f"Calling checkpoint for {bold_md(chain_name.upper())}\\.\\.\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
     )
     lifecycle = lifecycles.get(chain_name)
     if not lifecycle:
@@ -133,16 +142,20 @@ async def handle_checkpoint_callback(
         success = await asyncio.to_thread(lifecycle.checkpoint, svc_key)
         if success:
             await query.edit_message_text(
-                f"Checkpoint called for {bold(chain_name.upper())}", parse_mode="HTML"
+                f"Checkpoint called for {bold_md(chain_name.upper())}",
+                parse_mode=ParseMode.MARKDOWN_V2,
             )
         else:
             await query.edit_message_text(
-                f"Checkpoint not needed for {bold(chain_name.upper())}", parse_mode="HTML"
+                f"Checkpoint not needed for {bold_md(chain_name.upper())}",
+                parse_mode=ParseMode.MARKDOWN_V2,
             )
     except Exception as e:
-        logger.error(f"Checkpoint error for {chain_name}: {e}")
+        # R2-H1: user_error logs full exception + returns categorized message
+        # without leaking RPC URLs that may contain API keys.
         await query.edit_message_text(
-            f"Checkpoint failed: {escape_html(str(e))}", parse_mode="HTML"
+            user_error(f"checkpoint {chain_name}", e),
+            parse_mode=ParseMode.MARKDOWN_V2,
         )
 
 
@@ -152,30 +165,34 @@ async def _checkpoint_chain(
     """Checkpoint a single chain (no selection menu)."""
     if not update.message:
         return
-    config: MicromechConfig = context.bot_data["config"]
+    from micromech.core.bridge import get_service_info
+
     lifecycles = context.bot_data.get("lifecycles", {})
-    config.enabled_chains[chain_name]
 
     status_msg = await update.message.reply_text(
-        f"Calling checkpoint for {bold(chain_name.upper())}...", parse_mode="HTML"
+        f"Calling checkpoint for {bold_md(chain_name.upper())}\\.\\.\\.",
+        parse_mode=ParseMode.MARKDOWN_V2,
     )
     lifecycle = lifecycles.get(chain_name)
     if not lifecycle:
         await status_msg.edit_text("Lifecycle not available for this chain.")
         return
     try:
-        from micromech.core.bridge import get_service_info
-
         svc_key = get_service_info(chain_name).get("service_key", "")
         success = await asyncio.to_thread(lifecycle.checkpoint, svc_key)
         if success:
             await status_msg.edit_text(
-                f"Checkpoint called for {bold(chain_name.upper())}", parse_mode="HTML"
+                f"Checkpoint called for {bold_md(chain_name.upper())}",
+                parse_mode=ParseMode.MARKDOWN_V2,
             )
         else:
             await status_msg.edit_text(
-                f"Checkpoint not needed for {bold(chain_name.upper())}", parse_mode="HTML"
+                f"Checkpoint not needed for {bold_md(chain_name.upper())}",
+                parse_mode=ParseMode.MARKDOWN_V2,
             )
     except Exception as e:
-        logger.error(f"Checkpoint error for {chain_name}: {e}")
-        await status_msg.edit_text(f"Checkpoint failed: {escape_html(str(e))}", parse_mode="HTML")
+        # R2-H1: see comment in handle_checkpoint_callback above.
+        await status_msg.edit_text(
+            user_error(f"checkpoint {chain_name}", e),
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
