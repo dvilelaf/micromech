@@ -324,19 +324,119 @@ class MechLifecycle:
         try:
             staking = mgr.get_staking_status(force_refresh=True)
             if staking:
+                # Fetch contract balance (OLAS staked in staking contract)
+                contract_balance: Optional[float] = None
+                try:
+                    from iwa.plugins.olas.contracts.staking import StakingContract
+
+                    staking_addr = (
+                        str(staking.staking_contract_address)
+                        if staking.staking_contract_address
+                        else None
+                    )
+                    if staking_addr:
+                        sc = StakingContract(address=staking_addr, chain_name=self.chain_name)
+                        contract_balance = sc.balance / 1e18
+                except Exception as e:
+                    logger.debug("Could not fetch contract balance on {}: {}", self.chain_name, e)
+
+                # R2-M5/B2: agent + safe balances were previously fetched
+                # INSIDE get_status, forcing 2 sequential RPC calls inside the
+                # staking-status thread. They are now fetched lazily via
+                # `get_balances()` so the caller can parallelize them across
+                # chains with asyncio.gather. Kept as None in the status dict
+                # for backwards compatibility with callers that haven't
+                # migrated yet.
                 return {
                     "chain": self.chain_name,
                     "service_id": getattr(mgr.service, "service_id", None),
                     "staking_state": staking.staking_state,
                     "is_staked": staking.is_staked,
+                    "staking_contract_name": staking.staking_contract_name,
                     "rewards": staking.accrued_reward_olas,
                     "requests_this_epoch": getattr(staking, "mech_requests_this_epoch", 0),
                     "required_requests": getattr(staking, "required_mech_requests", 0),
+                    "epoch_number": getattr(staking, "epoch_number", 0),
+                    "epoch_end_utc": getattr(staking, "epoch_end_utc", None),
+                    "remaining_epoch_seconds": getattr(staking, "remaining_epoch_seconds", 0),
+                    "contract_balance": contract_balance,
+                    "agent_balance_native": None,
+                    "agent_balance_olas": None,
+                    "safe_balance_native": None,
+                    "safe_balance_olas": None,
                 }
             return {"chain": self.chain_name, "status": "not_staked"}
         except Exception as e:
             logger.error("Failed to get status on {}: {}", self.chain_name, e)
             return None
+
+    def get_balances(self) -> dict:
+        """Fetch agent and safe (multisig) balances for this chain.
+
+        Separated from `get_status` (R2-M5/B2) so callers can parallelize
+        staking-status fetches vs balance fetches across multiple chains.
+
+        Returns a dict with keys:
+          agent_balance_native, agent_balance_olas,
+          safe_balance_native,  safe_balance_olas
+        Each value is Optional[float] — None means "unknown" (RPC error or
+        not configured), NOT zero.
+
+        R3-M2: agent and multisig are fetched under separate try blocks so
+        a failure fetching one address does NOT drop the other. A broad
+        single try/except would have agent failures silently voiding the
+        safe balance too. Also upgraded the log to `logger.warning` so RPC
+        problems aren't invisible under default log levels.
+        """
+        from micromech.core.bridge import (
+            check_address_balances,
+            get_service_info,
+        )
+
+        result: dict = {
+            "agent_balance_native": None,
+            "agent_balance_olas": None,
+            "safe_balance_native": None,
+            "safe_balance_olas": None,
+        }
+        try:
+            svc_info = get_service_info(self.chain_name)
+        except Exception as e:
+            logger.warning(
+                "get_service_info failed on {}: {}",
+                self.chain_name,
+                type(e).__name__,
+            )
+            return result
+        agent_addr = svc_info.get("agent_address")
+        multisig_addr = svc_info.get("multisig_address")
+
+        if agent_addr:
+            try:
+                agent_bal = check_address_balances(self.chain_name, agent_addr)
+                if agent_bal is not None:
+                    result["agent_balance_native"] = agent_bal[0]
+                    result["agent_balance_olas"] = agent_bal[1]
+            except Exception as e:
+                logger.warning(
+                    "agent balance fetch failed on {}: {}",
+                    self.chain_name,
+                    type(e).__name__,
+                )
+
+        if multisig_addr:
+            try:
+                safe_bal = check_address_balances(self.chain_name, multisig_addr)
+                if safe_bal is not None:
+                    result["safe_balance_native"] = safe_bal[0]
+                    result["safe_balance_olas"] = safe_bal[1]
+            except Exception as e:
+                logger.warning(
+                    "safe balance fetch failed on {}: {}",
+                    self.chain_name,
+                    type(e).__name__,
+                )
+        return result
 
     def checkpoint(self, service_key: str) -> bool:
         """Call checkpoint on the staking contract."""
@@ -389,7 +489,8 @@ class MechLifecycle:
                 logger.error("Rollback: wind_down() returned False for {}", service_key)
                 if on_progress:
                     on_progress(
-                        "rollback_failed", 0,
+                        "rollback_failed",
+                        0,
                         f"Failed to wind down service. Run: python scripts/recover_service.py --service '{service_key}' to recover manually.",
                         False,
                     )
@@ -405,9 +506,14 @@ class MechLifecycle:
             logger.info("Rollback: draining service {} to {}", service_key, master)
             drained = mgr.drain_service(target_address=master, claim_rewards=False)
             if drained:
-                logger.info("Rollback: drain completed for {} — {}", service_key, list(drained.keys()))
+                logger.info(
+                    "Rollback: drain completed for {} — {}", service_key, list(drained.keys())
+                )
             else:
-                logger.info("Rollback: drain returned empty for {} (accounts may already be empty)", service_key)
+                logger.info(
+                    "Rollback: drain returned empty for {} (accounts may already be empty)",
+                    service_key,
+                )
 
             # Cleanup config and agent key
             self._cleanup_after_rollback(service_key, mgr)
@@ -452,9 +558,7 @@ class MechLifecycle:
                 cfg.save_config()
                 logger.info("Rollback cleanup: removed service {} from iwa config", service_key)
             else:
-                logger.warning(
-                    "Rollback cleanup: service {} not found in iwa config", service_key
-                )
+                logger.warning("Rollback cleanup: service {} not found in iwa config", service_key)
         except Exception as e:
             logger.error("Rollback cleanup: failed to remove service from config: {}", e)
 
@@ -583,7 +687,9 @@ class MechLifecycle:
                 _progress(2, "Registration activated")
                 _progress(3, "Agent registered")
 
-                multisig = str(mgr.service.multisig_address) if mgr.service.multisig_address else None
+                multisig = (
+                    str(mgr.service.multisig_address) if mgr.service.multisig_address else None
+                )
                 if not multisig:
                     _progress(4, "Failed to deploy Safe", False)
                     msg = "Safe deployment failed"
