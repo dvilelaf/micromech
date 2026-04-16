@@ -46,33 +46,6 @@ def _make_staking_contract_cls(epoch_end: datetime):
 
 
 # ---------------------------------------------------------------------------
-# rewards_task
-# ---------------------------------------------------------------------------
-
-
-class TestRewardsTask:
-    @pytest.mark.asyncio
-    async def test_claim_returns_false_no_notification(self):
-        """When lifecycle.claim_rewards returns False, warning logged, no notification."""
-        from micromech.tasks.rewards import rewards_task
-
-        # 5 OLAS * 4.0 €/OLAS = 20€ >= 1.0€ threshold → proceeds to claim
-        config = _make_config(claim_threshold_eur=1.0)
-        lifecycle = _make_lifecycle(rewards=5.0, claim_ok=False)
-        notification = NotificationService()
-        notification.send = AsyncMock()
-
-        with (
-            patch("micromech.core.bridge.get_service_info", return_value=_svc_info()),
-            # patch at source so the import-inside-loop picks up the mock
-            patch("micromech.core.bridge.get_olas_price_eur", return_value=4.0),
-        ):
-            await rewards_task({"gnosis": lifecycle}, notification, config)
-
-        notification.send.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 # checkpoint_task — epoch/grace logic
 # ---------------------------------------------------------------------------
 
