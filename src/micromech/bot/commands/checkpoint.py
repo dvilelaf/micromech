@@ -2,6 +2,7 @@
 
 import asyncio
 
+from loguru import logger
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
@@ -100,16 +101,14 @@ async def handle_checkpoint_callback(
                     called.append(chain_name.upper())
                 else:
                     skipped.append(chain_name.upper())
-            except Exception:
+            except Exception as e:
                 # R3-L3: ASYMMETRIC with the single-chain path, which uses
                 # user_error(). Here we silently skip rather than render the
                 # categorized error, because the all-chains UX is a short
                 # summary ("called: X / not needed: Y") — propagating even a
-                # categorized error line per chain would clutter it. The
-                # server-side loguru log (configured at app startup) still
-                # captures the full traceback for debugging. Do NOT replace
-                # with `user_error(...)` without re-thinking the UX of the
-                # summary line — that would re-introduce R2-H1 in spirit.
+                # categorized error line per chain would clutter it. Do NOT
+                # replace with `user_error(...)` without re-thinking the UX.
+                logger.warning("checkpoint failed for {}: {}", chain_name, e)
                 skipped.append(chain_name.upper())
 
         lines = []

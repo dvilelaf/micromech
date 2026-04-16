@@ -4,6 +4,7 @@ import io
 import time
 import zipfile
 from datetime import datetime, timezone
+from pathlib import Path
 
 from loguru import logger
 from telegram import Update
@@ -14,6 +15,8 @@ from micromech.core.constants import DEFAULT_CONFIG_DIR
 
 LOG_FILE = DEFAULT_CONFIG_DIR / "micromech.log"
 CONFIG_FILE = DEFAULT_CONFIG_DIR / "micromech.yaml"
+UPDATER_LOG = Path("/app/data/updater.log")
+UPDATER_LOG_ROTATED = Path("/app/data/updater.log.1")
 
 MAX_ZIP_BYTES = 49 * 1024 * 1024  # 49 MB
 
@@ -32,6 +35,20 @@ def _collect_logs() -> list[tuple[str, bytes]]:
 
     if CONFIG_FILE.exists():
         files.append((CONFIG_FILE.name, CONFIG_FILE.read_bytes()))
+
+    return files
+
+
+def _collect_updater_logs() -> list[tuple[str, bytes]]:
+    """Collect updater sidecar log files if present."""
+    files: list[tuple[str, bytes]] = []
+    cutoff = time.time() - 86400
+
+    if UPDATER_LOG.exists():
+        files.append((UPDATER_LOG.name, UPDATER_LOG.read_bytes()))
+
+    if UPDATER_LOG_ROTATED.exists() and UPDATER_LOG_ROTATED.stat().st_mtime >= cutoff:
+        files.append((UPDATER_LOG_ROTATED.name, UPDATER_LOG_ROTATED.read_bytes()))
 
     return files
 
@@ -56,7 +73,7 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text("Collecting logs...")
 
     try:
-        files = _collect_logs()
+        files = _collect_logs() + _collect_updater_logs()
 
         if not files:
             await update.message.reply_text("No log files found.")

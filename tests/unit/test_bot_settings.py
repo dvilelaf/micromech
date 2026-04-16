@@ -146,7 +146,7 @@ class TestValidateFundThresholds:
         config.fund_threshold_native = 0.5
         error = _validate_fund_thresholds("fund_target_native", 0.2, config)
         assert error is not None
-        assert "Target" in error
+        assert "micro-fund" in error  # unified message (same as triton)
 
     def test_target_ok(self):
         from micromech.bot.commands.settings import _validate_fund_thresholds

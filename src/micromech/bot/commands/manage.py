@@ -14,6 +14,14 @@ ACTION_MANAGE = "manage"
 ACTION_MANAGE_CONFIRM = "mgcfm"
 
 
+def _clear_manage_state(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Clear all manage-related state from user_data."""
+    if not context.user_data:
+        return
+    for key in [k for k in context.user_data if k.startswith("manage_")]:
+        del context.user_data[key]
+
+
 def _build_chain_keyboard(chains: dict) -> InlineKeyboardMarkup:
     """Build chain selection keyboard for manage."""
     buttons = []
@@ -59,6 +67,8 @@ async def manage_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not update.message:
         return
 
+    _clear_manage_state(context)
+
     config: MicromechConfig = context.bot_data["config"]
     enabled = config.enabled_chains
 
@@ -86,10 +96,12 @@ async def handle_manage_callback(
     enabled = config.enabled_chains
 
     if payload == "cancel":
+        _clear_manage_state(context)
         await query.delete_message()
         return
 
     if payload == "back":
+        _clear_manage_state(context)
         keyboard = _build_chain_keyboard(enabled)
         await query.answer()
         await query.edit_message_text(
@@ -203,6 +215,7 @@ async def handle_manage_confirm_callback(
     config: MicromechConfig = context.bot_data["config"]
 
     if payload == "no" or not context.user_data:
+        _clear_manage_state(context)
         await query.answer("Cancelled")
         enabled = config.enabled_chains
         keyboard = _build_chain_keyboard(enabled)
@@ -215,21 +228,23 @@ async def handle_manage_confirm_callback(
 
     chain_name = context.user_data.get("manage_chain")
     action = context.user_data.get("manage_action")
-    context.user_data.pop("manage_chain", None)
-    context.user_data.pop("manage_action", None)
 
     if not chain_name or not action:
+        _clear_manage_state(context)
         await query.answer("Session expired")
         return
 
     lifecycles = context.bot_data.get("lifecycles", {})
-    await _execute_action(
-        query,
-        config,
-        chain_name,
-        action,
-        lifecycles,
-    )
+    try:
+        await _execute_action(
+            query,
+            config,
+            chain_name,
+            action,
+            lifecycles,
+        )
+    finally:
+        _clear_manage_state(context)
 
 
 async def _execute_action(

@@ -11,9 +11,25 @@ from micromech.bot.security import authorized_only
 
 TRIGGER_PATH = Path("/app/data/.update-request")
 RESULT_PATH = Path("/app/data/.update-result")
+DISK_WARNING_PATH = Path("/app/data/.disk-warning")
 
 POLL_INTERVAL = 10
 POLL_ATTEMPTS = 12
+
+
+def _disk_warning_suffix() -> str:
+    """Return disk space warning suffix if reclaimable space >= 5GB."""
+    try:
+        if DISK_WARNING_PATH.exists():
+            gb = DISK_WARNING_PATH.read_text().strip()
+            DISK_WARNING_PATH.unlink(missing_ok=True)
+            return (
+                f"\n\n⚠️ Docker has ~{gb}GB of reclaimable space."
+                " Run 'docker system prune' to free disk."
+            )
+    except Exception:
+        pass
+    return ""
 
 
 @authorized_only
@@ -36,18 +52,23 @@ async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             result = RESULT_PATH.read_text().strip()
             RESULT_PATH.unlink(missing_ok=True)
+            disk_warn = _disk_warning_suffix()
 
             if result.startswith("updated:"):
                 parts = result.split(":")
-                await wait_msg.edit_text(f"Updating v{parts[1]} -> v{parts[2]}! Restarting...")
+                await wait_msg.edit_text(
+                    f"Updating v{parts[1]} → v{parts[2]}! Restarting...{disk_warn}"
+                )
                 return
             elif result.startswith("current:"):
                 version = result.split(":")[1]
-                await wait_msg.edit_text(f"Already at latest version (v{version})")
+                await wait_msg.edit_text(
+                    f"Already at latest version (v{version}){disk_warn}"
+                )
                 return
             elif result.startswith("error:"):
                 error = result.split(":", 1)[1]
-                await wait_msg.edit_text(f"Update failed: {error}")
+                await wait_msg.edit_text(f"Update failed: {error}{disk_warn}")
                 return
 
         await wait_msg.edit_text("Timeout waiting for updater. Is the updater container running?")

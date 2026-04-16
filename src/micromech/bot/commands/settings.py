@@ -88,18 +88,21 @@ def _validate_setting_input(setting: dict[str, Any], raw: str) -> tuple[Any, str
 
 
 def _validate_fund_thresholds(attr: str, new_value: float, config: MicromechConfig) -> str | None:
-    """Validate that fund_target_native >= fund_threshold_native."""
-    if attr == "fund_threshold_native":
-        if new_value > config.fund_target_native:
+    """Validate threshold/target spacing to prevent micro-funding chattering.
+
+    Threshold must stay below 90% of target. Otherwise each fund transaction
+    brings the balance just to threshold, which immediately triggers another
+    topup on the next cycle.
+    """
+    fund_attrs = ("fund_threshold_native", "fund_target_native")
+    if attr in fund_attrs:
+        threshold = new_value if attr == fund_attrs[0] else config.fund_threshold_native
+        target = new_value if attr == fund_attrs[1] else config.fund_target_native
+        if threshold >= target * 0.9:
             return (
-                f"Threshold ({new_value}) must be <= target ({config.fund_target_native}). "
-                "Increase target first."
-            )
-    if attr == "fund_target_native":
-        if new_value < config.fund_threshold_native:
-            return (
-                f"Target ({new_value}) must be >= threshold ({config.fund_threshold_native}). "
-                "Decrease threshold first."
+                f"Threshold ({threshold:.3f}) must be less than 90% of target "
+                f"({target:.3f} × 0.9 = {target * 0.9:.3f}). "
+                "Otherwise each transaction triggers a micro-fund."
             )
     return None
 

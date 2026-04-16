@@ -220,6 +220,9 @@ async def handle_claim_callback(
         header = bold_md("Claim Report") + "\n"
         messages = split_md_blocks(results, header=header, separator="\n")
         await query.edit_message_text(messages[0], parse_mode=ParseMode.MARKDOWN_V2)
+        for msg in messages[1:]:
+            if query.message:
+                await query.message.reply_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
         return
 
     # Single chain
