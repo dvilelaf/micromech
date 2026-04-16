@@ -156,17 +156,6 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         lines = [f"{emoji} {bold_md(chain_name.upper())}"]
 
-        if multisig:
-            lines.append(
-                _address_line(
-                    "Multisig",
-                    multisig,
-                    chain_name,
-                    safe_native,
-                    safe_olas,
-                    balance_known=(safe_bal is not None),
-                )
-            )
         if agent:
             lines.append(
                 _address_line(
@@ -178,12 +167,21 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     balance_known=(agent_bal is not None),
                 )
             )
-        if chain_config.mech_address:
-            lines.append(_address_line("Mech", str(chain_config.mech_address), chain_name))
+        if multisig:
+            lines.append(
+                _address_line(
+                    "Multisig",
+                    multisig,
+                    chain_name,
+                    safe_native,
+                    safe_olas,
+                    balance_known=(safe_bal is not None),
+                )
+            )
         if service_id:
             lines.append(f"Service ID: {code_md(str(service_id))}")
 
-        if not multisig and not chain_config.mech_address:
+        if not multisig and not agent:
             lines.append("Not deployed")
 
         blocks.append("\n".join(lines))
