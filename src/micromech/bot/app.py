@@ -27,7 +27,6 @@ from micromech.bot.commands.manage import (
 )
 from micromech.bot.commands.queue_cmd import queue_command
 from micromech.bot.commands.restart import restart_command
-from micromech.bot.commands.schedule import schedule_command
 from micromech.bot.commands.settings import (
     handle_settings_callback,
     handle_settings_text,
@@ -36,7 +35,7 @@ from micromech.bot.commands.settings import (
 from micromech.bot.commands.status import status_command
 from micromech.bot.commands.update import update_command
 from micromech.bot.commands.wallet import wallet_command
-from micromech.bot.formatting import bold
+from micromech.bot.formatting import bold_md
 from micromech.bot.security import authorized_only, rate_limited
 from micromech.core.config import MicromechConfig
 from micromech.core.persistence import PersistentQueue
@@ -62,8 +61,9 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     if not update.message:
         return
     await update.message.reply_text(
-        f"Welcome to {bold('Micromech')} Telegram Bot.\nUse /status to see your mech status.",
-        parse_mode="HTML",
+        f"Welcome to {bold_md('Micromech')} Telegram Bot\\.\n"
+        "Use /status to see your mech status\\.",
+        parse_mode="MarkdownV2",
     )
 
 
@@ -71,26 +71,26 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 @rate_limited
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Send help message."""
+    # Each dash/slash must be escaped in MarkdownV2 except inside code spans.
     help_text = (
-        f"{bold('Micromech Commands')}\n\n"
-        "/status - Mech status per chain\n"
-        "/wallet - Wallet addresses and balances\n"
-        "/claim - Claim staking rewards\n"
-        "/checkpoint - Call staking checkpoint\n"
-        "/manage - Stake/unstake per chain\n"
-        "/contracts - Staking contract info\n"
-        "/schedule - Next epoch checkpoint\n"
-        "/last_rewards - Accrued rewards this epoch\n"
-        "/queue - Request queue status\n"
-        "/info - Version and runtime info\n"
-        "/logs - Download last 24h logs\n"
-        "/settings - Toggle features and edit values\n"
-        "/update - Check for updates\n"
-        "/restart - Restart runtime"
+        f"{bold_md('Micromech Commands')}\n\n"
+        "/status \\- Mech status per chain\n"
+        "/wallet \\- Wallet addresses and balances\n"
+        "/claim \\- Claim staking rewards\n"
+        "/checkpoint \\- Call staking checkpoint\n"
+        "/manage \\- Stake/unstake per chain\n"
+        "/contracts \\- Staking contract info\n"
+        "/last\\_rewards \\- Accrued rewards this epoch\n"
+        "/queue \\- Request queue status\n"
+        "/info \\- Version and runtime info\n"
+        "/logs \\- Download last 24h logs\n"
+        "/settings \\- Toggle features and edit values\n"
+        "/update \\- Check for updates\n"
+        "/restart \\- Restart runtime"
     )
     if not update.message:
         return
-    await update.message.reply_text(help_text, parse_mode="HTML")
+    await update.message.reply_text(help_text, parse_mode="MarkdownV2")
 
 
 async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -130,6 +130,11 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         else:
             await query.answer("Unknown action")
     except Exception as e:
+        # R2-L2 WONTFIX: `data` is user-supplied callback payload, which loguru
+        # renders as a single structured field (newlines become `\n` literals
+        # in the record). Authorized-chat-only reduces exposure further. Not
+        # sanitized here on purpose — log integrity is preserved by loguru's
+        # one-record-per-line format.
         logger.opt(exception=True).error("Error handling callback {}: {}", data, e)
         try:
             await query.answer("An error occurred")
@@ -174,6 +179,9 @@ def create_application(
         except Exception as e:
             logger.warning("Failed to create MechLifecycle for {}: {}", chain_name, e)
     app.bot_data["lifecycles"] = lifecycles
+    # R3-L2: pre-initialize the claim-inflight set so /claim doesn't rely on
+    # lazy first-use creation.
+    app.bot_data["claim_inflight"] = set()
 
     # Commands
     app.add_handler(CommandHandler("start", start_command))
@@ -184,7 +192,6 @@ def create_application(
     app.add_handler(CommandHandler("checkpoint", checkpoint_command))
     app.add_handler(CommandHandler("manage", manage_command))
     app.add_handler(CommandHandler("contracts", contracts_command))
-    app.add_handler(CommandHandler("schedule", schedule_command))
     app.add_handler(CommandHandler("last_rewards", last_rewards_command))
     app.add_handler(CommandHandler("queue", queue_command))
     app.add_handler(CommandHandler("info", info_command))
