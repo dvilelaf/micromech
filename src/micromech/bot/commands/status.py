@@ -38,7 +38,7 @@ def _format_chain_status(
     olas_price: Optional[float],
     pending_payment: Optional[float] = None,
     master_balances: Optional[tuple[float, float]] = None,
-    mech_balance: Optional[float] = None,
+    mech_balance: Optional[tuple[float, float]] = None,
 ) -> str:
     """Format status for a single chain in MarkdownV2 (triton style)."""
     requests = status.get("requests_this_epoch", 0)
@@ -77,9 +77,6 @@ def _format_chain_status(
         m_olas = format_token(master_balances[1], "OLAS")
         lines.append(f"Master: {code_md(m_xdai)} \\| {code_md(m_olas)}")
 
-    if mech_balance is not None:
-        lines.append(f"Mech:   {code_md(format_token(mech_balance, 'xDAI'))}")
-
     # Agent balance — None means "unknown", 0.0 means "empty" (H4/B3).
     agent_native = status.get("agent_balance_native")
     agent_olas = status.get("agent_balance_olas")
@@ -94,6 +91,11 @@ def _format_chain_status(
         s_xdai = format_token(safe_native, "xDAI")
         s_olas = format_token(safe_olas if safe_olas is not None else 0.0, "OLAS")
         lines.append(f"Safe:   {code_md(s_xdai)} \\| {code_md(s_olas)}")
+
+    if mech_balance is not None:
+        m_xdai = format_token(mech_balance[0], "xDAI")
+        m_olas = format_token(mech_balance[1], "OLAS")
+        lines.append(f"Mech:   {code_md(m_xdai)} \\| {code_md(m_olas)}")
 
     contract = status.get("staking_contract_name")
     if contract:
@@ -159,22 +161,13 @@ async def _fetch_chain_status_dict(
     return (chain_name, status, None)
 
 
-def _fetch_mech_balance(chain_name: str, mech_address: str) -> Optional[float]:
-    """Return native xDAI balance of the mech contract (blocking)."""
-    from micromech.core.bridge import IwaBridge
+def _fetch_mech_balance(
+    chain_name: str, mech_address: str
+) -> Optional[tuple[float, float]]:
+    """Return (xDAI, OLAS) balance of the mech contract (blocking)."""
+    from micromech.core.bridge import _fetch_balances_for_address
 
-    try:
-        bridge = IwaBridge(chain_name=chain_name)
-        web3 = bridge.web3
-        bal_wei = bridge.with_retry(
-            lambda: web3.eth.get_balance(
-                web3.to_checksum_address(mech_address)
-            )
-        )
-        return bal_wei / 1e18
-    except Exception as e:
-        logger.warning("Mech balance fetch failed for {}: {}", chain_name, e)
-        return None
+    return _fetch_balances_for_address(chain_name, mech_address)
 
 
 def _fetch_pending_payments(config: MicromechConfig) -> dict[str, float]:
@@ -248,10 +241,14 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     for name, master_result in zip(chain_names, master_results):
         if not isinstance(master_result, Exception):
             master_by_chain[name] = master_result
-    mech_by_chain: dict[str, float] = {}
+    mech_by_chain: dict[str, tuple[float, float]] = {}
     for name, mech_result in zip(chain_names, mech_results):
-        if not isinstance(mech_result, Exception) and isinstance(mech_result, float):
-            mech_by_chain[name] = mech_result
+        if (
+            isinstance(mech_result, tuple)
+            and len(mech_result) == 2
+            and isinstance(mech_result[0], float)
+        ):
+            mech_by_chain[name] = mech_result  # type: ignore[assignment]
 
     blocks = []
     for result in chain_results:
