@@ -142,6 +142,23 @@ class TestMechLifecycleWithMocks:
         mock_cache.invalidate.assert_called_once_with("staking_status:gnosis:100")
 
     @patch("micromech.management._get_service_manager")
+    def test_checkpoint_exception_still_invalidates_cache(self, mock_get_mgr):
+        """Even when call_checkpoint() raises, the finally block must still invalidate
+        the cache — the epoch state on-chain may have changed and we want fresh data
+        on the next status fetch.
+        """
+        mock_mgr = MagicMock()
+        mock_mgr.call_checkpoint.side_effect = RuntimeError("RPC timeout")
+        mock_get_mgr.return_value = mock_mgr
+
+        with patch("micromech.management.response_cache") as mock_cache:
+            lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+            result = lc.checkpoint("gnosis:102")
+
+        assert result is False  # exception path returns False
+        mock_cache.invalidate.assert_called_once_with("staking_status:gnosis:102")
+
+    @patch("micromech.management._get_service_manager")
     def test_get_status(self, mock_get_mgr):
         mock_mgr = MagicMock()
         mock_mgr.service.service_id = 42
