@@ -19,88 +19,16 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from micromech.core.marketplace import (
+    BALANCE_TRACKER_ABI,
+    get_balance_tracker_address,
+    get_pending_balance,
+)
+
 if TYPE_CHECKING:
     from micromech.core.bridge import IwaBridge
     from micromech.core.config import MicromechConfig
     from micromech.tasks.notifications import NotificationService
-
-# Minimal ABI for the mech marketplace balance tracker
-_BT_ABI = [
-    {
-        "name": "mapMechBalances",
-        "type": "function",
-        "inputs": [{"name": "mech", "type": "address"}],
-        "outputs": [{"type": "uint256"}],
-        "stateMutability": "view",
-    },
-    {
-        "name": "processPaymentByMultisig",
-        "type": "function",
-        "inputs": [{"name": "mech", "type": "address"}],
-        "outputs": [
-            {"name": "mechPayment", "type": "uint256"},
-            {"name": "marketplaceFee", "type": "uint256"},
-        ],
-        "stateMutability": "nonpayable",
-    },
-]
-
-# Minimal ABI fragments needed from marketplace and mech
-_MARKETPLACE_ABI_FRAGMENT = [
-    {
-        "name": "mapPaymentTypeBalanceTrackers",
-        "type": "function",
-        "inputs": [{"name": "paymentType", "type": "bytes32"}],
-        "outputs": [{"type": "address"}],
-        "stateMutability": "view",
-    },
-]
-_MECH_ABI_FRAGMENT = [
-    {
-        "name": "paymentType",
-        "type": "function",
-        "inputs": [],
-        "outputs": [{"type": "bytes32"}],
-        "stateMutability": "view",
-    },
-]
-
-
-def _get_balance_tracker_address(
-    bridge: "IwaBridge", chain_name: str, mech_address: str, marketplace_address: str
-) -> str | None:
-    """Resolve balance tracker address for the mech's payment type."""
-    web3 = bridge.web3
-    mech = web3.eth.contract(
-        address=web3.to_checksum_address(mech_address),
-        abi=_MECH_ABI_FRAGMENT,
-    )
-    payment_type = mech.functions.paymentType().call()
-
-    marketplace = web3.eth.contract(
-        address=web3.to_checksum_address(marketplace_address),
-        abi=_MARKETPLACE_ABI_FRAGMENT,
-    )
-    bt_addr = marketplace.functions.mapPaymentTypeBalanceTrackers(payment_type).call()
-
-    zero = "0x" + "0" * 40
-    if bt_addr == zero or bt_addr == web3.to_checksum_address(zero):
-        logger.warning(
-            "[{}] Balance tracker is zero address — no tracker for this payment type", chain_name
-        )
-        return None
-    return web3.to_checksum_address(bt_addr)
-
-
-def _get_pending_balance(bridge: "IwaBridge", bt_address: str, mech_address: str) -> float:
-    """Return pending xDAI balance (in ether units) for the mech in the balance tracker."""
-    web3 = bridge.web3
-    bt = web3.eth.contract(
-        address=web3.to_checksum_address(bt_address),
-        abi=_BT_ABI,
-    )
-    raw = bt.functions.mapMechBalances(web3.to_checksum_address(mech_address)).call()
-    return raw / 1e18
 
 
 def _transfer_to_master(
@@ -154,7 +82,7 @@ def _withdraw(
     web3 = bridge.web3
     bt = web3.eth.contract(
         address=web3.to_checksum_address(bt_address),
-        abi=_BT_ABI,
+        abi=BALANCE_TRACKER_ABI,
     )
     fn_call = bt.functions.processPaymentByMultisig(web3.to_checksum_address(mech_address))
     calldata = fn_call.build_transaction({"from": web3.to_checksum_address(multisig_address)})[
@@ -205,7 +133,7 @@ async def payment_withdraw_task(
 
         try:
             bt_address = await asyncio.to_thread(
-                _get_balance_tracker_address,
+                get_balance_tracker_address,
                 bridge,
                 chain_name,
                 chain_config.mech_address,
@@ -215,7 +143,7 @@ async def payment_withdraw_task(
                 continue
 
             balance = await asyncio.to_thread(
-                _get_pending_balance,
+                get_pending_balance,
                 bridge,
                 bt_address,
                 chain_config.mech_address,

@@ -1183,10 +1183,7 @@ def create_web_app(
 
         def _get_payments() -> dict:
             from micromech.core.bridge import IwaBridge
-            from micromech.tasks.payment_withdraw import (
-                _get_balance_tracker_address,
-                _get_pending_balance,
-            )
+            from micromech.core.marketplace import get_balance_tracker_address, get_pending_balance
 
             config = MicromechConfig.load()
             chains_to_check = (
@@ -1201,13 +1198,13 @@ def create_web_app(
                     continue
                 try:
                     bridge = IwaBridge(chain_name=name)
-                    bt_addr = _get_balance_tracker_address(
+                    bt_addr = get_balance_tracker_address(
                         bridge, name, cfg.mech_address, cfg.marketplace_address
                     )
                     if not bt_addr:
                         results[name] = {"pending": 0.0}
                         continue
-                    pending = _get_pending_balance(bridge, bt_addr, cfg.mech_address)
+                    pending = get_pending_balance(bridge, bt_addr, cfg.mech_address)
                     results[name] = {"pending": round(pending, 6)}
                 except Exception as e:
                     logger.warning("Pending payments check failed for {}: {}", name, e)

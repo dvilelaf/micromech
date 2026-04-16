@@ -5,11 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from micromech.tasks.notifications import NotificationService
-from micromech.tasks.payment_withdraw import (
-    _get_balance_tracker_address,
-    _get_pending_balance,
-    payment_withdraw_task,
-)
+from micromech.core.marketplace import get_balance_tracker_address, get_pending_balance
+from micromech.tasks.payment_withdraw import payment_withdraw_task
 from tests.conftest import make_test_config
 
 MECH = "0x" + "a" * 40
@@ -86,36 +83,36 @@ def _make_chain_config(mech=MECH, marketplace=MARKETPLACE):
 
 
 # ---------------------------------------------------------------------------
-# _get_balance_tracker_address
+# get_balance_tracker_address
 # ---------------------------------------------------------------------------
 
 
 class TestGetBalanceTrackerAddress:
     def test_returns_tracker_address(self):
         bridge = _make_bridge(bt_address=BT_ADDR)
-        result = _get_balance_tracker_address(bridge, "gnosis", MECH, MARKETPLACE)
+        result = get_balance_tracker_address(bridge, "gnosis", MECH, MARKETPLACE)
         assert result == BT_ADDR
 
     def test_returns_none_for_zero_address(self):
         bridge = _make_bridge(bt_address=ZERO)
-        result = _get_balance_tracker_address(bridge, "gnosis", MECH, MARKETPLACE)
+        result = get_balance_tracker_address(bridge, "gnosis", MECH, MARKETPLACE)
         assert result is None
 
 
 # ---------------------------------------------------------------------------
-# _get_pending_balance
+# get_pending_balance
 # ---------------------------------------------------------------------------
 
 
 class TestGetPendingBalance:
     def test_converts_wei_to_ether(self):
         bridge = _make_bridge(mech_balance_raw=int(0.42e18))
-        result = _get_pending_balance(bridge, BT_ADDR, MECH)
+        result = get_pending_balance(bridge, BT_ADDR, MECH)
         assert abs(result - 0.42) < 1e-9
 
     def test_zero_balance(self):
         bridge = _make_bridge(mech_balance_raw=0)
-        result = _get_pending_balance(bridge, BT_ADDR, MECH)
+        result = get_pending_balance(bridge, BT_ADDR, MECH)
         assert result == 0.0
 
 

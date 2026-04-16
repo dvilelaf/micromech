@@ -332,6 +332,50 @@ class TestStatusCommand:
         assert "GNOSIS" in text
 
     @pytest.mark.asyncio
+    async def test_status_with_pending_and_master(self):
+        from micromech.bot.commands.status import status_command
+
+        lifecycle = MagicMock()
+        lifecycle.get_status.return_value = {
+            "staking_state": "STAKED",
+            "rewards": 5.0,
+            "requests_this_epoch": 1999,
+            "required_requests": 21,
+            "epoch_number": 3,
+            "epoch_end_utc": None,
+            "remaining_epoch_seconds": 3600,
+        }
+        update = _make_update()
+        sent = _sent_msg()
+        update.message.reply_text = AsyncMock(return_value=sent)
+        ctx = _make_context(lifecycles={"gnosis": lifecycle})
+
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.core.bridge.get_service_info", return_value={"service_key": "k"}),
+            patch("micromech.bot.commands.status.get_olas_price_eur", return_value=1.5),
+            patch(
+                "micromech.bot.commands.status._fetch_pending_payments",
+                return_value={"gnosis": 1.234567},
+            ),
+            patch(
+                "micromech.bot.commands.status.check_balances",
+                return_value=(10.5, 200.0),
+            ),
+        ):
+            await status_command(update, ctx)
+
+        sent.edit_text.assert_called()
+        text = sent.edit_text.call_args[0][0]
+        assert "Pending payment" in text
+        assert "1.23 xDAI" in text
+        assert "Master" in text
+        assert "10.50 xDAI" in text
+        assert "200.00 OLAS" in text
+        assert "Epoch deliveries" in text
+        assert "1999/21" in text
+
+    @pytest.mark.asyncio
     async def test_status_exception(self):
         from micromech.bot.commands.status import status_command
 

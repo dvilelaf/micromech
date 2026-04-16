@@ -155,12 +155,12 @@ async def _fetch_chain_status_dict(
 
 
 def _fetch_pending_payments(config: MicromechConfig) -> dict[str, float]:
-    """Fetch pending marketplace payments for all enabled chains (blocking)."""
+    """Fetch pending marketplace payments for all enabled chains (blocking).
+
+    IwaBridge is lazy (no work in __init__), so creating one per chain is cheap.
+    """
     from micromech.core.bridge import IwaBridge
-    from micromech.tasks.payment_withdraw import (
-        _get_balance_tracker_address,
-        _get_pending_balance,
-    )
+    from micromech.core.marketplace import get_balance_tracker_address, get_pending_balance
 
     results: dict[str, float] = {}
     for name, cfg in config.enabled_chains.items():
@@ -168,11 +168,11 @@ def _fetch_pending_payments(config: MicromechConfig) -> dict[str, float]:
             continue
         try:
             bridge = IwaBridge(chain_name=name)
-            bt_addr = _get_balance_tracker_address(
+            bt_addr = get_balance_tracker_address(
                 bridge, name, cfg.mech_address, cfg.marketplace_address
             )
             if bt_addr:
-                results[name] = round(_get_pending_balance(bridge, bt_addr, cfg.mech_address), 6)
+                results[name] = round(get_pending_balance(bridge, bt_addr, cfg.mech_address), 6)
         except Exception as e:
             logger.debug("Pending payment fetch failed for {}: {}", name, e)
     return results
@@ -196,22 +196,26 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     status_msg = await update.message.reply_text("Fetching status...")
 
     # Fetch OLAS price, chain statuses, pending payments, and master balances in parallel.
+    chain_names = list(enabled.keys())
     olas_price_task = asyncio.to_thread(get_olas_price_eur)
-    chain_tasks = [_fetch_chain_status_dict(c, lifecycles) for c in enabled]
     pending_task = asyncio.to_thread(_fetch_pending_payments, config)
-    master_tasks = {c: asyncio.to_thread(check_balances, c) for c in enabled}
+    chain_tasks = [_fetch_chain_status_dict(c, lifecycles) for c in chain_names]
+    master_tasks = [asyncio.to_thread(check_balances, c) for c in chain_names]
 
-    all_tasks = [olas_price_task, pending_task, *chain_tasks, *master_tasks.values()]
+    # Layout: [olas_price, pending, *chain_status(N), *master_balance(N)]
+    # chain_tasks and master_tasks both iterate chain_names in the same order.
+    all_tasks = [olas_price_task, pending_task, *chain_tasks, *master_tasks]
     results = await asyncio.gather(*all_tasks, return_exceptions=True)
 
+    n = len(chain_names)
     olas_price = results[0] if not isinstance(results[0], Exception) else None
     pending_payments = results[1] if not isinstance(results[1], Exception) else {}
-    chain_results = results[2 : 2 + len(enabled)]
-    master_results = results[2 + len(enabled) :]
+    chain_results = results[2 : 2 + n]
+    master_results = results[2 + n :]
     master_by_chain = {}
-    for chain_name, master_result in zip(enabled, master_results):
+    for name, master_result in zip(chain_names, master_results):
         if not isinstance(master_result, Exception):
-            master_by_chain[chain_name] = master_result
+            master_by_chain[name] = master_result
 
     blocks = []
     for result in chain_results:

@@ -91,11 +91,11 @@ class TestPendingPaymentsSuccess:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
+                "micromech.core.marketplace.get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_pending_balance",
+                "micromech.core.marketplace.get_pending_balance",
                 return_value=1.5,
             ),
         ):
@@ -121,11 +121,11 @@ class TestPendingPaymentsSuccess:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
+                "micromech.core.marketplace.get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_pending_balance",
+                "micromech.core.marketplace.get_pending_balance",
                 return_value=0.0,
             ),
         ):
@@ -152,11 +152,11 @@ class TestPendingPaymentsSuccess:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
+                "micromech.core.marketplace.get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_pending_balance",
+                "micromech.core.marketplace.get_pending_balance",
                 return_value=raw,
             ),
         ):
@@ -223,7 +223,7 @@ class TestPendingPaymentsNotConfigured:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
+                "micromech.core.marketplace.get_balance_tracker_address",
                 return_value=None,
             ),
         ):
@@ -294,11 +294,11 @@ class TestPendingPaymentsErrors:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
+                "micromech.core.marketplace.get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_pending_balance",
+                "micromech.core.marketplace.get_pending_balance",
                 side_effect=Exception("contract error"),
             ),
         ):
@@ -353,11 +353,11 @@ class TestPendingPaymentsChainFilter:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
+                "micromech.core.marketplace.get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_pending_balance",
+                "micromech.core.marketplace.get_pending_balance",
                 return_value=2.5,
             ),
         ):
@@ -385,11 +385,11 @@ class TestPendingPaymentsChainFilter:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
+                "micromech.core.marketplace.get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_pending_balance",
+                "micromech.core.marketplace.get_pending_balance",
                 return_value=0.0,
             ),
         ):
@@ -421,11 +421,11 @@ class TestPendingPaymentsChainFilter:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
+                "micromech.core.marketplace.get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
-                "micromech.tasks.payment_withdraw._get_pending_balance",
+                "micromech.core.marketplace.get_pending_balance",
                 return_value=0.5,
             ),
         ):
