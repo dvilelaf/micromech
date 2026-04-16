@@ -113,6 +113,7 @@ class TestFormatChainStatus:
         assert "GNOSIS" in result
         assert "STAKED" in result
         assert "5.00 OLAS" in result
+        assert "Epoch deliveries" in result
 
     def test_with_olas_price(self):
         from micromech.bot.commands.status import _format_chain_status
@@ -166,6 +167,76 @@ class TestFormatChainStatus:
         }
         result = _format_chain_status("gnosis", status, olas_price=None)
         assert "MyContract" in result
+
+    def test_pending_payment_shown(self):
+        from micromech.bot.commands.status import _format_chain_status
+
+        status = {
+            "requests_this_epoch": 0,
+            "required_requests": 10,
+            "rewards": 0.0,
+        }
+        result = _format_chain_status("gnosis", status, olas_price=None, pending_payment=1.5)
+        assert "Pending payment" in result
+        assert "1.50 xDAI" in result
+
+    def test_pending_payment_absent_when_none(self):
+        from micromech.bot.commands.status import _format_chain_status
+
+        status = {
+            "requests_this_epoch": 0,
+            "required_requests": 10,
+            "rewards": 0.0,
+        }
+        result = _format_chain_status("gnosis", status, olas_price=None, pending_payment=None)
+        assert "Pending payment" not in result
+
+    def test_master_balances_shown(self):
+        from micromech.bot.commands.status import _format_chain_status
+
+        status = {
+            "requests_this_epoch": 0,
+            "required_requests": 10,
+            "rewards": 0.0,
+        }
+        result = _format_chain_status(
+            "gnosis", status, olas_price=None, master_balances=(10.5, 200.0)
+        )
+        assert "Master" in result
+        assert "10.50 xDAI" in result
+        assert "200.00 OLAS" in result
+
+    def test_field_order(self):
+        """Verify field ordering: ID, Pending, Rewards, Epoch deliveries, Master, Agent, Safe, Contract, State, Contract balance."""
+        from micromech.bot.commands.status import _format_chain_status
+
+        status = {
+            "service_id": 42,
+            "requests_this_epoch": 1999,
+            "required_requests": 21,
+            "staking_state": "STAKED",
+            "staking_contract_name": "Pearl Beta 2",
+            "rewards": 5.0,
+            "agent_balance_native": 0.15,
+            "agent_balance_olas": 0.0,
+            "safe_balance_native": 1.23,
+            "safe_balance_olas": 0.0,
+            "contract_balance": 10000.0,
+        }
+        result = _format_chain_status(
+            "gnosis",
+            status,
+            olas_price=None,
+            pending_payment=0.123,
+            master_balances=(5.0, 100.0),
+        )
+        lines = result.split("\n")
+        labels = [line.split(":")[0].strip() for line in lines if ":" in line]
+        assert labels.index("Pending payment") < labels.index("Rewards")
+        assert labels.index("Rewards") < labels.index("Epoch deliveries")
+        assert labels.index("Master") < labels.index("Agent")
+        assert labels.index("Safe") < labels.index("Contract")
+        assert labels.index("State") < labels.index("Contract balance")
 
 
 class TestStatusCommand:

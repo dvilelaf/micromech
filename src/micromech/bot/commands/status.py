@@ -19,7 +19,7 @@ from micromech.bot.formatting import (
     user_error,
 )
 from micromech.bot.security import authorized_only, rate_limited
-from micromech.core.bridge import get_olas_price_eur
+from micromech.core.bridge import check_balances, get_olas_price_eur
 from micromech.core.config import MicromechConfig
 
 
@@ -36,6 +36,8 @@ def _format_chain_status(
     chain_name: str,
     status: dict,
     olas_price: Optional[float],
+    pending_payment: Optional[float] = None,
+    master_balances: Optional[tuple[float, float]] = None,
 ) -> str:
     """Format status for a single chain in MarkdownV2 (triton style)."""
     requests = status.get("requests_this_epoch", 0)
@@ -48,12 +50,8 @@ def _format_chain_status(
     if service_id:
         lines.append(f"ID: {escape_md(str(service_id))}")
 
-    contract = status.get("staking_contract_name")
-    if contract:
-        lines.append(f"Contract: {escape_md(contract)}")
-
-    staking_state = status.get("staking_state", "unknown")
-    lines.append(f"State: {code_md(staking_state)}")
+    if pending_payment is not None:
+        lines.append(f"Pending payment: {code_md(format_token(pending_payment, 'xDAI'))}")
 
     rewards_raw = status.get("rewards")
     rewards = rewards_raw if rewards_raw is not None else 0.0
@@ -64,7 +62,7 @@ def _format_chain_status(
     else:
         lines.append(f"Rewards: {code_md(reward_str)}")
 
-    lines.append(f"Requests: {code_md(f'{requests}/{required}')}")
+    lines.append(f"Epoch deliveries: {code_md(f'{requests}/{required}')}")
 
     lines.append(
         format_epoch_countdown(
@@ -73,6 +71,11 @@ def _format_chain_status(
             status.get("remaining_epoch_seconds", 0),
         )
     )
+
+    if master_balances is not None:
+        m_xdai = format_token(master_balances[0], "xDAI")
+        m_olas = format_token(master_balances[1], "OLAS")
+        lines.append(f"Master: {code_md(m_xdai)} \\| {code_md(m_olas)}")
 
     # Agent balance — None means "unknown", 0.0 means "empty" (H4/B3).
     agent_native = status.get("agent_balance_native")
@@ -88,6 +91,13 @@ def _format_chain_status(
         s_xdai = format_token(safe_native, "xDAI")
         s_olas = format_token(safe_olas if safe_olas is not None else 0.0, "OLAS")
         lines.append(f"Safe:   {code_md(s_xdai)} \\| {code_md(s_olas)}")
+
+    contract = status.get("staking_contract_name")
+    if contract:
+        lines.append(f"Contract: {escape_md(contract)}")
+
+    staking_state = status.get("staking_state", "unknown")
+    lines.append(f"State: {code_md(staking_state)}")
 
     contract_bal = status.get("contract_balance")
     if contract_bal is not None:
@@ -144,6 +154,30 @@ async def _fetch_chain_status_dict(
     return (chain_name, status, None)
 
 
+def _fetch_pending_payments(config: MicromechConfig) -> dict[str, float]:
+    """Fetch pending marketplace payments for all enabled chains (blocking)."""
+    from micromech.core.bridge import IwaBridge
+    from micromech.tasks.payment_withdraw import (
+        _get_balance_tracker_address,
+        _get_pending_balance,
+    )
+
+    results: dict[str, float] = {}
+    for name, cfg in config.enabled_chains.items():
+        if not cfg.mech_address or not cfg.marketplace_address:
+            continue
+        try:
+            bridge = IwaBridge(chain_name=name)
+            bt_addr = _get_balance_tracker_address(
+                bridge, name, cfg.mech_address, cfg.marketplace_address
+            )
+            if bt_addr:
+                results[name] = round(_get_pending_balance(bridge, bt_addr, cfg.mech_address), 6)
+        except Exception as e:
+            logger.debug("Pending payment fetch failed for {}: {}", name, e)
+    return results
+
+
 @authorized_only
 @rate_limited
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -161,26 +195,42 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     status_msg = await update.message.reply_text("Fetching status...")
 
-    # H3/B1: fetch OLAS price + all chains in parallel.
-    # Price is cached (see bridge.get_olas_price_eur) so this rarely hits HTTP.
+    # Fetch OLAS price, chain statuses, pending payments, and master balances in parallel.
     olas_price_task = asyncio.to_thread(get_olas_price_eur)
     chain_tasks = [_fetch_chain_status_dict(c, lifecycles) for c in enabled]
-    results = await asyncio.gather(olas_price_task, *chain_tasks, return_exceptions=True)
+    pending_task = asyncio.to_thread(_fetch_pending_payments, config)
+    master_tasks = {c: asyncio.to_thread(check_balances, c) for c in enabled}
+
+    all_tasks = [olas_price_task, pending_task, *chain_tasks, *master_tasks.values()]
+    results = await asyncio.gather(*all_tasks, return_exceptions=True)
+
     olas_price = results[0] if not isinstance(results[0], Exception) else None
-    chain_results = results[1:]
+    pending_payments = results[1] if not isinstance(results[1], Exception) else {}
+    chain_results = results[2 : 2 + len(enabled)]
+    master_results = results[2 + len(enabled) :]
+    master_by_chain = {}
+    for chain_name, master_result in zip(enabled, master_results):
+        if not isinstance(master_result, Exception):
+            master_by_chain[chain_name] = master_result
 
     blocks = []
     for result in chain_results:
         if isinstance(result, Exception):
-            # R2-L1: route to user_error so server-side log + categorized
-            # message stay consistent with in-chain error handling.
             blocks.append(user_error("status gather", result))
             continue
         chain_name, status, err = result
         if err:
             blocks.append(f"{bold_md(chain_name.upper())}\n{err}")
         else:
-            blocks.append(_format_chain_status(chain_name, status, olas_price))
+            blocks.append(
+                _format_chain_status(
+                    chain_name,
+                    status,
+                    olas_price,
+                    pending_payment=pending_payments.get(chain_name),
+                    master_balances=master_by_chain.get(chain_name),
+                )
+            )
 
     # Uptime footer
     metrics = context.bot_data.get("metrics")
