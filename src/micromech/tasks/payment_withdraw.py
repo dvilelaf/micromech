@@ -21,7 +21,6 @@ before the standard Safe→master transfer can happen.
 """
 
 import asyncio
-from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from loguru import logger
@@ -43,7 +42,7 @@ def _transfer_to_master(
     bridge: "IwaBridge",
     chain_name: str,
     multisig_address: str,
-    amount_xdai: float,
+    amount_wei: int,
 ) -> None:
     """Transfer native xDAI from the Safe to the master wallet.
 
@@ -52,7 +51,6 @@ def _transfer_to_master(
     calls bypass the pipeline and can cause GS013 (Invalid signatures).
     """
     master = str(bridge.wallet.master_account.address)
-    amount_wei = int(Decimal(str(amount_xdai)) * Decimal(10**18))
 
     tx_hash = bridge.wallet.send(
         from_address_or_tag=multisig_address,
@@ -68,7 +66,7 @@ def _transfer_to_master(
     logger.info(
         "[{}] Transferred {:.6f} xDAI to master {}. TX: {}",
         chain_name,
-        amount_xdai,
+        amount_wei / 1e18,
         master,
         tx_hash_str,
     )
@@ -297,26 +295,28 @@ async def payment_withdraw_task(
                 mech_actual_wei,
             )
 
+            mech_actual_xdai = mech_actual_wei / 1e18
             logger.info(
-                "[{}] Payment withdraw complete: {:.6f} xDAI",
+                "[{}] Payment withdraw complete: {:.6f} xDAI drained from mech",
                 chain_name,
-                balance,
+                mech_actual_xdai,
             )
 
-            # Step 3: transfer xDAI from Safe to master
+            # Step 3: transfer exactly what was drained from mech to master.
+            # Safe keeps its own pre-existing xDAI; only the mech payment is forwarded.
             try:
                 await asyncio.to_thread(
                     _transfer_to_master,
                     bridge,
                     chain_name,
                     multisig,
-                    balance,
+                    mech_actual_wei,
                 )
                 master = str(bridge.wallet.master_account.address)
                 await notification_service.send(
                     "Mech Payment Withdrawn",
                     (
-                        f"Chain: {chain_name}\nAmount: {balance:.6f} xDAI"
+                        f"Chain: {chain_name}\nAmount: {mech_actual_xdai:.6f} xDAI"
                         f"\nTransferred to master: {master}"
                     ),
                 )
@@ -327,7 +327,7 @@ async def payment_withdraw_task(
                 await notification_service.send(
                     "Mech Payment Withdrawn",
                     (
-                        f"Chain: {chain_name}\nAmount: {balance:.6f} xDAI"
+                        f"Chain: {chain_name}\nAmount: {mech_actual_xdai:.6f} xDAI"
                         f"\nTo Safe: {multisig}"
                         f"\nWARNING: transfer to master failed: {e}"
                     ),
