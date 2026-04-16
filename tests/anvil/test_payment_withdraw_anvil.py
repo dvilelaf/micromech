@@ -15,7 +15,7 @@ so it works regardless of the fork block.
 Run:
   anvil --fork-url <gnosis_rpc> --port 18545 --auto-impersonate --silent
   ANVIL_URL=http://localhost:18545 uv run pytest \
-      tests/integration/test_payment_withdraw_anvil.py -v -s
+      tests/anvil/test_payment_withdraw_anvil.py -v -s
 """
 
 import os
@@ -145,15 +145,16 @@ class TestDrainMechToSafeAnvil:
         )
 
     def test_exec_partial_drain(self, w3):
-        """Partial drain: exec sends half the mech balance to Safe."""
-        total_wei = w3.to_wei(2, "ether")
-        _fund_mech(w3, total_wei)
+        """Partial drain: exec sends a specific amount, leaving the rest in mech."""
+        _fund_mech(w3, w3.to_wei(1, "ether"))  # ensure mech has at least 1 xDAI
+        mech_before = w3.eth.get_balance(MECH_ADDR)
+        assert mech_before >= w3.to_wei(1, "ether")
 
-        half_wei = total_wei // 2
+        drain_wei = w3.to_wei(1, "ether")  # drain exactly 1 xDAI
         mech = w3.eth.contract(address=MECH_ADDR, abi=_ANVIL_TEST_ABI)
 
         tx = mech.functions.exec(
-            SAFE_ADDR, half_wei, b"", 0, 100_000
+            SAFE_ADDR, drain_wei, b"", 0, 100_000
         ).build_transaction({
             "from": SAFE_ADDR,
             "gas": 200_000,
@@ -164,8 +165,8 @@ class TestDrainMechToSafeAnvil:
 
         assert receipt["status"] == 1
         mech_after = w3.eth.get_balance(MECH_ADDR)
-        # Mech retains the half that wasn't drained
-        assert mech_after == total_wei - half_wei
+        # Mech lost exactly drain_wei; the rest stays
+        assert mech_after == mech_before - drain_wei
 
     def test_exec_drain_full_balance(self, w3):
         """Full drain: exec can send the entire mech balance to Safe."""
