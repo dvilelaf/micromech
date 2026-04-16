@@ -58,33 +58,72 @@ class TestRewardsTask:
     async def test_claims_when_above_threshold(self):
         from micromech.tasks.rewards import rewards_task
 
+        # 5 OLAS * 4.0 €/OLAS = 20€ >= 10€ threshold
         lifecycle = _make_lifecycle(rewards=5.0)
         notification = NotificationService()
         notification.send = AsyncMock()
 
-        config = _make_config(claim_threshold_olas=1.0)
-        with patch(
-            "micromech.core.bridge.get_service_info",
-            return_value=_svc_info_for("0xkey"),
+        config = _make_config(claim_threshold_eur=10.0)
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value=_svc_info_for("0xkey"),
+            ),
+            patch(
+                "micromech.core.bridge.get_olas_price_eur",
+                return_value=4.0,
+            ),
         ):
             await rewards_task({"gnosis": lifecycle}, notification, config)
 
         lifecycle.claim_rewards.assert_called_once()
         notification.send.assert_called_once()
         assert "5.0000 OLAS" in notification.send.call_args[0][1]
+        assert "20.00€" in notification.send.call_args[0][1]
 
     @pytest.mark.asyncio
     async def test_skips_when_below_threshold(self):
         from micromech.tasks.rewards import rewards_task
 
+        # 0.5 OLAS * 4.0 €/OLAS = 2€ < 10€ threshold
         lifecycle = _make_lifecycle(rewards=0.5)
         notification = NotificationService()
         notification.send = AsyncMock()
 
-        config = _make_config(claim_threshold_olas=1.0)
-        with patch(
-            "micromech.core.bridge.get_service_info",
-            return_value=_svc_info_for("0xkey"),
+        config = _make_config(claim_threshold_eur=10.0)
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value=_svc_info_for("0xkey"),
+            ),
+            patch(
+                "micromech.core.bridge.get_olas_price_eur",
+                return_value=4.0,
+            ),
+        ):
+            await rewards_task({"gnosis": lifecycle}, notification, config)
+
+        lifecycle.claim_rewards.assert_not_called()
+        notification.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_skips_when_price_unavailable(self):
+        from micromech.tasks.rewards import rewards_task
+
+        lifecycle = _make_lifecycle(rewards=100.0)
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        config = _make_config(claim_threshold_eur=10.0)
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value=_svc_info_for("0xkey"),
+            ),
+            patch(
+                "micromech.core.bridge.get_olas_price_eur",
+                return_value=None,
+            ),
         ):
             await rewards_task({"gnosis": lifecycle}, notification, config)
 
@@ -117,9 +156,12 @@ class TestRewardsTask:
         notification.send = AsyncMock()
 
         config = _make_config()
-        with patch(
-            "micromech.core.bridge.get_service_info",
-            return_value=_svc_info_for("0xkey"),
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value=_svc_info_for("0xkey"),
+            ),
+            patch("micromech.core.bridge.get_olas_price_eur", return_value=4.0),
         ):
             await rewards_task({"gnosis": lifecycle}, notification, config)
 
@@ -135,9 +177,12 @@ class TestRewardsTask:
         notification.send = AsyncMock()
 
         config = _make_config()
-        with patch(
-            "micromech.core.bridge.get_service_info",
-            return_value=_svc_info_for("0xkey"),
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value=_svc_info_for("0xkey"),
+            ),
+            patch("micromech.core.bridge.get_olas_price_eur", return_value=4.0),
         ):
             # Should not raise
             await rewards_task({"gnosis": lifecycle}, notification, config)

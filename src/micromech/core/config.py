@@ -63,7 +63,7 @@ class MicromechConfig(BaseModel):
     checkpoint_interval_minutes: int = Field(default=10, ge=1, le=120)
     checkpoint_alert_enabled: bool = True
     claim_interval_minutes: int = Field(default=240, ge=10, le=1440)
-    claim_threshold_olas: float = Field(default=1.0, ge=0)
+    claim_threshold_eur: float = Field(default=10.0, ge=0)
     fund_enabled: bool = True
     fund_interval_minutes: int = Field(default=360, ge=10, le=1440)
     fund_threshold_native: float = Field(default=0.1, ge=0, le=50)

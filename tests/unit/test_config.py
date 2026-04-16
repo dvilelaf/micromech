@@ -140,12 +140,12 @@ class TestMicromechConfig:
     def test_tasks_fields_flat(self):
         cfg = MicromechConfig(
             checkpoint_interval_minutes=30,
-            claim_threshold_olas=5.0,
+            claim_threshold_eur=5.0,
             fund_enabled=False,
             auto_update_enabled=True,
         )
         assert cfg.checkpoint_interval_minutes == 30
-        assert cfg.claim_threshold_olas == 5.0
+        assert cfg.claim_threshold_eur == 5.0
         assert cfg.fund_enabled is False
         assert cfg.auto_update_enabled is True
 

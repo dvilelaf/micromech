@@ -27,12 +27,12 @@ _TOGGLE_MAP: dict[str, tuple[str, str]] = {key: (attr, label) for key, attr, lab
 # Editable numeric settings
 EDITABLE_SETTINGS: dict[str, dict[str, Any]] = {
     "claim_thr": {
-        "attr": "claim_threshold_olas",
+        "attr": "claim_threshold_eur",
         "label": "Claim threshold",
         "type": float,
         "min": 0.1,
-        "max": 500.0,
-        "unit": "OLAS",
+        "max": 10000.0,
+        "unit": "€",
         "group": "rewards",
     },
     "fund_thr": {

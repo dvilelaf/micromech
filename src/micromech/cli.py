@@ -89,10 +89,32 @@ NATIVE_SYMBOL = {
 }
 
 
+_REMOVED_FIELDS: dict[str, str | None] = {
+    # claim_threshold_olas (OLAS units, default 1.0) replaced by
+    # claim_threshold_eur (EUR units, default 10.0) — units incompatible.
+    "claim_threshold_olas": None,
+}
+
+
+def _run_migrations(config_path: Optional[Path] = None) -> None:
+    """Apply config migrations before loading."""
+    from micromech.migrations import migrate_removed_fields, migrate_schema
+
+    try:
+        from iwa.core.constants import CONFIG_PATH as _IWA_CONFIG
+
+        iwa_path = Path(_IWA_CONFIG)
+        migrate_removed_fields(iwa_path, _REMOVED_FIELDS)
+        migrate_schema(iwa_path)
+    except ImportError:
+        pass
+
+
 def _load_config(config_path: Optional[Path] = None) -> MicromechConfig:
     """Load config via iwa plugin system (or fallback file)."""
     from micromech.core.config import register_plugin
 
+    _run_migrations(config_path)
     register_plugin()
     return MicromechConfig.load(config_path)
 

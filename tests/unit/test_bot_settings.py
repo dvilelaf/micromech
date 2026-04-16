@@ -160,7 +160,7 @@ class TestValidateFundThresholds:
         from micromech.bot.commands.settings import _validate_fund_thresholds
 
         config = make_test_config()
-        error = _validate_fund_thresholds("claim_threshold_olas", 5.0, config)
+        error = _validate_fund_thresholds("claim_threshold_eur", 5.0, config)
         assert error is None
 
 
@@ -537,7 +537,7 @@ class TestHandleSettingsText:
     async def test_out_of_range_replies_error(self):
         from micromech.bot.commands.settings import handle_settings_text
 
-        update = _make_update(text="9999.0")
+        update = _make_update(text="99999.0")
         ctx = _make_context(user_data={"settings_editing": "claim_thr"})
 
         await handle_settings_text(update, ctx)
@@ -604,7 +604,7 @@ class TestHandleSettingsText:
         with patch.object(MicromechConfig, "save"):
             await handle_settings_text(update, ctx)
 
-        assert config.claim_threshold_olas == pytest.approx(3.5)
+        assert config.claim_threshold_eur == pytest.approx(3.5)
 
     @pytest.mark.asyncio
     async def test_no_message_returns_early(self):

@@ -22,10 +22,10 @@ async def rewards_task(
     """Check and claim rewards for each enabled chain."""
     logger.debug("Running rewards task...")
 
-    threshold = config.claim_threshold_olas
+    threshold_eur = config.claim_threshold_eur
 
     for chain_name, lifecycle in lifecycles.items():
-        from micromech.core.bridge import get_service_info
+        from micromech.core.bridge import get_olas_price_eur, get_service_info
 
         svc_info = await asyncio.to_thread(get_service_info, chain_name)
         svc_key = svc_info.get("service_key")
@@ -39,13 +39,21 @@ async def rewards_task(
                 continue
 
             accrued = status.get("rewards", 0.0)
-            if accrued < threshold:
+            olas_price = get_olas_price_eur()
+            if olas_price is None:
+                logger.warning(f"OLAS price unavailable for {chain_name}, skipping claim check")
+                continue
+            accrued_eur = float(accrued) * olas_price
+            if accrued_eur < threshold_eur:
                 logger.debug(
-                    f"Rewards on {chain_name}: {accrued:.4f} OLAS (below threshold {threshold})"
+                    f"Rewards on {chain_name}: {accrued:.4f} OLAS (~{accrued_eur:.2f}€) "
+                    f"below threshold {threshold_eur:.2f}€"
                 )
                 continue
 
-            logger.info(f"Claiming {accrued:.4f} OLAS rewards on {chain_name}")
+            logger.info(
+                f"Claiming {accrued:.4f} OLAS (~{accrued_eur:.2f}€) rewards on {chain_name}"
+            )
 
             success = await asyncio.to_thread(lifecycle.claim_rewards, svc_key)
 
@@ -56,7 +64,8 @@ async def rewards_task(
                 logger.info(f"Rewards claimed on {chain_name}: {accrued:.4f} OLAS")
                 await notification_service.send(
                     "Rewards Claimed",
-                    f"Chain: {chain_name}\nAmount: {accrued:.4f} OLAS{transfer_line}",
+                    f"Chain: {chain_name}\nAmount: {accrued:.4f} OLAS (~{accrued_eur:.2f}€)"
+                    f"{transfer_line}",
                 )
             else:
                 logger.warning(f"Claim returned false on {chain_name}")
