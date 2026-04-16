@@ -296,16 +296,25 @@ class MechLifecycle:
             logger.error("Failed to unstake on {}: {}", self.chain_name, e)
             return False
 
-    def claim_rewards(self, service_key: str) -> bool:
-        """Claim staking rewards."""
+    def claim_rewards(self, service_key: str) -> float:
+        """Claim staking rewards.
+
+        Returns the amount of OLAS claimed (as a float), or 0.0 if nothing was
+        claimed or an error occurred. iwa's mgr.claim_rewards() returns
+        Tuple[bool, int] where the int is the claimed amount in wei.
+        """
         mgr = _get_service_manager(self.config, service_key)
         try:
-            result = mgr.claim_rewards()
-            logger.info("Rewards claimed on {}: {}", self.chain_name, result)
-            return result
+            success, amount_wei = mgr.claim_rewards()
+            if success:
+                amount_olas = amount_wei / 1e18
+                logger.info("Rewards claimed on {}: {:.4f} OLAS", self.chain_name, amount_olas)
+                return amount_olas
+            logger.info("No rewards to claim on {}", self.chain_name)
+            return 0.0
         except Exception as e:
             logger.error("Failed to claim rewards on {}: {}", self.chain_name, e)
-            return False
+            return 0.0
 
     def withdraw_rewards(self, service_key: str) -> tuple[bool, float]:
         """Transfer OLAS rewards from Safe to master wallet after claiming."""

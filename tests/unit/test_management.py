@@ -87,13 +87,27 @@ class TestMechLifecycleWithMocks:
         assert lc.unstake("svc-1") is True
 
     @patch("micromech.management._get_service_manager")
-    def test_claim_rewards(self, mock_get_mgr):
+    def test_claim_rewards_success(self, mock_get_mgr):
+        """mgr.claim_rewards() returns (True, wei); lifecycle must convert to OLAS float."""
         mock_mgr = MagicMock()
-        mock_mgr.claim_rewards.return_value = True
+        mock_mgr.claim_rewards.return_value = (True, int(2.5 * 1e18))  # 2.5 OLAS
         mock_get_mgr.return_value = mock_mgr
 
         lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
-        assert lc.claim_rewards("svc-1") is True
+        result = lc.claim_rewards("svc-1")
+        assert isinstance(result, float)
+        assert abs(result - 2.5) < 1e-9
+
+    @patch("micromech.management._get_service_manager")
+    def test_claim_rewards_nothing_to_claim(self, mock_get_mgr):
+        """mgr.claim_rewards() returns (False, 0) → lifecycle returns 0.0."""
+        mock_mgr = MagicMock()
+        mock_mgr.claim_rewards.return_value = (False, 0)
+        mock_get_mgr.return_value = mock_mgr
+
+        lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
+        result = lc.claim_rewards("svc-1")
+        assert result == 0.0
 
     @patch("micromech.management._get_service_manager")
     def test_checkpoint(self, mock_get_mgr):
@@ -454,12 +468,13 @@ class TestMechLifecycleErrorHandling:
 
     @patch("micromech.management._get_service_manager")
     def test_claim_failure(self, mock_get_mgr):
+        """Exception in mgr.claim_rewards() → lifecycle returns 0.0."""
         mock_mgr = MagicMock()
         mock_mgr.claim_rewards.side_effect = RuntimeError("fail")
         mock_get_mgr.return_value = mock_mgr
 
         lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
-        assert lc.claim_rewards("svc") is False
+        assert lc.claim_rewards("svc") == 0.0
 
 
 class TestFullDeploy:
