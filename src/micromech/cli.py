@@ -364,7 +364,6 @@ def run(
                         BotCommand("checkpoint", "Call staking checkpoint"),
                         BotCommand("manage", "Stake/unstake per chain"),
                         BotCommand("contracts", "Staking contract info"),
-                        BotCommand("schedule", "Next epoch checkpoint"),
                         BotCommand("last_rewards", "Accrued rewards this epoch"),
                         BotCommand("queue", "Request queue status"),
                         BotCommand("info", "Version and runtime info"),
