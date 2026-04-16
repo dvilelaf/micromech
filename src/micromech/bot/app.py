@@ -76,19 +76,19 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     help_text = (
         f"{bold_md('Micromech Commands')}\n\n"
         "/status \\- Mech status per chain\n"
-        "/wallet \\- Wallet addresses and balances\n"
-        "/claim \\- Claim staking rewards\n"
-        "/checkpoint \\- Call staking checkpoint\n"
         "/manage \\- Stake/unstake per chain\n"
+        "/claim \\- Claim staking rewards\n"
+        "/wallet \\- Wallet addresses and balances\n"
+        "/checkpoint \\- Call staking checkpoint\n"
         "/contracts \\- Staking contract info\n"
         "/last\\_rewards \\- Accrued rewards this epoch\n"
         "/queue \\- Request queue status\n"
-        "/info \\- Version and runtime info\n"
+        "/update \\- Check for updates\n"
+        "/restart \\- Restart runtime\n"
+        "/settings \\- Toggle features and edit values\n"
         "/logs \\- Download last 24h logs\n"
         "/addresses \\- Export wallet addresses as CSV\n"
-        "/settings \\- Toggle features and edit values\n"
-        "/update \\- Check for updates\n"
-        "/restart \\- Restart runtime"
+        "/info \\- Version and runtime info"
     )
     if not update.message:
         return
@@ -189,19 +189,19 @@ def create_application(
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("status", status_command))
-    app.add_handler(CommandHandler("wallet", wallet_command))
-    app.add_handler(CommandHandler("claim", claim_command))
-    app.add_handler(CommandHandler("checkpoint", checkpoint_command))
     app.add_handler(CommandHandler("manage", manage_command))
+    app.add_handler(CommandHandler("claim", claim_command))
+    app.add_handler(CommandHandler("wallet", wallet_command))
+    app.add_handler(CommandHandler("checkpoint", checkpoint_command))
     app.add_handler(CommandHandler("contracts", contracts_command))
     app.add_handler(CommandHandler("last_rewards", last_rewards_command))
     app.add_handler(CommandHandler("queue", queue_command))
-    app.add_handler(CommandHandler("info", info_command))
-    app.add_handler(CommandHandler("logs", logs_command))
-    app.add_handler(CommandHandler("addresses", addresses_command))
-    app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("update", update_command))
     app.add_handler(CommandHandler("restart", restart_command))
+    app.add_handler(CommandHandler("settings", settings_command))
+    app.add_handler(CommandHandler("logs", logs_command))
+    app.add_handler(CommandHandler("addresses", addresses_command))
+    app.add_handler(CommandHandler("info", info_command))
 
     # Text input for settings value editing
     app.add_handler(

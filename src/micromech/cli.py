@@ -373,18 +373,19 @@ def run(
                 await bot_app.bot.set_my_commands(
                     [
                         BotCommand("status", "Mech status per chain"),
-                        BotCommand("wallet", "Wallet addresses and balances"),
-                        BotCommand("claim", "Claim staking rewards"),
-                        BotCommand("checkpoint", "Call staking checkpoint"),
                         BotCommand("manage", "Stake/unstake per chain"),
+                        BotCommand("claim", "Claim staking rewards"),
+                        BotCommand("wallet", "Wallet addresses and balances"),
+                        BotCommand("checkpoint", "Call staking checkpoint"),
                         BotCommand("contracts", "Staking contract info"),
                         BotCommand("last_rewards", "Accrued rewards this epoch"),
                         BotCommand("queue", "Request queue status"),
-                        BotCommand("info", "Version and runtime info"),
-                        BotCommand("logs", "Download last 24h logs"),
-                        BotCommand("settings", "Toggle features and edit values"),
                         BotCommand("update", "Check for updates"),
                         BotCommand("restart", "Restart runtime"),
+                        BotCommand("settings", "Toggle features and edit values"),
+                        BotCommand("logs", "Download last 24h logs"),
+                        BotCommand("addresses", "Export wallet addresses as CSV"),
+                        BotCommand("info", "Version and runtime info"),
                         BotCommand("help", "Show all commands"),
                     ]
                 )
