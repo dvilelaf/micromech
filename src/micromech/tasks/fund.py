@@ -48,8 +48,13 @@ async def fund_task(
                 continue
 
             from micromech.core.bridge import get_wallet
+            from iwa.core.types import EthereumAddress
 
             wallet = get_wallet()
+            agent_tag = (
+                wallet.key_storage.get_tag_by_address(EthereumAddress(agent_address))
+                or agent_address
+            )
             _raw_native = wallet.get_native_balance_eth(agent_address, chain_name)
             native = float(_raw_native) if _raw_native is not None else 0.0
 
@@ -57,7 +62,7 @@ async def fund_task(
                 continue
 
             logger.warning(
-                f"[{chain_name}] Low agent balance: {native:.4f} "
+                f"[{chain_name}] Low agent balance ({agent_tag}): {native:.4f} "
                 f"(threshold: {config.fund_threshold_native})"
             )
 
@@ -95,14 +100,13 @@ async def fund_task(
 
                 if tx_hash:
                     logger.info(
-                        f"[{chain_name}] Funded agent EOA: {amount:.4f} native (tx: {tx_hash})"
+                        f"[{chain_name}] Funded {agent_tag}: {amount:.4f} native (tx: {tx_hash})"
                     )
                     await notification_service.send(
                         "Auto-Fund Agent",
                         f"Chain: {chain_name}\n"
-                        f"Agent: {agent_address}\n"
-                        f"Amount: {amount:.4f} native\n"
-                        f"Tx: {tx_hash}",
+                        f"Agent: {agent_tag}\n"
+                        f"Amount: {amount:.4f} xDAI",
                     )
                 else:
                     logger.error(f"[{chain_name}] Fund transfer returned no tx hash")
@@ -115,10 +119,10 @@ async def fund_task(
                     )
 
             except Exception as e:
-                logger.error(f"[{chain_name}] Fund transfer failed: {e}")
+                logger.error(f"[{chain_name}] Fund transfer failed for {agent_tag}: {e}")
                 await notification_service.send(
                     "Auto-Fund Failed",
-                    f"Chain: {chain_name}\nAgent balance: {native:.4f} native\nError: {e}",
+                    f"Chain: {chain_name}\nAgent: {agent_tag}\nBalance: {native:.4f} xDAI\nError: {type(e).__name__}",
                     level="warning",
                 )
 
