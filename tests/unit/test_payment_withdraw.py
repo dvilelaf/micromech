@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from micromech.tasks.notifications import NotificationService
 from micromech.core.marketplace import get_balance_tracker_address, get_pending_balance
+from micromech.tasks.notifications import NotificationService
 from micromech.tasks.payment_withdraw import payment_withdraw_task
 from tests.conftest import make_test_config
 
