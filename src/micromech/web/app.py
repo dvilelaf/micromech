@@ -550,6 +550,7 @@ def create_web_app(
                 from pydantic import SecretStr as _SecretStr
 
                 from micromech.secrets import secrets as _live_secrets
+
                 new_pw = updates["webui_password"]
                 _live_secrets.webui_password = _SecretStr(new_pw) if new_pw else None
             return JSONResponse({"status": "ok", "saved": list(updates.keys())})
@@ -568,7 +569,13 @@ def create_web_app(
             from micromech.core.bridge import check_balances
             from micromech.core.constants import MIN_NATIVE_WEI, MIN_OLAS_WHOLE
 
-            native, olas = check_balances(chain)
+            result = check_balances(chain)
+            if result is None:
+                return {
+                    "error": "RPC unavailable — balance unknown",
+                    "sufficient": False,
+                }
+            native, olas = result
             min_native = MIN_NATIVE_WEI.get(chain, 0.1) / 1e18
             return {
                 "native_balance": native,

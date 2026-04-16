@@ -18,6 +18,7 @@ from micromech.core.constants import (
     MIN_OLAS_WHOLE,
 )
 
+
 def _configure_logging() -> None:
     """Configure loguru with green timestamps, matching triton's format."""
     if hasattr(_configure_logging, "configured"):
@@ -89,10 +90,15 @@ def _print_step(step: int, total: int, msg: str) -> None:
 
 
 def _check_balances(chain_name: str) -> tuple[float, float]:
-    """Check native token and OLAS balances. Delegates to core.bridge (cached)."""
+    """Check native token and OLAS balances. Delegates to core.bridge (cached).
+
+    Returns (0.0, 0.0) if the underlying fetch returned None (unknown).
+    CLI callers (init funding loop) treat unknown as "keep waiting".
+    """
     from micromech.core.bridge import check_balances
 
-    return check_balances(chain_name)
+    result = check_balances(chain_name)
+    return result if result is not None else (0.0, 0.0)
 
 
 @app.command()

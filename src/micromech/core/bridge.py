@@ -177,69 +177,121 @@ def get_wallet() -> Any:
     raise RuntimeError(msg)
 
 
-def check_balances(chain_name: str) -> tuple[float, float]:
-    """Check native token and OLAS balances for the wallet on a chain.
+# ERC20 balanceOf — module-level constant (was duplicated across functions)
+_ERC20_BALANCE_ABI = [
+    {
+        "inputs": [{"name": "account", "type": "address"}],
+        "name": "balanceOf",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    }
+]
 
-    Returns (native_balance, olas_balance) in whole units.
-    All RPC calls go through iwa's ChainInterface.
+
+def _fetch_balances_for_address(chain_name: str, address: str) -> Optional[tuple[float, float]]:
+    """Fetch (native, OLAS) balances for an address via iwa's ChainInterface.
+
+    Returns None on RPC or interface failure. Callers must treat None
+    differently from (0.0, 0.0) — None means "unknown", zero means "empty".
+    Fail-closed to avoid misleading funding alerts (H4 / OWASP A04).
     """
-    global _cached_wallet, _cached_interfaces  # noqa: PLW0603
+    global _cached_interfaces  # noqa: PLW0603
+
+    if not _IWA_AVAILABLE:
+        return None
+    if not address:
+        return None
 
     try:
-        if not _IWA_AVAILABLE:
-            return 0.0, 0.0
-
-        # Get address from cached key_storage (web wizard) or Wallet.
-        # Never create a new Wallet — only use what's already unlocked.
-        address = None
-        if _cached_key_storage is not None:
-            address = str(_cached_key_storage.get_address_by_tag("master"))
-        elif _cached_wallet is not None:
-            address = _cached_wallet.master_account.address
-        else:
-            return 0.0, 0.0
-
-        if not address:
-            return 0.0, 0.0
-
         if _cached_interfaces is None:
             _cached_interfaces = ChainInterfaces()
         ci = _cached_interfaces.get(chain_name)
         if not ci:
-            return 0.0, 0.0
+            return None
 
-        native_wei = ci.with_retry(
-            lambda: ci.web3.eth.get_balance(address),
-        )
+        native_wei = ci.with_retry(lambda: ci.web3.eth.get_balance(address))
         native = float(ci.web3.from_wei(native_wei, "ether"))
-
-        # Get OLAS balance
-        olas_balance = 0.0
-        try:
-            chain_model = ci.chain
-            olas_addr = chain_model.get_token_address("OLAS")
-            if olas_addr:
-                erc20_abi = [
-                    {
-                        "inputs": [{"name": "account", "type": "address"}],
-                        "name": "balanceOf",
-                        "outputs": [{"name": "", "type": "uint256"}],
-                        "stateMutability": "view",
-                        "type": "function",
-                    }
-                ]
-                contract = ci.web3.eth.contract(address=str(olas_addr), abi=erc20_abi)
-                raw = ci.with_retry(
-                    lambda: contract.functions.balanceOf(address).call(),
-                )
-                olas_balance = float(ci.web3.from_wei(raw, "ether"))
-        except Exception:
-            logger.debug("Failed to check OLAS balance on {}", chain_name)
-
-        return native, olas_balance
     except Exception:
-        logger.debug("Failed to check balances on {}", chain_name)
-        return 0.0, 0.0
+        logger.debug("Failed to fetch native balance for {} on {}", address, chain_name)
+        return None
+
+    # OLAS balance is best-effort — if it fails we still return native with 0.0 OLAS,
+    # because OLAS may legitimately not be deployed on this chain.
+    olas_balance = 0.0
+    try:
+        olas_addr = ci.chain.get_token_address("OLAS")
+        if olas_addr:
+            contract = ci.web3.eth.contract(address=str(olas_addr), abi=_ERC20_BALANCE_ABI)
+            raw = ci.with_retry(lambda: contract.functions.balanceOf(address).call())
+            olas_balance = float(ci.web3.from_wei(raw, "ether"))
+    except Exception:
+        logger.debug("Failed to check OLAS balance for {} on {}", address, chain_name)
+
+    return native, olas_balance
+
+
+def check_balances(chain_name: str) -> Optional[tuple[float, float]]:
+    """Check (native, OLAS) balances for the cached master wallet on a chain.
+
+    Returns None on failure (unknown) — NOT (0.0, 0.0). Callers must
+    distinguish "unknown" from "empty".
+    """
+    if not _IWA_AVAILABLE:
+        return None
+
+    address: Optional[str] = None
+    if _cached_key_storage is not None:
+        address = str(_cached_key_storage.get_address_by_tag("master"))
+    elif _cached_wallet is not None:
+        address = _cached_wallet.master_account.address
+
+    if not address:
+        return None
+
+    return _fetch_balances_for_address(chain_name, address)
+
+
+def check_address_balances(chain_name: str, address: str) -> Optional[tuple[float, float]]:
+    """Check (native, OLAS) balances for any address on a chain.
+
+    Returns None on failure (unknown). See `check_balances` for rationale.
+    """
+    return _fetch_balances_for_address(chain_name, address)
+
+
+# OLAS price cache — prevents hammering the pricing API from /status, /last_rewards,
+# /claim (M3/M4). Short TTL so price updates remain visible within ~60s.
+_OLAS_PRICE_CACHE_TTL_SECONDS = 60.0
+_olas_price_cache: dict[str, float] = {}  # keys: "value", "ts"
+
+
+def get_olas_price_eur() -> Optional[float]:
+    """Get current OLAS price in EUR via iwa's PriceService.
+
+    Cached for ~60s. Returns last-known value on failure if cache is warm,
+    else None.
+    """
+    import time
+
+    now = time.monotonic()
+    cached_value = _olas_price_cache.get("value")
+    cached_ts = _olas_price_cache.get("ts", 0.0)
+    if cached_value is not None and (now - cached_ts) < _OLAS_PRICE_CACHE_TTL_SECONDS:
+        return cached_value
+
+    try:
+        from iwa.core.pricing import PriceService
+
+        value = PriceService().get_token_price("autonolas", "eur")
+        if value is not None:
+            _olas_price_cache["value"] = value
+            _olas_price_cache["ts"] = now
+        return value
+    except Exception:
+        logger.debug("Failed to fetch OLAS price")
+        # Fall back to last-known value if we have one; else None.
+        return cached_value
 
 
 def check_safe_balance(chain_name: str) -> Optional[float]:
