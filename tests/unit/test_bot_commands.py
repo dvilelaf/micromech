@@ -676,7 +676,7 @@ class TestLogsCommand:
 
         with (
             patch("micromech.bot.commands.logs.LOG_FILE", tmp_path / "nonexistent.log"),
-            patch("micromech.bot.commands.logs.LOG_DIR", tmp_path),
+            patch("micromech.bot.commands.logs.DEFAULT_CONFIG_DIR", tmp_path),
         ):
             result = _collect_logs()
         assert result == []
@@ -689,7 +689,7 @@ class TestLogsCommand:
 
         with (
             patch("micromech.bot.commands.logs.LOG_FILE", log_file),
-            patch("micromech.bot.commands.logs.LOG_DIR", tmp_path),
+            patch("micromech.bot.commands.logs.DEFAULT_CONFIG_DIR", tmp_path),
         ):
             result = _collect_logs()
 
@@ -701,8 +701,7 @@ class TestLogsCommand:
 
         files = [("test.log", b"line1\nline2\n")]
 
-        with patch("micromech.web.app._redact_sensitive", side_effect=lambda x: x):
-            buf = _build_zip(files)
+        buf = _build_zip(files)
 
         buf.seek(0)
         with zipfile.ZipFile(buf) as zf:
