@@ -38,6 +38,7 @@ def _format_chain_status(
     olas_price: Optional[float],
     pending_payment: Optional[float] = None,
     master_balances: Optional[tuple[float, float]] = None,
+    mech_balance: Optional[float] = None,
 ) -> str:
     """Format status for a single chain in MarkdownV2 (triton style)."""
     requests = status.get("requests_this_epoch", 0)
@@ -75,6 +76,9 @@ def _format_chain_status(
         m_xdai = format_token(master_balances[0], "xDAI")
         m_olas = format_token(master_balances[1], "OLAS")
         lines.append(f"Master: {code_md(m_xdai)} \\| {code_md(m_olas)}")
+
+    if mech_balance is not None:
+        lines.append(f"Mech:   {code_md(format_token(mech_balance, 'xDAI'))}")
 
     # Agent balance — None means "unknown", 0.0 means "empty" (H4/B3).
     agent_native = status.get("agent_balance_native")
@@ -155,6 +159,24 @@ async def _fetch_chain_status_dict(
     return (chain_name, status, None)
 
 
+def _fetch_mech_balance(chain_name: str, mech_address: str) -> Optional[float]:
+    """Return native xDAI balance of the mech contract (blocking)."""
+    from micromech.core.bridge import IwaBridge
+
+    try:
+        bridge = IwaBridge(chain_name=chain_name)
+        web3 = bridge.web3
+        bal_wei = bridge.with_retry(
+            lambda: web3.eth.get_balance(
+                web3.to_checksum_address(mech_address)
+            )
+        )
+        return bal_wei / 1e18
+    except Exception as e:
+        logger.warning("Mech balance fetch failed for {}: {}", chain_name, e)
+        return None
+
+
 def _fetch_pending_payments(config: MicromechConfig) -> dict[str, float]:
     """Fetch pending marketplace payments for all enabled chains (blocking).
 
@@ -198,27 +220,38 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     status_msg = await update.message.reply_text("Fetching status...")
 
-    # Fetch OLAS price, chain statuses, pending payments, and master balances in parallel.
+    # Fetch OLAS price, chain statuses, pending payments, master and mech balances in parallel.
     chain_names = list(enabled.keys())
     olas_price_task = asyncio.to_thread(get_olas_price_eur)
     pending_task = asyncio.to_thread(_fetch_pending_payments, config)
     chain_tasks = [_fetch_chain_status_dict(c, lifecycles) for c in chain_names]
     master_tasks = [asyncio.to_thread(check_balances, c) for c in chain_names]
+    mech_tasks = []
+    for _c in chain_names:
+        _mech_addr = enabled[_c].mech_address
+        if _mech_addr:
+            mech_tasks.append(asyncio.to_thread(_fetch_mech_balance, _c, _mech_addr))
+        else:
+            mech_tasks.append(asyncio.sleep(0, result=None))
 
-    # Layout: [olas_price, pending, *chain_status(N), *master_balance(N)]
-    # chain_tasks and master_tasks both iterate chain_names in the same order.
-    all_tasks = [olas_price_task, pending_task, *chain_tasks, *master_tasks]
+    # Layout: [olas_price, pending, *chain_status(N), *master_balance(N), *mech_balance(N)]
+    all_tasks = [olas_price_task, pending_task, *chain_tasks, *master_tasks, *mech_tasks]
     results = await asyncio.gather(*all_tasks, return_exceptions=True)
 
     n = len(chain_names)
     olas_price: Optional[float] = results[0] if not isinstance(results[0], Exception) else None  # type: ignore[assignment]
     pending_payments = results[1] if not isinstance(results[1], Exception) else {}
     chain_results = results[2 : 2 + n]
-    master_results = results[2 + n :]
+    master_results = results[2 + n : 2 + 2 * n]
+    mech_results = results[2 + 2 * n :]
     master_by_chain = {}
     for name, master_result in zip(chain_names, master_results):
         if not isinstance(master_result, Exception):
             master_by_chain[name] = master_result
+    mech_by_chain: dict[str, float] = {}
+    for name, mech_result in zip(chain_names, mech_results):
+        if not isinstance(mech_result, Exception) and isinstance(mech_result, float):
+            mech_by_chain[name] = mech_result
 
     blocks = []
     for result in chain_results:
@@ -236,6 +269,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     olas_price,
                     pending_payment=pending_payments.get(chain_name),
                     master_balances=master_by_chain.get(chain_name),  # type: ignore[arg-type]
+                    mech_balance=mech_by_chain.get(chain_name),
                 )
             )
 

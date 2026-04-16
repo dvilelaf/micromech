@@ -246,8 +246,35 @@ class TestFormatChainStatus:
         assert "10.50 xDAI" in result
         assert "200.00 OLAS" in result
 
+    def test_mech_balance_shown(self):
+        from micromech.bot.commands.status import _format_chain_status
+
+        status = {
+            "requests_this_epoch": 0,
+            "required_requests": 10,
+            "rewards": 0.0,
+        }
+        result = _format_chain_status(
+            "gnosis", status, olas_price=None, mech_balance=41.79
+        )
+        assert "Mech" in result
+        assert "41.79 xDAI" in result
+
+    def test_mech_balance_absent_when_none(self):
+        from micromech.bot.commands.status import _format_chain_status
+
+        status = {
+            "requests_this_epoch": 0,
+            "required_requests": 10,
+            "rewards": 0.0,
+        }
+        result = _format_chain_status(
+            "gnosis", status, olas_price=None, mech_balance=None
+        )
+        assert "Mech" not in result
+
     def test_field_order(self):
-        """Verify field ordering: ID, Pending, Rewards, Epoch deliveries, Master, Agent, Safe, Contract, State, Contract balance."""
+        """Verify field ordering: ID, Pending, Rewards, Epoch deliveries, Master, Mech, Agent, Safe, Contract, State, Contract balance."""
         from micromech.bot.commands.status import _format_chain_status
 
         status = {
@@ -269,12 +296,14 @@ class TestFormatChainStatus:
             olas_price=None,
             pending_payment=0.123,
             master_balances=(5.0, 100.0),
+            mech_balance=41.79,
         )
         lines = result.split("\n")
         labels = [line.split(":")[0].strip() for line in lines if ":" in line]
         assert labels.index("Pending payment") < labels.index("Rewards")
         assert labels.index("Rewards") < labels.index("Epoch deliveries")
-        assert labels.index("Master") < labels.index("Agent")
+        assert labels.index("Master") < labels.index("Mech")
+        assert labels.index("Mech") < labels.index("Agent")
         assert labels.index("Safe") < labels.index("Contract")
         assert labels.index("State") < labels.index("Contract balance")
 
