@@ -245,36 +245,48 @@ def _approve_olas(w3: Web3, chain_name: str, owner: str, spender: str, amount: i
     w3.eth.wait_for_transaction_receipt(tx)
 
 
-SAFE_ABI = [{
-    "inputs": [
-        {"name": "to", "type": "address"},
-        {"name": "value", "type": "uint256"},
-        {"name": "data", "type": "bytes"},
-        {"name": "operation", "type": "uint8"},
-        {"name": "safeTxGas", "type": "uint256"},
-        {"name": "baseGas", "type": "uint256"},
-        {"name": "gasPrice", "type": "uint256"},
-        {"name": "gasToken", "type": "address"},
-        {"name": "refundReceiver", "type": "address"},
-        {"name": "signatures", "type": "bytes"},
-    ],
-    "name": "execTransaction",
-    "outputs": [{"name": "success", "type": "bool"}],
-    "stateMutability": "payable",
-    "type": "function",
-}]
+SAFE_ABI = [
+    {
+        "inputs": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"},
+            {"name": "operation", "type": "uint8"},
+            {"name": "safeTxGas", "type": "uint256"},
+            {"name": "baseGas", "type": "uint256"},
+            {"name": "gasPrice", "type": "uint256"},
+            {"name": "gasToken", "type": "address"},
+            {"name": "refundReceiver", "type": "address"},
+            {"name": "signatures", "type": "bytes"},
+        ],
+        "name": "execTransaction",
+        "outputs": [{"name": "success", "type": "bool"}],
+        "stateMutability": "payable",
+        "type": "function",
+    }
+]
 
 
-def _execute_safe_tx(w3: Web3, safe_address: str, agent_address: str, to_address: str, data: bytes, value: int = 0) -> None:
+def _execute_safe_tx(
+    w3: Web3, safe_address: str, agent_address: str, to_address: str, data: bytes, value: int = 0
+) -> None:
     safe = w3.eth.contract(address=w3.to_checksum_address(safe_address), abi=SAFE_ABI)
     padded_owner = agent_address.lower().replace("0x", "").rjust(64, "0")
-    signature = bytes.fromhex(f"{padded_owner}000000000000000000000000000000000000000000000000000000000000000001")
+    signature = bytes.fromhex(
+        f"{padded_owner}000000000000000000000000000000000000000000000000000000000000000001"
+    )
 
     tx = safe.functions.execTransaction(
-        w3.to_checksum_address(to_address), value, data, 0, 0, 0, 0,
+        w3.to_checksum_address(to_address),
+        value,
+        data,
+        0,
+        0,
+        0,
+        0,
         "0x0000000000000000000000000000000000000000",
         "0x0000000000000000000000000000000000000000",
-        signature
+        signature,
     ).transact({"from": agent_address, "gas": 5_000_000})
     receipt = w3.eth.wait_for_transaction_receipt(tx)
     assert receipt["status"] == 1, "Safe execTransaction reverted"
@@ -577,9 +589,27 @@ class TestLifecycleMultiChain:
                 # --- Step 8: Send enough requests to satisfy liveness check ---
                 # Read livenessRatio from the chain's activityChecker contract.
                 _liveness_abi = [
-                    {"inputs":[],"name":"activityChecker","outputs":[{"type":"address"}],"stateMutability":"view","type":"function"},
-                    {"inputs":[],"name":"livenessRatio","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"},
-                    {"inputs":[],"name":"minStakingDuration","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"},
+                    {
+                        "inputs": [],
+                        "name": "activityChecker",
+                        "outputs": [{"type": "address"}],
+                        "stateMutability": "view",
+                        "type": "function",
+                    },
+                    {
+                        "inputs": [],
+                        "name": "livenessRatio",
+                        "outputs": [{"type": "uint256"}],
+                        "stateMutability": "view",
+                        "type": "function",
+                    },
+                    {
+                        "inputs": [],
+                        "name": "minStakingDuration",
+                        "outputs": [{"type": "uint256"}],
+                        "stateMutability": "view",
+                        "type": "function",
+                    },
                 ]
                 staking_for_liveness = w3.eth.contract(
                     address=Web3.to_checksum_address(addrs["staking"]), abi=_liveness_abi
@@ -588,7 +618,15 @@ class TestLifecycleMultiChain:
                 ac_addr = staking_for_liveness.functions.activityChecker().call()
                 ac = w3.eth.contract(
                     address=ac_addr,
-                    abi=[{"inputs":[],"name":"livenessRatio","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"}],
+                    abi=[
+                        {
+                            "inputs": [],
+                            "name": "livenessRatio",
+                            "outputs": [{"type": "uint256"}],
+                            "stateMutability": "view",
+                            "type": "function",
+                        }
+                    ],
                 )
                 liveness_ratio = ac.functions.livenessRatio().call()
                 ts_approx = min_staking_dur + 120
@@ -634,7 +672,7 @@ class TestLifecycleMultiChain:
                         safe_address=multisig,
                         agent_address=agent_instance,
                         to_address=mech_addr,
-                        data=data
+                        data=data,
                     )
 
                 deliveries = marketplace.functions.mapMechDeliveryCounts(
@@ -652,7 +690,9 @@ class TestLifecycleMultiChain:
                 delta = max(epoch_end - current + 120, min_staking_dur + 120)
                 w3.provider.make_request("evm_increaseTime", [delta])
                 w3.provider.make_request("evm_mine", [])
-                print(f"  Step 10: Advanced {delta}s ({delta / 3600:.1f}h, minStaking={min_staking_dur/3600:.0f}h)")
+                print(
+                    f"  Step 10: Advanced {delta}s ({delta / 3600:.1f}h, minStaking={min_staking_dur / 3600:.0f}h)"
+                )
 
                 # --- Step 11: Checkpoint ---
                 caller = w3.eth.accounts[0]
@@ -717,12 +757,8 @@ class TestLifecycleMultiChain:
 
         # Rate-limited chains are infrastructure failures, not code failures.
         # Require at least one chain to pass (proves the code works end-to-end).
-        assert not hard_failed, (
-            f"Chains with hard failures: {hard_failed}\nFull results: {results}"
-        )
-        assert passed > 0, (
-            f"No chains passed — all were rate-limited or failed. Results: {results}"
-        )
+        assert not hard_failed, f"Chains with hard failures: {hard_failed}\nFull results: {results}"
+        assert passed > 0, f"No chains passed — all were rate-limited or failed. Results: {results}"
 
 
 # --- Tests: Multi-chain server ---

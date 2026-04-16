@@ -25,6 +25,7 @@ runner = CliRunner()
 # init — wallet error paths
 # ---------------------------------------------------------------------------
 
+
 class TestInitWalletErrors:
     def test_wallet_import_error_exits_1(self, tmp_path: Path):
         """init exits 1 if iwa is not installed."""
@@ -68,6 +69,7 @@ class TestInitWalletErrors:
 # init — chain selection interactive
 # ---------------------------------------------------------------------------
 
+
 class TestInitChainSelection:
     @patch("micromech.cli._check_balances", return_value=(10.0, 6000.0))
     def test_init_chain_by_number_interactive(self, _mock, tmp_path: Path):
@@ -79,8 +81,10 @@ class TestInitChainSelection:
         mock_wallet_mod = MagicMock()
         mock_wallet_mod.Wallet.return_value = mock_wallet
         # Input: "1" to select gnosis, then deploy (will fail at MechLifecycle)
-        with patch.dict("sys.modules", {"iwa.core.wallet": mock_wallet_mod}), \
-             patch("micromech.management.MechLifecycle", side_effect=ImportError("no iwa")):
+        with (
+            patch.dict("sys.modules", {"iwa.core.wallet": mock_wallet_mod}),
+            patch("micromech.management.MechLifecycle", side_effect=ImportError("no iwa")),
+        ):
             result = runner.invoke(
                 app,
                 ["init", "--config", str(config_path), "--yes", "--skip-funding-check"],
@@ -93,6 +97,7 @@ class TestInitChainSelection:
 # ---------------------------------------------------------------------------
 # init — funding wait loop
 # ---------------------------------------------------------------------------
+
 
 class TestInitFundingLoop:
     def test_init_funding_wait_loop(self, tmp_path: Path):
@@ -113,10 +118,12 @@ class TestInitFundingLoop:
                 return (0.0, 0.0)
             return (10.0, 6000.0)
 
-        with patch.dict("sys.modules", {"iwa.core.wallet": mock_wallet_mod}), \
-             patch("micromech.cli._check_balances", side_effect=_fake_balances), \
-             patch("time.sleep"), \
-             patch("micromech.management.MechLifecycle", side_effect=ImportError("no iwa")):
+        with (
+            patch.dict("sys.modules", {"iwa.core.wallet": mock_wallet_mod}),
+            patch("micromech.cli._check_balances", side_effect=_fake_balances),
+            patch("time.sleep"),
+            patch("micromech.management.MechLifecycle", side_effect=ImportError("no iwa")),
+        ):
             result = runner.invoke(
                 app,
                 ["init", "--config", str(config_path), "--chain", "gnosis", "--yes"],
@@ -129,6 +136,7 @@ class TestInitFundingLoop:
 # ---------------------------------------------------------------------------
 # init — deploy step
 # ---------------------------------------------------------------------------
+
 
 class TestInitDeployStep:
     @patch("micromech.cli._check_balances", return_value=(10.0, 6000.0))
@@ -145,13 +153,20 @@ class TestInitDeployStep:
         mock_result = MagicMock()
         mock_lc.full_deploy.return_value = mock_result
 
-        with patch.dict("sys.modules", {"iwa.core.wallet": mock_wallet_mod}), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc):
+        with (
+            patch.dict("sys.modules", {"iwa.core.wallet": mock_wallet_mod}),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+        ):
             result = runner.invoke(
                 app,
                 [
-                    "init", "--config", str(config_path),
-                    "--chain", "gnosis", "--yes", "--skip-funding-check",
+                    "init",
+                    "--config",
+                    str(config_path),
+                    "--chain",
+                    "gnosis",
+                    "--yes",
+                    "--skip-funding-check",
                 ],
             )
         assert "micromech run" in result.output
@@ -172,14 +187,21 @@ class TestInitDeployStep:
         # Patch MicromechConfig.load to return a fresh config (no existing deployment)
         fresh_cfg = MicromechConfig()
 
-        with patch.dict("sys.modules", {"iwa.core.wallet": mock_wallet_mod}), \
-             patch("micromech.core.config.MicromechConfig.load", return_value=fresh_cfg), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc):
+        with (
+            patch.dict("sys.modules", {"iwa.core.wallet": mock_wallet_mod}),
+            patch("micromech.core.config.MicromechConfig.load", return_value=fresh_cfg),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+        ):
             result = runner.invoke(
                 app,
                 [
-                    "init", "--config", str(config_path),
-                    "--chain", "gnosis", "--yes", "--skip-funding-check",
+                    "init",
+                    "--config",
+                    str(config_path),
+                    "--chain",
+                    "gnosis",
+                    "--yes",
+                    "--skip-funding-check",
                 ],
             )
         assert result.exit_code == 1
@@ -189,6 +211,7 @@ class TestInitDeployStep:
 # ---------------------------------------------------------------------------
 # run — _run_all coroutine body
 # ---------------------------------------------------------------------------
+
 
 class TestRunCommand:
     def test_run_with_telegram_bot(self, tmp_path: Path):
@@ -213,8 +236,10 @@ class TestRunCommand:
             # Partially run the coroutine to hit bot startup code
             called.append("run")
 
-        with patch("micromech.cli.asyncio") as mock_asyncio, \
-             patch("micromech.runtime.server.MechServer", return_value=mock_server):
+        with (
+            patch("micromech.cli.asyncio") as mock_asyncio,
+            patch("micromech.runtime.server.MechServer", return_value=mock_server),
+        ):
             mock_asyncio.run = _fake_asyncio_run
             result = runner.invoke(app, ["run", "--config", str(config_path)])
 
@@ -230,8 +255,10 @@ class TestRunCommand:
         mock_server = MagicMock()
         mock_server.shutdown = MagicMock()
 
-        with patch("micromech.runtime.server.MechServer", return_value=mock_server), \
-             patch("micromech.cli.asyncio.run", side_effect=KeyboardInterrupt):
+        with (
+            patch("micromech.runtime.server.MechServer", return_value=mock_server),
+            patch("micromech.cli.asyncio.run", side_effect=KeyboardInterrupt),
+        ):
             result = runner.invoke(app, ["run", "--config", str(config_path)])
 
         # Should exit cleanly and call shutdown
@@ -242,6 +269,7 @@ class TestRunCommand:
 # ---------------------------------------------------------------------------
 # web — reload_tools body and auto-start runtime
 # ---------------------------------------------------------------------------
+
 
 class TestWebCommandExtra:
     @patch("uvicorn.run")
@@ -264,17 +292,17 @@ class TestWebCommandExtra:
         )
         cfg.save(config_path)
 
-        with patch("micromech.cli.DB_PATH", tmp_path / "test.db"), \
-             patch("micromech.runtime.manager.RuntimeManager"):
+        with (
+            patch("micromech.cli.DB_PATH", tmp_path / "test.db"),
+            patch("micromech.runtime.manager.RuntimeManager"),
+        ):
             result = runner.invoke(app, ["web", "--config", str(config_path)])
 
         assert result.exit_code == 0
         assert "runtime will auto-start" in result.output
 
     @patch("uvicorn.run")
-    def test_web_reload_tools_no_server_uses_standalone_reg(
-        self, mock_uvicorn, tmp_path: Path
-    ):
+    def test_web_reload_tools_no_server_uses_standalone_reg(self, mock_uvicorn, tmp_path: Path):
         """reload_tools falls back to standalone registry when runtime not started."""
         config_path = tmp_path / "cfg.yaml"
         MicromechConfig().save(config_path)
@@ -286,8 +314,10 @@ class TestWebCommandExtra:
             reload_callable = kwargs.get("reload_tools")
             return MagicMock()
 
-        with patch("micromech.cli.DB_PATH", tmp_path / "test.db"), \
-             patch("micromech.web.app.create_web_app", side_effect=capture_create_web_app):
+        with (
+            patch("micromech.cli.DB_PATH", tmp_path / "test.db"),
+            patch("micromech.web.app.create_web_app", side_effect=capture_create_web_app),
+        ):
             runner.invoke(app, ["web", "--config", str(config_path)])
 
         assert reload_callable is not None
@@ -304,6 +334,7 @@ class TestWebCommandExtra:
 # metadata-publish
 # ---------------------------------------------------------------------------
 
+
 class TestMetadataPublishCommand:
     def test_metadata_publish_success(self, tmp_path: Path):
         """metadata-publish prints IPFS CID and chain txs on success."""
@@ -317,9 +348,11 @@ class TestMetadataPublishCommand:
         mock_mm = MagicMock()
         mock_mm.publish = AsyncMock(return_value=mock_result)
 
-        with patch("micromech.metadata_manager.MetadataManager", return_value=mock_mm), \
-             patch("micromech.core.config.MicromechConfig.load", return_value=MicromechConfig()), \
-             patch("micromech.core.config.register_plugin"):
+        with (
+            patch("micromech.metadata_manager.MetadataManager", return_value=mock_mm),
+            patch("micromech.core.config.MicromechConfig.load", return_value=MicromechConfig()),
+            patch("micromech.core.config.register_plugin"),
+        ):
             result = runner.invoke(app, ["metadata-publish"])
 
         assert result.exit_code == 0
@@ -334,9 +367,11 @@ class TestMetadataPublishCommand:
         mock_mm = MagicMock()
         mock_mm.publish = AsyncMock(return_value=mock_result)
 
-        with patch("micromech.metadata_manager.MetadataManager", return_value=mock_mm), \
-             patch("micromech.core.config.MicromechConfig.load", return_value=MicromechConfig()), \
-             patch("micromech.core.config.register_plugin"):
+        with (
+            patch("micromech.metadata_manager.MetadataManager", return_value=mock_mm),
+            patch("micromech.core.config.MicromechConfig.load", return_value=MicromechConfig()),
+            patch("micromech.core.config.register_plugin"),
+        ):
             result = runner.invoke(app, ["metadata-publish"])
 
         assert result.exit_code == 1
@@ -346,6 +381,7 @@ class TestMetadataPublishCommand:
 # ---------------------------------------------------------------------------
 # doctor — more coverage
 # ---------------------------------------------------------------------------
+
 
 class TestDoctorExtra:
     def test_doctor_wallet_ok(self, tmp_path: Path):

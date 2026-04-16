@@ -20,7 +20,9 @@ AUTH = {"X-Micromech-Action": "test"}
 def _make_app(on_request=None, get_result=None):
     """Create a test app with optional callbacks."""
     if on_request is None:
-        async def on_request(req): pass
+
+        async def on_request(req):
+            pass
 
     def get_status():
         return {"status": "running", "queue": {}, "tools": [], "delivered_total": 0}
@@ -43,6 +45,7 @@ def _make_record(request_id="r1", output='{"answer": 42}', error=None, has_resul
 # Root redirect
 # ---------------------------------------------------------------------------
 
+
 class TestRootRedirect:
     def test_root_redirects_to_dashboard(self):
         client = TestClient(_make_app(), follow_redirects=False)
@@ -55,11 +58,14 @@ class TestRootRedirect:
 # Rate limiting
 # ---------------------------------------------------------------------------
 
+
 class TestRateLimiting:
     def test_rate_limited_returns_429(self):
         client = TestClient(_make_app())
-        with patch("micromech.web.app._rate_limited", return_value=True), \
-             patch("micromech.web.app._get_client_ip", return_value="1.2.3.4"):
+        with (
+            patch("micromech.web.app._rate_limited", return_value=True),
+            patch("micromech.web.app._get_client_ip", return_value="1.2.3.4"),
+        ):
             resp = client.post("/request", json={"prompt": "test"}, headers=AUTH)
         assert resp.status_code == 429
         assert "Rate limit" in resp.json()["error"]
@@ -69,14 +75,17 @@ class TestRateLimiting:
 # on_request exception
 # ---------------------------------------------------------------------------
 
+
 class TestOnRequestException:
     def test_on_request_exception_returns_500(self):
         async def bad_request(req):
             raise RuntimeError("db error")
 
         client = TestClient(_make_app(on_request=bad_request), raise_server_exceptions=False)
-        with patch("micromech.web.app._rate_limited", return_value=False), \
-             patch("micromech.web.app._get_client_ip", return_value="1.2.3.4"):
+        with (
+            patch("micromech.web.app._rate_limited", return_value=False),
+            patch("micromech.web.app._get_client_ip", return_value="1.2.3.4"),
+        ):
             resp = client.post("/request", json={"prompt": "test"}, headers=AUTH)
         assert resp.status_code == 500
 
@@ -84,6 +93,7 @@ class TestOnRequestException:
 # ---------------------------------------------------------------------------
 # /result endpoint
 # ---------------------------------------------------------------------------
+
 
 class TestResultEndpoint:
     def test_result_not_configured_returns_501(self):

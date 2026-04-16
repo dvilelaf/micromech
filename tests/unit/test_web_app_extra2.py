@@ -53,9 +53,11 @@ def _client(**kw):
 # _get_sse_semaphore — lazy init
 # ---------------------------------------------------------------------------
 
+
 class TestGetSseSemaphore:
     def test_returns_semaphore(self):
         import micromech.web.app as app_mod
+
         # Reset so we can test the branch
         original = app_mod._sse_semaphore
         app_mod._sse_semaphore = None
@@ -75,12 +77,18 @@ class TestGetSseSemaphore:
 # _StdlibLogHandler emit exception path
 # ---------------------------------------------------------------------------
 
+
 class TestStdlibLogHandlerException:
     def test_emit_exception_is_swallowed(self):
         handler = _StdlibLogHandler()
         record = logging.LogRecord(
-            name="test", level=logging.INFO,
-            pathname="", lineno=0, msg="hello", args=(), exc_info=None
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="hello",
+            args=(),
+            exc_info=None,
         )
         # Make record.created invalid to trigger exception
         record.created = "not-a-float"
@@ -92,9 +100,11 @@ class TestStdlibLogHandlerException:
 # _needs_setup — cached path
 # ---------------------------------------------------------------------------
 
+
 class TestNeedsSetupCached:
     def test_uses_cached_false(self):
         import micromech.web.app as app_mod
+
         original = app_mod._setup_needed
         app_mod._setup_needed = False
         try:
@@ -106,6 +116,7 @@ class TestNeedsSetupCached:
 
     def test_uses_cached_true(self):
         import micromech.web.app as app_mod
+
         original = app_mod._setup_needed
         app_mod._setup_needed = True
         try:
@@ -118,6 +129,7 @@ class TestNeedsSetupCached:
 # ---------------------------------------------------------------------------
 # Token query param auth (?token=)
 # ---------------------------------------------------------------------------
+
 
 class TestTokenQueryParamAuth:
     def test_valid_token_param_allows_access(self):
@@ -134,11 +146,13 @@ class TestTokenQueryParamAuth:
 # /api/setup/state
 # ---------------------------------------------------------------------------
 
+
 class TestSetupStateEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_rate_limited_returns_429(self, _mock):
         """Rate limiting applies to setup/state."""
         from micromech.web import app as app_mod
+
         c = _client()
         # Patch rate limiter to always return True
         with patch.object(app_mod, "_rate_limited", return_value=True):
@@ -153,9 +167,11 @@ class TestSetupStateEndpoint:
         c = _client()
         mock_ks = MagicMock()
         mock_ks.get_address_by_tag.return_value = "0xABCDEF1234567890AbCdEf1234567890aBcDeF12"
-        with patch("micromech.core.bridge._cached_key_storage", mock_ks), \
-             patch("micromech.core.bridge._cached_wallet", None), \
-             patch("micromech.core.config.MicromechConfig.load", side_effect=Exception("no cfg")):
+        with (
+            patch("micromech.core.bridge._cached_key_storage", mock_ks),
+            patch("micromech.core.bridge._cached_wallet", None),
+            patch("micromech.core.config.MicromechConfig.load", side_effect=Exception("no cfg")),
+        ):
             resp = c.get("/api/setup/state")
         assert resp.status_code == 200
         data = resp.json()
@@ -168,9 +184,11 @@ class TestSetupStateEndpoint:
         c = _client()
         mock_wallet = MagicMock()
         mock_wallet.master_account.address = "0xABCDEF1234567890AbCdEf1234567890aBcDeF12"
-        with patch("micromech.core.bridge._cached_key_storage", None), \
-             patch("micromech.core.bridge._cached_wallet", mock_wallet), \
-             patch("micromech.core.config.MicromechConfig.load", side_effect=Exception("no cfg")):
+        with (
+            patch("micromech.core.bridge._cached_key_storage", None),
+            patch("micromech.core.bridge._cached_wallet", mock_wallet),
+            patch("micromech.core.config.MicromechConfig.load", side_effect=Exception("no cfg")),
+        ):
             resp = c.get("/api/setup/state")
         assert resp.status_code == 200
         data = resp.json()
@@ -186,12 +204,15 @@ class TestSetupStateEndpoint:
         chain_cfg.detect_setup_state.return_value = "complete"
         chain_cfg.mech_address = "0x1234"
         mock_cfg.chains = {"gnosis": chain_cfg}
-        with patch("micromech.core.bridge._cached_key_storage", None), \
-             patch("micromech.core.bridge._cached_wallet", MagicMock()), \
-             patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.get_service_info", return_value={
-                 "service_id": 1, "service_key": "0xabc", "multisig_address": "0xdef"
-             }):
+        with (
+            patch("micromech.core.bridge._cached_key_storage", None),
+            patch("micromech.core.bridge._cached_wallet", MagicMock()),
+            patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_id": 1, "service_key": "0xabc", "multisig_address": "0xdef"},
+            ),
+        ):
             resp = c.get("/api/setup/state")
         assert resp.status_code == 200
         assert resp.json()["step"] == "complete"
@@ -208,10 +229,12 @@ class TestSetupStateEndpoint:
         mock_cfg.chains = {"gnosis": chain_cfg}
         mock_wallet = MagicMock()
         mock_wallet.master_account.address = "0xAAA"
-        with patch("micromech.core.bridge._cached_key_storage", None), \
-             patch("micromech.core.bridge._cached_wallet", mock_wallet), \
-             patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.get_service_info", return_value={}):
+        with (
+            patch("micromech.core.bridge._cached_key_storage", None),
+            patch("micromech.core.bridge._cached_wallet", mock_wallet),
+            patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg),
+            patch("micromech.core.bridge.get_service_info", return_value={}),
+        ):
             resp = c.get("/api/setup/state")
         assert resp.status_code == 200
         assert resp.json()["step"] == "deploy"
@@ -220,6 +243,7 @@ class TestSetupStateEndpoint:
 # ---------------------------------------------------------------------------
 # /api/setup/wallet
 # ---------------------------------------------------------------------------
+
 
 class TestSetupWalletEndpoint:
     def test_password_too_long_returns_400(self):
@@ -257,10 +281,12 @@ class TestSetupWalletEndpoint:
 # /api/setup/secrets
 # ---------------------------------------------------------------------------
 
+
 class TestSetupSecretsEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_get_rate_limited(self, _mock):
         from micromech.web import app as app_mod
+
         c = _client()
         with patch.object(app_mod, "_rate_limited", return_value=True):
             resp = c.get("/api/setup/secrets")
@@ -278,6 +304,7 @@ class TestSetupSecretsEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_post_rate_limited(self, _mock):
         from micromech.web import app as app_mod
+
         c = _client()
         with patch.object(app_mod, "_rate_limited", return_value=True):
             resp = c.post("/api/setup/secrets", json={}, headers=CSRF)
@@ -297,19 +324,27 @@ class TestSetupSecretsEndpoint:
 # /api/setup/tools
 # ---------------------------------------------------------------------------
 
+
 class TestSetupToolsEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_get_tools_list(self, _mock):
         """GET /api/setup/tools returns list of tool packages."""
         c = _client()
         mock_tools = [
-            {"name": "web_search", "description": "Search", "version": "1.0",
-             "allowed_tools": ["web_search"], "source": "builtin"},
+            {
+                "name": "web_search",
+                "description": "Search",
+                "version": "1.0",
+                "allowed_tools": ["web_search"],
+                "source": "builtin",
+            },
         ]
         mock_cfg = MagicMock()
         mock_cfg.disabled_tools = []
-        with patch("micromech.ipfs.metadata.scan_tool_packages", return_value=mock_tools), \
-             patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg):
+        with (
+            patch("micromech.ipfs.metadata.scan_tool_packages", return_value=mock_tools),
+            patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg),
+        ):
             resp = c.get("/api/setup/tools")
         assert resp.status_code == 200
         data = resp.json()
@@ -336,6 +371,7 @@ class TestSetupToolsEndpoint:
 # /api/karma
 # ---------------------------------------------------------------------------
 
+
 class TestKarmaEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_no_mech_address_returns_error(self, _mock):
@@ -360,8 +396,10 @@ class TestKarmaEndpoint:
         chain_cfg.mech_address = "0x1234"
         chain_cfg.marketplace_address = "0xabc"
         mock_cfg.enabled_chains = {"gnosis": chain_cfg}
-        with patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.IwaBridge", side_effect=Exception("rpc")):
+        with (
+            patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg),
+            patch("micromech.core.bridge.IwaBridge", side_effect=Exception("rpc")),
+        ):
             c = _client()
             resp = c.get("/api/karma")
         assert resp.status_code == 200
@@ -383,6 +421,7 @@ class TestKarmaEndpoint:
 # /api/health with metrics
 # ---------------------------------------------------------------------------
 
+
 class TestHealthCheckWithMetrics:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_health_includes_metrics_when_provided(self, _mock):
@@ -395,7 +434,9 @@ class TestHealthCheckWithMetrics:
         def get_status():
             return {"status": "running", "queue": {}, "chains": ["gnosis"], "delivered_total": 38}
 
-        c = TestClient(_app(get_status=get_status, metrics=mock_metrics), raise_server_exceptions=False)
+        c = TestClient(
+            _app(get_status=get_status, metrics=mock_metrics), raise_server_exceptions=False
+        )
         resp = c.get("/api/health")
         assert resp.status_code == 200
         data = resp.json()
@@ -408,7 +449,12 @@ class TestHealthCheckWithMetrics:
         """Health check populates per-chain status."""
 
         def get_status():
-            return {"status": "running", "queue": {}, "chains": ["gnosis", "base"], "delivered_total": 0}
+            return {
+                "status": "running",
+                "queue": {},
+                "chains": ["gnosis", "base"],
+                "delivered_total": 0,
+            }
 
         c = TestClient(_app(get_status=get_status), raise_server_exceptions=False)
         resp = c.get("/api/health")
@@ -421,6 +467,7 @@ class TestHealthCheckWithMetrics:
 # ---------------------------------------------------------------------------
 # Metrics endpoints with queue data
 # ---------------------------------------------------------------------------
+
 
 class TestMetricsEndpointsWithQueue:
     @patch("micromech.web.app._needs_setup", return_value=True)
@@ -479,6 +526,7 @@ class TestMetricsEndpointsWithQueue:
 # /api/management — service_key fallback from service info
 # ---------------------------------------------------------------------------
 
+
 class TestManagementServiceKeyFallback:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_service_key_from_bridge_when_not_in_body(self, _mock):
@@ -486,9 +534,13 @@ class TestManagementServiceKeyFallback:
         mock_cfg = MagicMock()
         mock_lc = MagicMock()
         mock_lc.stake.return_value = True
-        with patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc), \
-             patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xabc123"}):
+        with (
+            patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+            patch(
+                "micromech.core.bridge.get_service_info", return_value={"service_key": "0xabc123"}
+            ),
+        ):
             c = _client()
             resp = c.post(
                 "/api/management/stake",
@@ -502,6 +554,7 @@ class TestManagementServiceKeyFallback:
 # ---------------------------------------------------------------------------
 # /result/{id} — non-JSON output path
 # ---------------------------------------------------------------------------
+
 
 class TestResultNonJsonOutput:
     @patch("micromech.web.app._needs_setup", return_value=True)
@@ -532,6 +585,7 @@ class TestResultNonJsonOutput:
 # ---------------------------------------------------------------------------
 # /api/setup/deploy — already in progress
 # ---------------------------------------------------------------------------
+
 
 class TestSetupDeployInProgress:
     @patch("micromech.web.app._needs_setup", return_value=True)

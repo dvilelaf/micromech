@@ -659,7 +659,7 @@ class TestWebWizardE2E:
         start = html.find("<script>")
         end = html.find("</script>", start)
         assert start != -1 and end != -1, "No <script> block found in /setup HTML"
-        script_content = html[start + len("<script>"):end]
+        script_content = html[start + len("<script>") : end]
 
         with tempfile.NamedTemporaryFile(suffix=".js", mode="w", delete=False) as f:
             f.write(script_content)
@@ -792,9 +792,7 @@ class TestWebWizardE2E:
             )
             assert r3.status_code == 401
 
-    def test_setup_endpoints_deny_when_password_missing_post_setup(
-        self, tmp_path: Path
-    ):
+    def test_setup_endpoints_deny_when_password_missing_post_setup(self, tmp_path: Path):
         """Fail-closed regression: post-setup + no password ⇒ 401.
 
         If an operator clears ``webui_password`` from ``secrets.env`` after
@@ -865,9 +863,7 @@ class TestWebWizardE2E:
             if dependant is None:
                 missing.append(f"{path} (no dependant)")
                 continue
-            chain_calls = {
-                d.call for d in dependant.dependencies if d.call is not None
-            }
+            chain_calls = {d.call for d in dependant.dependencies if d.call is not None}
             if not (chain_calls & auth_deps):
                 missing.append(path)
 

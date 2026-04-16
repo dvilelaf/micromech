@@ -131,9 +131,7 @@ class TestMechServerInit:
         server.shutdown()
 
     @pytest.mark.asyncio
-    async def test_reload_tools_leaves_state_unchanged_on_failure(
-        self, server_config, monkeypatch
-    ):
+    async def test_reload_tools_leaves_state_unchanged_on_failure(self, server_config, monkeypatch):
         """If the rebuild raises, config.disabled_tools must NOT mutate and
         the registry must keep the previous contents."""
         server = MechServer(server_config)

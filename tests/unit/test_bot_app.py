@@ -76,13 +76,16 @@ def _make_ctx(chat_id: int = AUTHORIZED_CHAT_ID):
 # start_command
 # ---------------------------------------------------------------------------
 
+
 class TestStartCommand:
     @pytest.mark.asyncio
     async def test_start_replies_with_welcome(self):
         update = _make_update()
         ctx = _make_ctx()
-        with patch("micromech.bot.security.secrets") as mock_sec, \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets") as mock_sec,
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             await start_command(update, ctx)
         update.message.reply_text.assert_called_once()
@@ -93,8 +96,10 @@ class TestStartCommand:
     async def test_start_no_message_returns_early(self):
         update = _make_update(has_message=False)
         ctx = _make_ctx()
-        with patch("micromech.bot.security.secrets") as mock_sec, \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets") as mock_sec,
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             # No crash expected, message is None so returns early
             await start_command(update, ctx)
@@ -104,13 +109,16 @@ class TestStartCommand:
 # help_command
 # ---------------------------------------------------------------------------
 
+
 class TestHelpCommand:
     @pytest.mark.asyncio
     async def test_help_lists_commands(self):
         update = _make_update()
         ctx = _make_ctx()
-        with patch("micromech.bot.security.secrets") as mock_sec, \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets") as mock_sec,
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             await help_command(update, ctx)
         update.message.reply_text.assert_called_once()
@@ -122,8 +130,10 @@ class TestHelpCommand:
     async def test_help_no_message_returns_early(self):
         update = _make_update(has_message=False)
         ctx = _make_ctx()
-        with patch("micromech.bot.security.secrets") as mock_sec, \
-             patch("micromech.bot.security._rate_limit_cache", {}):
+        with (
+            patch("micromech.bot.security.secrets") as mock_sec,
+            patch("micromech.bot.security._rate_limit_cache", {}),
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             await help_command(update, ctx)
 
@@ -131,6 +141,7 @@ class TestHelpCommand:
 # ---------------------------------------------------------------------------
 # global_callback_handler
 # ---------------------------------------------------------------------------
+
 
 class TestGlobalCallbackHandler:
     @pytest.mark.asyncio
@@ -181,8 +192,10 @@ class TestGlobalCallbackHandler:
     async def test_claim_action_dispatches(self):
         update = _make_update(callback_data=f"{ACTION_CLAIM}:all")
         ctx = _make_ctx()
-        with patch("micromech.bot.app.secrets") as mock_sec, \
-             patch("micromech.bot.app.handle_claim_callback", new_callable=AsyncMock) as mock_h:
+        with (
+            patch("micromech.bot.app.secrets") as mock_sec,
+            patch("micromech.bot.app.handle_claim_callback", new_callable=AsyncMock) as mock_h,
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             await global_callback_handler(update, ctx)
         mock_h.assert_called_once_with(update, ctx, "all")
@@ -191,9 +204,10 @@ class TestGlobalCallbackHandler:
     async def test_checkpoint_action_dispatches(self):
         update = _make_update(callback_data=f"{ACTION_CHECKPOINT}:all")
         ctx = _make_ctx()
-        with patch("micromech.bot.app.secrets") as mock_sec, \
-             patch("micromech.bot.app.handle_checkpoint_callback",
-                   new_callable=AsyncMock) as mock_h:
+        with (
+            patch("micromech.bot.app.secrets") as mock_sec,
+            patch("micromech.bot.app.handle_checkpoint_callback", new_callable=AsyncMock) as mock_h,
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             await global_callback_handler(update, ctx)
         mock_h.assert_called_once()
@@ -202,9 +216,10 @@ class TestGlobalCallbackHandler:
     async def test_settings_action_dispatches(self):
         update = _make_update(callback_data=f"{ACTION_SETTINGS}:toggle_x")
         ctx = _make_ctx()
-        with patch("micromech.bot.app.secrets") as mock_sec, \
-             patch("micromech.bot.app.handle_settings_callback",
-                   new_callable=AsyncMock) as mock_h:
+        with (
+            patch("micromech.bot.app.secrets") as mock_sec,
+            patch("micromech.bot.app.handle_settings_callback", new_callable=AsyncMock) as mock_h,
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             await global_callback_handler(update, ctx)
         mock_h.assert_called_once()
@@ -213,9 +228,10 @@ class TestGlobalCallbackHandler:
     async def test_manage_action_dispatches(self):
         update = _make_update(callback_data=f"{ACTION_MANAGE}:gnosis")
         ctx = _make_ctx()
-        with patch("micromech.bot.app.secrets") as mock_sec, \
-             patch("micromech.bot.app.handle_manage_callback",
-                   new_callable=AsyncMock) as mock_h:
+        with (
+            patch("micromech.bot.app.secrets") as mock_sec,
+            patch("micromech.bot.app.handle_manage_callback", new_callable=AsyncMock) as mock_h,
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             await global_callback_handler(update, ctx)
         mock_h.assert_called_once()
@@ -224,9 +240,12 @@ class TestGlobalCallbackHandler:
     async def test_manage_confirm_action_dispatches(self):
         update = _make_update(callback_data=f"{ACTION_MANAGE_CONFIRM}:yes")
         ctx = _make_ctx()
-        with patch("micromech.bot.app.secrets") as mock_sec, \
-             patch("micromech.bot.app.handle_manage_confirm_callback",
-                   new_callable=AsyncMock) as mock_h:
+        with (
+            patch("micromech.bot.app.secrets") as mock_sec,
+            patch(
+                "micromech.bot.app.handle_manage_confirm_callback", new_callable=AsyncMock
+            ) as mock_h,
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             await global_callback_handler(update, ctx)
         mock_h.assert_called_once()
@@ -235,9 +254,10 @@ class TestGlobalCallbackHandler:
     async def test_handler_exception_answers_error(self):
         update = _make_update(callback_data=f"{ACTION_CLAIM}:all")
         ctx = _make_ctx()
-        with patch("micromech.bot.app.secrets") as mock_sec, \
-             patch("micromech.bot.app.handle_claim_callback",
-                   side_effect=Exception("boom")):
+        with (
+            patch("micromech.bot.app.secrets") as mock_sec,
+            patch("micromech.bot.app.handle_claim_callback", side_effect=Exception("boom")),
+        ):
             mock_sec.telegram_chat_id = AUTHORIZED_CHAT_ID
             await global_callback_handler(update, ctx)
         update.callback_query.answer.assert_called_with("An error occurred")
@@ -246,6 +266,7 @@ class TestGlobalCallbackHandler:
 # ---------------------------------------------------------------------------
 # error_handler
 # ---------------------------------------------------------------------------
+
 
 class TestErrorHandler:
     @pytest.mark.asyncio
@@ -258,6 +279,7 @@ class TestErrorHandler:
 # ---------------------------------------------------------------------------
 # create_application
 # ---------------------------------------------------------------------------
+
 
 def _mock_builder():
     """Fully mocked telegram Application builder chain."""
@@ -283,10 +305,12 @@ class TestCreateApplication:
         cfg = MicromechConfig()
         builder, mock_app = _mock_builder()
 
-        with patch("micromech.bot.app.secrets") as mock_sec, \
-             patch("micromech.bot.app.Application") as mock_app_cls, \
-             patch("micromech.bot.app.HTTPXRequest"), \
-             patch("micromech.bot.app.MechLifecycle"):
+        with (
+            patch("micromech.bot.app.secrets") as mock_sec,
+            patch("micromech.bot.app.Application") as mock_app_cls,
+            patch("micromech.bot.app.HTTPXRequest"),
+            patch("micromech.bot.app.MechLifecycle"),
+        ):
             mock_sec.telegram_token = MagicMock()
             mock_sec.telegram_token.get_secret_value.return_value = "fake_token"
             mock_app_cls.builder.return_value = builder
@@ -302,10 +326,12 @@ class TestCreateApplication:
         mock_metrics = MagicMock()
         mock_runtime = MagicMock()
 
-        with patch("micromech.bot.app.secrets") as mock_sec, \
-             patch("micromech.bot.app.Application") as mock_app_cls, \
-             patch("micromech.bot.app.HTTPXRequest"), \
-             patch("micromech.bot.app.MechLifecycle"):
+        with (
+            patch("micromech.bot.app.secrets") as mock_sec,
+            patch("micromech.bot.app.Application") as mock_app_cls,
+            patch("micromech.bot.app.HTTPXRequest"),
+            patch("micromech.bot.app.MechLifecycle"),
+        ):
             mock_sec.telegram_token = MagicMock()
             mock_sec.telegram_token.get_secret_value.return_value = "fake"
             mock_app_cls.builder.return_value = builder
@@ -334,10 +360,12 @@ class TestCreateApplication:
         )
         builder, mock_app = _mock_builder()
 
-        with patch("micromech.bot.app.secrets") as mock_sec, \
-             patch("micromech.bot.app.Application") as mock_app_cls, \
-             patch("micromech.bot.app.HTTPXRequest"), \
-             patch("micromech.bot.app.MechLifecycle", side_effect=Exception("no rpc")):
+        with (
+            patch("micromech.bot.app.secrets") as mock_sec,
+            patch("micromech.bot.app.Application") as mock_app_cls,
+            patch("micromech.bot.app.HTTPXRequest"),
+            patch("micromech.bot.app.MechLifecycle", side_effect=Exception("no rpc")),
+        ):
             mock_sec.telegram_token = MagicMock()
             mock_sec.telegram_token.get_secret_value.return_value = "t"
             mock_app_cls.builder.return_value = builder

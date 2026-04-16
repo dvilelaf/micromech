@@ -412,6 +412,7 @@ class TestToolsHotReload:
 
     def test_reload_sanitizes_error_response(self):
         """The 500 response must NOT leak the raw exception message."""
+
         def broken_reload():
             raise RuntimeError("/opt/secret/wallet.json: permission denied")
 
@@ -425,6 +426,7 @@ class TestToolsHotReload:
 
     def test_reload_supports_async_callable(self):
         """The endpoint must await coroutine-returning reloaders."""
+
         async def async_reload():
             return ["echo", "llm"]
 

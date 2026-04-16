@@ -36,6 +36,7 @@ from micromech.tools.base import Tool, ToolMetadata, _get_llm_executor
 # Module-level run functions (picklable if real subprocesses ever needed)
 # ---------------------------------------------------------------------------
 
+
 def _fast_run(prompt, tool, **kwargs):
     return ("fast-result",)
 
@@ -43,6 +44,7 @@ def _fast_run(prompt, tool, **kwargs):
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def isolate_executor():
@@ -73,6 +75,7 @@ def _make_mock_executor(result=("fast-result",)):
 # Executor shape
 # ---------------------------------------------------------------------------
 
+
 class TestExecutorShape:
     def test_get_llm_executor_returns_process_pool(self):
         """Serialized tools must route through a ProcessPoolExecutor."""
@@ -99,6 +102,7 @@ class TestExecutorShape:
 # ---------------------------------------------------------------------------
 # Routing: serialized → ProcessPoolExecutor, non-serialized → to_thread
 # ---------------------------------------------------------------------------
+
 
 class TestExecutorRouting:
     @pytest.mark.asyncio
@@ -185,6 +189,7 @@ class TestExecutorRouting:
 # BrokenProcessPool crash recovery
 # ---------------------------------------------------------------------------
 
+
 class TestBrokenProcessPoolRecovery:
     @pytest.mark.asyncio
     async def test_broken_pool_raises_tool_execution_error(self):
@@ -197,9 +202,7 @@ class TestBrokenProcessPoolRecovery:
         )
 
         mock_exec = MagicMock(spec=concurrent.futures.ProcessPoolExecutor)
-        mock_exec.submit.side_effect = concurrent.futures.process.BrokenProcessPool(
-            "simulated OOM"
-        )
+        mock_exec.submit.side_effect = concurrent.futures.process.BrokenProcessPool("simulated OOM")
         _base._LLM_EXECUTOR = mock_exec
 
         with pytest.raises(ToolExecutionError, match="crashed"):
@@ -216,9 +219,7 @@ class TestBrokenProcessPoolRecovery:
         )
 
         mock_exec = MagicMock(spec=concurrent.futures.ProcessPoolExecutor)
-        mock_exec.submit.side_effect = concurrent.futures.process.BrokenProcessPool(
-            "simulated OOM"
-        )
+        mock_exec.submit.side_effect = concurrent.futures.process.BrokenProcessPool("simulated OOM")
         _base._LLM_EXECUTOR = mock_exec
 
         with pytest.raises(ToolExecutionError):
@@ -237,9 +238,7 @@ class TestBrokenProcessPoolRecovery:
         )
 
         mock_exec = MagicMock(spec=concurrent.futures.ProcessPoolExecutor)
-        mock_exec.submit.side_effect = concurrent.futures.process.BrokenProcessPool(
-            "simulated OOM"
-        )
+        mock_exec.submit.side_effect = concurrent.futures.process.BrokenProcessPool("simulated OOM")
         _base._LLM_EXECUTOR = mock_exec
 
         with pytest.raises(ToolExecutionError):
@@ -260,9 +259,7 @@ class TestBrokenProcessPoolRecovery:
         )
 
         mock_exec = MagicMock(spec=concurrent.futures.ProcessPoolExecutor)
-        mock_exec.submit.side_effect = concurrent.futures.process.BrokenProcessPool(
-            "simulated OOM"
-        )
+        mock_exec.submit.side_effect = concurrent.futures.process.BrokenProcessPool("simulated OOM")
         _base._LLM_EXECUTOR = mock_exec
 
         # Must succeed without touching the broken pool

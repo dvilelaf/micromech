@@ -84,7 +84,9 @@ def _fork_is_stale(port: int, rpc_url: str, max_lag: int = 3) -> bool:
     *max_lag* blocks.
     """
     try:
-        local_w3 = Web3(Web3.HTTPProvider(f"http://localhost:{port}", request_kwargs={"timeout": 2}))
+        local_w3 = Web3(
+            Web3.HTTPProvider(f"http://localhost:{port}", request_kwargs={"timeout": 2})
+        )
         local_block = local_w3.eth.block_number
     except Exception:
         return False  # can't connect locally — not our problem here
@@ -97,7 +99,9 @@ def _fork_is_stale(port: int, rpc_url: str, max_lag: int = 3) -> bool:
 
     lag = live_block - local_block
     if lag > max_lag:
-        print(f"  anvil: port {port} fork is stale (local={local_block}, live={live_block}, lag={lag})")
+        print(
+            f"  anvil: port {port} fork is stale (local={local_block}, live={live_block}, lag={lag})"
+        )
         return True
     return False
 

@@ -201,9 +201,7 @@ class TestGetLlm:
 
         model_path = tmp_path / "bad.gguf"
         model_path.write_bytes(b"tampered")
-        (tmp_path / "manifest.json").write_text(
-            json.dumps({"bad.gguf": "0" * 64})
-        )
+        (tmp_path / "manifest.json").write_text(json.dumps({"bad.gguf": "0" * 64}))
 
         fake_hf = MagicMock()
         fake_llama = MagicMock()
@@ -275,9 +273,7 @@ class TestResolveModel:
     def test_explicit_repo_and_file(self):
         from micromech.tools.local_llm.local_llm import _resolve_model
 
-        repo, fname = _resolve_model(
-            {"model_repo": "custom/repo", "model_file": "custom.gguf"}
-        )
+        repo, fname = _resolve_model({"model_repo": "custom/repo", "model_file": "custom.gguf"})
         assert repo == "custom/repo"
         assert fname == "custom.gguf"
 
@@ -471,9 +467,7 @@ class TestSearchContext:
         )
 
         fake_mod = _fake_ddgs_mod(
-            news_results=[
-                {"title": "News A", "body": "First snippet.", "date": "2025-01-01"}
-            ],
+            news_results=[{"title": "News A", "body": "First snippet.", "date": "2025-01-01"}],
             text_results=[{"body": "Completely different text result."}],
         )
 
@@ -546,9 +540,7 @@ class TestValidatePrediction:
             _validate_prediction,
         )
 
-        raw = json.dumps(
-            {"p_yes": 0.7, "p_no": 0.3, "confidence": 0.9, "info_utility": 0.5}
-        )
+        raw = json.dumps({"p_yes": 0.7, "p_no": 0.3, "confidence": 0.9, "info_utility": 0.5})
         result = json.loads(_validate_prediction(raw))
         assert abs(result["p_yes"] - 0.7) < 0.01
 
@@ -557,9 +549,7 @@ class TestValidatePrediction:
             _validate_prediction,
         )
 
-        raw = json.dumps(
-            {"p_yes": 0.6, "p_no": 0.5, "confidence": 0.8, "info_utility": 0.4}
-        )
+        raw = json.dumps({"p_yes": 0.6, "p_no": 0.5, "confidence": 0.8, "info_utility": 0.4})
         result = json.loads(_validate_prediction(raw))
         assert "p_no" in result
 
@@ -578,9 +568,7 @@ class TestValidatePrediction:
             _validate_prediction,
         )
 
-        raw = json.dumps(
-            {"p_yes": 2.0, "p_no": 2.0, "confidence": 0.8, "info_utility": 0.5}
-        )
+        raw = json.dumps({"p_yes": 2.0, "p_no": 2.0, "confidence": 0.8, "info_utility": 0.5})
         result = json.loads(_validate_prediction(raw))
         assert abs(result["p_yes"] + result["p_no"] - 1.0) < 0.01
 
@@ -606,18 +594,14 @@ class TestPredictionRun:
     def test_run_happy_path(self):
         from micromech.tools.prediction_request import prediction_request as pr
 
-        good_json = json.dumps(
-            {"p_yes": 0.6, "p_no": 0.4, "confidence": 0.8, "info_utility": 0.5}
-        )
+        good_json = json.dumps({"p_yes": 0.6, "p_no": 0.4, "confidence": 0.8, "info_utility": 0.5})
         ctx, mock_llm = self._patch_llm(good_json)
 
         with (
             patch.object(pr, "_search_context", return_value="some context"),
             ctx,
         ):
-            result_str, prompt_used, meta, cb = pr.run(
-                prompt="Will BTC exceed 200k in 2025?"
-            )
+            result_str, prompt_used, meta, cb = pr.run(prompt="Will BTC exceed 200k in 2025?")
 
         data = json.loads(result_str)
         assert "p_yes" in data
@@ -628,9 +612,7 @@ class TestPredictionRun:
     def test_run_uses_provided_additional_info_skips_search(self):
         from micromech.tools.prediction_request import prediction_request as pr
 
-        good_json = json.dumps(
-            {"p_yes": 0.7, "p_no": 0.3, "confidence": 0.9, "info_utility": 0.8}
-        )
+        good_json = json.dumps({"p_yes": 0.7, "p_no": 0.3, "confidence": 0.9, "info_utility": 0.8})
         ctx, _ = self._patch_llm(good_json)
 
         with (
@@ -650,9 +632,7 @@ class TestPredictionRun:
 
         with (
             patch.object(pr, "_search_context", return_value=""),
-            patch.object(
-                llm_mod, "_get_llm", side_effect=RuntimeError("model not found")
-            ),
+            patch.object(llm_mod, "_get_llm", side_effect=RuntimeError("model not found")),
         ):
             result_str, _, _, _ = pr.run(prompt="Will Z happen?")
 
@@ -676,9 +656,7 @@ class TestPredictionRun:
     def test_run_counter_callback_passthrough(self):
         from micromech.tools.prediction_request import prediction_request as pr
 
-        good_json = json.dumps(
-            {"p_yes": 0.5, "p_no": 0.5, "confidence": 0.5, "info_utility": 0.0}
-        )
+        good_json = json.dumps({"p_yes": 0.5, "p_no": 0.5, "confidence": 0.5, "info_utility": 0.0})
         ctx, _ = self._patch_llm(good_json)
         cb = MagicMock()
 
@@ -694,9 +672,7 @@ class TestPredictionRun:
         """Empty additional_info → _search_context is called."""
         from micromech.tools.prediction_request import prediction_request as pr
 
-        good_json = json.dumps(
-            {"p_yes": 0.5, "p_no": 0.5, "confidence": 0.5, "info_utility": 0.0}
-        )
+        good_json = json.dumps({"p_yes": 0.5, "p_no": 0.5, "confidence": 0.5, "info_utility": 0.0})
         ctx, _ = self._patch_llm(good_json)
 
         with (

@@ -43,20 +43,24 @@ def _client(**kw):
 # Module-level utilities (no HTTP needed)
 # ---------------------------------------------------------------------------
 
+
 class TestModuleUtils:
     def test_redact_sensitive_masks_token(self):
         from micromech.web.app import _redact_sensitive
+
         result = _redact_sensitive("auth token=supersecret&other=ok")
         assert "supersecret" not in result
         assert "***" in result
 
     def test_redact_sensitive_masks_password(self):
         from micromech.web.app import _redact_sensitive
+
         result = _redact_sensitive("password=hunter2 ok")
         assert "hunter2" not in result
 
     def test_redact_sensitive_leaves_safe_text(self):
         from micromech.web.app import _redact_sensitive
+
         result = _redact_sensitive("normal log message with no secrets")
         assert result == "normal log message with no secrets"
 
@@ -94,15 +98,20 @@ class TestModuleUtils:
 
         handler = _StdlibLogHandler()
         record = logging.LogRecord(
-            name="test", level=logging.INFO,
-            pathname="", lineno=0, msg="test message",
-            args=(), exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="test message",
+            args=(),
+            exc_info=None,
         )
         # Must not raise
         handler.emit(record)
 
     def test_get_deploy_lock_creates_per_chain(self):
         from micromech.web.app import _get_deploy_lock
+
         lock_a = _get_deploy_lock("gnosis")
         lock_b = _get_deploy_lock("base")
         lock_same = _get_deploy_lock("gnosis")
@@ -111,15 +120,19 @@ class TestModuleUtils:
 
     def test_clear_setup_cache(self):
         from micromech.web import app as web_mod
+
         web_mod._setup_needed = True
         from micromech.web.app import _clear_setup_cache
+
         _clear_setup_cache()
         assert web_mod._setup_needed is None
 
     def test_needs_setup_exception_returns_true(self):
         from micromech.web import app as web_mod
+
         web_mod._setup_needed = None
         from micromech.web.app import _needs_setup
+
         with patch("micromech.web.app.MicromechConfig.load", side_effect=Exception("no config")):
             result = _needs_setup()
         assert result is True
@@ -129,6 +142,7 @@ class TestModuleUtils:
 # ---------------------------------------------------------------------------
 # /api/setup/balance
 # ---------------------------------------------------------------------------
+
 
 class TestSetupBalanceEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
@@ -176,6 +190,7 @@ class TestSetupBalanceEndpoint:
 # /api/staking/status
 # ---------------------------------------------------------------------------
 
+
 class TestStakingStatusEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_no_auth_required_without_password(self, _mock):
@@ -219,6 +234,7 @@ class TestStakingStatusEndpoint:
 # ---------------------------------------------------------------------------
 # /api/runtime/status + /api/runtime/{action}
 # ---------------------------------------------------------------------------
+
 
 class TestRuntimeStatusEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
@@ -289,6 +305,7 @@ class TestRuntimeControlEndpoint:
 # /api/metadata
 # ---------------------------------------------------------------------------
 
+
 class TestMetadataEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_no_metadata_manager(self, _mock):
@@ -355,6 +372,7 @@ class TestMetadataEndpoint:
 # /result/{request_id}
 # ---------------------------------------------------------------------------
 
+
 class TestResultByIdEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_invalid_id_returns_400(self, _mock):
@@ -397,6 +415,7 @@ class TestResultByIdEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_found_record_with_json_result(self, _mock):
         import json
+
         queue = MagicMock()
         record = MagicMock()
         record.request.request_id = "ab" * 32
@@ -421,6 +440,7 @@ class TestResultByIdEndpoint:
 # ---------------------------------------------------------------------------
 # Bearer auth on staking endpoints
 # ---------------------------------------------------------------------------
+
 
 class TestBearerAuthOnProtectedEndpoints:
     @patch("micromech.web.app._needs_setup", return_value=True)

@@ -26,6 +26,7 @@ PASSWORD = "s3cr3tPassw0rd!"
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_app():
     """Minimal create_web_app() for auth testing."""
     return create_web_app(
@@ -64,6 +65,7 @@ def _client() -> TestClient:
 # When no password is set (first install / wizard phase)
 # ---------------------------------------------------------------------------
 
+
 class TestNoPassword:
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_status_accessible_without_auth(self, _mock):
@@ -96,6 +98,7 @@ class TestNoPassword:
 # ---------------------------------------------------------------------------
 # When password IS set (normal operation after first wizard)
 # ---------------------------------------------------------------------------
+
 
 class TestWithPassword:
     @patch("micromech.web.app._needs_setup", return_value=False)
@@ -138,6 +141,7 @@ class TestWithPassword:
     def test_basic_auth_not_accepted(self, _mock):
         """Must use Bearer, not Basic — avoids relying on browser native dialog."""
         import base64
+
         encoded = base64.b64encode(f"admin:{PASSWORD}".encode()).decode()
         client = _client()
         with _password_active(PASSWORD):
@@ -172,6 +176,7 @@ class TestWithPassword:
 # ---------------------------------------------------------------------------
 # Endpoints that bypass auth regardless of password
 # ---------------------------------------------------------------------------
+
 
 class TestBypassedEndpoints:
     def test_health_always_accessible(self):
@@ -224,6 +229,7 @@ class TestBypassedEndpoints:
 # Dashboard (/) requires auth when password is set
 # ---------------------------------------------------------------------------
 
+
 class TestDashboardAuth:
     @patch("micromech.web.app._needs_setup", return_value=False)
     def test_dashboard_always_accessible_password_set(self, _mock):
@@ -253,6 +259,7 @@ class TestDashboardAuth:
 # ---------------------------------------------------------------------------
 # SSE authentication via ?token= query param
 # ---------------------------------------------------------------------------
+
 
 class TestSSEAuthentication:
     # The auth middleware runs BEFORE the SSE generator starts, so it rejects
@@ -292,6 +299,7 @@ class TestSSEAuthentication:
 # ---------------------------------------------------------------------------
 # Wallet creation writes webui_password to secrets
 # ---------------------------------------------------------------------------
+
 
 class TestWalletCreationWritesWebUIPassword:
     @patch("micromech.web.app._needs_setup", return_value=True)

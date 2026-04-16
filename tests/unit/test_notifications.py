@@ -104,9 +104,7 @@ class TestNotificationServiceNotify:
 
         await ns.notify("hello")
 
-        bot.send_message.assert_called_once_with(
-            chat_id=99, text="hello", parse_mode="HTML"
-        )
+        bot.send_message.assert_called_once_with(chat_id=99, text="hello", parse_mode="HTML")
 
     @pytest.mark.asyncio
     async def test_notify_no_bot_does_not_raise(self):
@@ -148,6 +146,4 @@ class TestNotificationServiceSendMessage:
 
         await ns.send_message("test message")
 
-        bot.send_message.assert_called_once_with(
-            chat_id=5, text="test message", parse_mode="HTML"
-        )
+        bot.send_message.assert_called_once_with(chat_id=5, text="test message", parse_mode="HTML")

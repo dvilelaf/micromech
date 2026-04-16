@@ -49,6 +49,7 @@ def _make_staking_contract_cls(epoch_end: datetime):
 # rewards_task
 # ---------------------------------------------------------------------------
 
+
 class TestRewardsTask:
     @pytest.mark.asyncio
     async def test_claim_returns_false_no_notification(self):
@@ -70,6 +71,7 @@ class TestRewardsTask:
 # checkpoint_task — epoch/grace logic
 # ---------------------------------------------------------------------------
 
+
 class TestCheckpointEpochLogic:
     @pytest.mark.asyncio
     async def test_epoch_still_active_skips_checkpoint(self):
@@ -84,8 +86,10 @@ class TestCheckpointEpochLogic:
         future_end = datetime.now(timezone.utc) + timedelta(hours=1)
         mock_cls = _make_staking_contract_cls(future_end)
 
-        with patch("micromech.core.bridge.get_service_info", return_value=_svc_info()), \
-             patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls):
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value=_svc_info()),
+            patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls),
+        ):
             await checkpoint_task({"gnosis": lifecycle}, notification, config)
 
         lifecycle.checkpoint.assert_not_called()
@@ -104,8 +108,10 @@ class TestCheckpointEpochLogic:
         recent_end = datetime.now(timezone.utc) - timedelta(seconds=5)
         mock_cls = _make_staking_contract_cls(recent_end)
 
-        with patch("micromech.core.bridge.get_service_info", return_value=_svc_info()), \
-             patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls):
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value=_svc_info()),
+            patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls),
+        ):
             await checkpoint_task({"gnosis": lifecycle}, notification, config)
 
         lifecycle.checkpoint.assert_not_called()
@@ -126,8 +132,10 @@ class TestCheckpointEpochLogic:
         )
         mock_cls = _make_staking_contract_cls(old_end)
 
-        with patch("micromech.core.bridge.get_service_info", return_value=_svc_info()), \
-             patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls):
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value=_svc_info()),
+            patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls),
+        ):
             await checkpoint_task({"gnosis": lifecycle}, notification, config)
 
         lifecycle.checkpoint.assert_called_once()
@@ -148,8 +156,10 @@ class TestCheckpointEpochLogic:
         )
         mock_cls = _make_staking_contract_cls(old_end)
 
-        with patch("micromech.core.bridge.get_service_info", return_value=_svc_info()), \
-             patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls):
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value=_svc_info()),
+            patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls),
+        ):
             await checkpoint_task({"gnosis": lifecycle}, notification, config)
 
         notification.send.assert_called_once()
@@ -171,8 +181,10 @@ class TestCheckpointEpochLogic:
         )
         mock_cls = _make_staking_contract_cls(old_end)
 
-        with patch("micromech.core.bridge.get_service_info", return_value=_svc_info()), \
-             patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls):
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value=_svc_info()),
+            patch("iwa.plugins.olas.contracts.staking.StakingContract", mock_cls),
+        ):
             await checkpoint_task({"gnosis": lifecycle}, notification, config)
 
         notification.send.assert_not_called()

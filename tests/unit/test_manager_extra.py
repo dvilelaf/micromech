@@ -31,6 +31,7 @@ def manager():
 # metrics property
 # ---------------------------------------------------------------------------
 
+
 class TestMetricsProperty:
     def test_metrics_returns_none_when_stopped(self, manager):
         assert manager.metrics is None
@@ -52,9 +53,12 @@ class TestMetricsProperty:
 # _create_bridges
 # ---------------------------------------------------------------------------
 
+
 class TestCreateBridges:
     def test_create_bridges_delegates_to_core(self, manager):
-        with patch("micromech.core.bridge.create_bridges", return_value={"gnosis": MagicMock()}) as mock_cb:
+        with patch(
+            "micromech.core.bridge.create_bridges", return_value={"gnosis": MagicMock()}
+        ) as mock_cb:
             result = manager._create_bridges()
         mock_cb.assert_called_once_with(manager.config)
         assert "gnosis" in result
@@ -64,15 +68,18 @@ class TestCreateBridges:
 # start() success path
 # ---------------------------------------------------------------------------
 
+
 class TestStartSuccess:
     @pytest.mark.asyncio
     async def test_start_succeeds_and_sets_running(self, manager):
         mock_server = MagicMock()
         mock_server.run = AsyncMock()
 
-        with patch.object(manager, "_create_bridges", return_value={}), \
-             patch("micromech.runtime.server.MechServer", return_value=mock_server), \
-             patch("micromech.runtime.manager.asyncio.sleep", _instant_sleep):
+        with (
+            patch.object(manager, "_create_bridges", return_value={}),
+            patch("micromech.runtime.server.MechServer", return_value=mock_server),
+            patch("micromech.runtime.manager.asyncio.sleep", _instant_sleep),
+        ):
             ok = await manager.start()
 
         assert ok is True
@@ -89,6 +96,7 @@ class TestStartSuccess:
 # ---------------------------------------------------------------------------
 # _run_and_monitor exception path
 # ---------------------------------------------------------------------------
+
 
 class TestRunAndMonitor:
     @pytest.mark.asyncio

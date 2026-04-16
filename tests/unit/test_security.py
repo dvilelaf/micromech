@@ -321,7 +321,8 @@ class TestCreateMechEventMatching:
         mock_get_wallet.return_value = mock_wallet
 
         mock_wallet.transaction_service.sign_and_send.return_value = (
-            False, {"status": 0, "logs": []}
+            False,
+            {"status": 0, "logs": []},
         )
 
         lc = MechLifecycle(make_test_config(), chain_name="gnosis")

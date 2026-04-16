@@ -127,9 +127,7 @@ class TestValidateFundThresholds:
 
         config = make_test_config()
         config.fund_target_native = 0.5
-        error = _validate_fund_thresholds(
-            "fund_threshold_native", 1.0, config
-        )
+        error = _validate_fund_thresholds("fund_threshold_native", 1.0, config)
         assert error is not None
         assert "Threshold" in error
 
@@ -138,9 +136,7 @@ class TestValidateFundThresholds:
 
         config = make_test_config()
         config.fund_target_native = 1.0
-        error = _validate_fund_thresholds(
-            "fund_threshold_native", 0.5, config
-        )
+        error = _validate_fund_thresholds("fund_threshold_native", 0.5, config)
         assert error is None
 
     def test_target_below_threshold(self):
@@ -148,9 +144,7 @@ class TestValidateFundThresholds:
 
         config = make_test_config()
         config.fund_threshold_native = 0.5
-        error = _validate_fund_thresholds(
-            "fund_target_native", 0.2, config
-        )
+        error = _validate_fund_thresholds("fund_target_native", 0.2, config)
         assert error is not None
         assert "Target" in error
 
@@ -166,9 +160,7 @@ class TestValidateFundThresholds:
         from micromech.bot.commands.settings import _validate_fund_thresholds
 
         config = make_test_config()
-        error = _validate_fund_thresholds(
-            "claim_threshold_olas", 5.0, config
-        )
+        error = _validate_fund_thresholds("claim_threshold_olas", 5.0, config)
         assert error is None
 
 
@@ -250,11 +242,7 @@ class TestBuildSettingsKeyboard:
 
         config = make_test_config()
         kb = _build_settings_keyboard(config)
-        all_data = [
-            btn.callback_data
-            for row in kb.inline_keyboard
-            for btn in row
-        ]
+        all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
         assert any("values" in d for d in all_data)
 
     def test_has_cancel_button(self):
@@ -262,11 +250,7 @@ class TestBuildSettingsKeyboard:
 
         config = make_test_config()
         kb = _build_settings_keyboard(config)
-        all_data = [
-            btn.callback_data
-            for row in kb.inline_keyboard
-            for btn in row
-        ]
+        all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
         assert any("cancel" in d for d in all_data)
 
     def test_toggle_buttons_present_for_all_toggles(self):
@@ -277,11 +261,7 @@ class TestBuildSettingsKeyboard:
 
         config = make_test_config()
         kb = _build_settings_keyboard(config)
-        all_data = [
-            btn.callback_data
-            for row in kb.inline_keyboard
-            for btn in row
-        ]
+        all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
         for key, _, _ in _TOGGLES:
             assert any(key in d for d in all_data)
 
@@ -297,11 +277,7 @@ class TestBuildEditKeyboard:
 
         config = make_test_config()
         kb = _build_edit_keyboard(config)
-        all_data = [
-            btn.callback_data
-            for row in kb.inline_keyboard
-            for btn in row
-        ]
+        all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
         assert any("back" in d for d in all_data)
 
     def test_has_buttons_for_editable_settings(self):
@@ -312,11 +288,7 @@ class TestBuildEditKeyboard:
 
         config = make_test_config()
         kb = _build_edit_keyboard(config)
-        all_data = [
-            btn.callback_data
-            for row in kb.inline_keyboard
-            for btn in row
-        ]
+        all_data = [btn.callback_data for row in kb.inline_keyboard for btn in row]
         for key in EDITABLE_SETTINGS:
             assert any(key in d for d in all_data)
 
@@ -541,9 +513,7 @@ class TestHandleSettingsText:
         from micromech.bot.commands.settings import handle_settings_text
 
         update = _make_update(text="1.0")
-        ctx = _make_context(
-            user_data={"settings_editing": "nonexistent_key"}
-        )
+        ctx = _make_context(user_data={"settings_editing": "nonexistent_key"})
 
         await handle_settings_text(update, ctx)
 
@@ -616,11 +586,7 @@ class TestHandleSettingsText:
         assert "settings_editing" not in ctx.user_data
         update.message.reply_text.assert_called_once()
         call_args = update.message.reply_text.call_args
-        text_arg = (
-            call_args[0][0]
-            if call_args[0]
-            else call_args[1].get("text", "")
-        )
+        text_arg = call_args[0][0] if call_args[0] else call_args[1].get("text", "")
         assert "Saved" in text_arg
 
     @pytest.mark.asyncio

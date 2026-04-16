@@ -71,6 +71,7 @@ def _reset_rate_counters():
 # Lines 192-197: _needs_setup — chains present but none with setup_complete
 # ---------------------------------------------------------------------------
 
+
 class TestNeedsSetupNoCompleteChain:
     def test_returns_true_when_no_chain_complete(self):
         """_needs_setup returns True when config loads but no chain has setup_complete."""
@@ -113,24 +114,39 @@ class TestNeedsSetupNoCompleteChain:
 # Lines 366-367: setup_state — bridge access raises (needs_password = True)
 # ---------------------------------------------------------------------------
 
+
 class TestSetupStateBridgeException:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_bridge_import_error_sets_needs_password(self, _mock):
         """When bridge access raises, setup_state sets needs_password=True."""
         c = _client()
         # Patch the _cached_key_storage access to raise
-        with patch("micromech.core.bridge._cached_key_storage", new_callable=lambda: type("T", (), {"__get__": staticmethod(lambda *a: (_ for _ in ()).throw(RuntimeError("bridge broken")))})):
+        with patch(
+            "micromech.core.bridge._cached_key_storage",
+            new_callable=lambda: type(
+                "T",
+                (),
+                {
+                    "__get__": staticmethod(
+                        lambda *a: (_ for _ in ()).throw(RuntimeError("bridge broken"))
+                    )
+                },
+            ),
+        ):
             # Use simpler approach: patch whole bridge module attribute access
             pass
         # Simpler: make _bridge._cached_key_storage raise on attribute access
         import micromech.core.bridge as bridge_mod
+
         original_ks = bridge_mod._cached_key_storage
         original_w = bridge_mod._cached_wallet
         # Set both to None so the else branch (needs_password=True) is taken
         bridge_mod._cached_key_storage = None
         bridge_mod._cached_wallet = None
         try:
-            with patch("micromech.core.config.MicromechConfig.load", side_effect=Exception("no cfg")):
+            with patch(
+                "micromech.core.config.MicromechConfig.load", side_effect=Exception("no cfg")
+            ):
                 resp = c.get("/api/setup/state")
             assert resp.status_code == 200
             data = resp.json()
@@ -146,20 +162,26 @@ class TestSetupStateBridgeException:
 # Lines 377-378: setup_state — iwa WALLET_PATH import exception is swallowed
 # ---------------------------------------------------------------------------
 
+
 class TestSetupStateWalletPathException:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_wallet_path_import_error_is_swallowed(self, _mock):
         """Exception when importing WALLET_PATH is silently ignored."""
         c = _client()
         import micromech.core.bridge as bridge_mod
+
         original_ks = bridge_mod._cached_key_storage
         original_w = bridge_mod._cached_wallet
         bridge_mod._cached_key_storage = None
         bridge_mod._cached_wallet = None
         try:
             # Make iwa.core.constants unavailable to trigger the except at line 377
-            with patch.dict("sys.modules", {"iwa.core.constants": None}), \
-                 patch("micromech.core.config.MicromechConfig.load", side_effect=Exception("no cfg")):
+            with (
+                patch.dict("sys.modules", {"iwa.core.constants": None}),
+                patch(
+                    "micromech.core.config.MicromechConfig.load", side_effect=Exception("no cfg")
+                ),
+            ):
                 resp = c.get("/api/setup/state")
             assert resp.status_code == 200
             data = resp.json()
@@ -173,6 +195,7 @@ class TestSetupStateWalletPathException:
 # ---------------------------------------------------------------------------
 # Line 437: setup_wallet — password too short (len < 8)
 # ---------------------------------------------------------------------------
+
 
 class TestSetupWalletPasswordTooShort:
     def test_short_password_returns_400(self):
@@ -209,6 +232,7 @@ class TestSetupWalletPasswordTooShort:
 # Lines 456-457: _create_or_unlock — no address → RuntimeError
 # ---------------------------------------------------------------------------
 
+
 class TestSetupWalletNoAddress:
     def test_no_address_raises_runtime_error_returns_500(self):
         """When KeyStorage returns no address, RuntimeError → 500."""
@@ -230,6 +254,7 @@ class TestSetupWalletNoAddress:
 # Lines 463-465: _create_or_unlock — wrong password → PermissionError
 # ---------------------------------------------------------------------------
 
+
 class TestSetupWalletWrongPassword:
     def test_wrong_password_returns_403(self):
         """PermissionError from _create_or_unlock → 403."""
@@ -250,6 +275,7 @@ class TestSetupWalletWrongPassword:
 # Lines 506-507: write_secret exception is non-fatal
 # ---------------------------------------------------------------------------
 
+
 class TestSetupWalletMnemonicAndSecretExceptions:
     def test_write_secret_exception_is_non_fatal(self):
         """write_secret failure is logged but does not break wallet creation."""
@@ -259,7 +285,9 @@ class TestSetupWalletMnemonicAndSecretExceptions:
             return {"address": "0x1234", "mnemonic": "word1 word2", "created": True}
 
         with patch("asyncio.to_thread", side_effect=fake_to_thread):
-            with patch("micromech.core.secrets_file.write_secret", side_effect=Exception("disk full")):
+            with patch(
+                "micromech.core.secrets_file.write_secret", side_effect=Exception("disk full")
+            ):
                 resp = c.post(
                     "/api/setup/wallet",
                     json={"password": "validpassword123"},
@@ -275,6 +303,7 @@ class TestSetupWalletMnemonicAndSecretExceptions:
 # Lines 568-571: save_secrets — webui_password hot-reload branch
 # ---------------------------------------------------------------------------
 
+
 class TestSaveSecretsWebUiPasswordHotReload:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_webui_password_hot_reloaded(self, _mock):
@@ -289,8 +318,10 @@ class TestSaveSecretsWebUiPasswordHotReload:
 
         mock_s = MagicMock()
         mock_s.webui_password = None
-        with patch("micromech.core.secrets_file.write_secrets"), \
-             patch("micromech.secrets.secrets", mock_s):
+        with (
+            patch("micromech.core.secrets_file.write_secrets"),
+            patch("micromech.secrets.secrets", mock_s),
+        ):
             resp = c.post(
                 "/api/setup/secrets",
                 json={"webui_password": "newpassword123"},
@@ -314,8 +345,10 @@ class TestSaveSecretsWebUiPasswordHotReload:
 
         mock_s = MagicMock()
         mock_s.webui_password = None
-        with patch("micromech.core.secrets_file.write_secrets"), \
-             patch("micromech.secrets.secrets", mock_s):
+        with (
+            patch("micromech.core.secrets_file.write_secrets"),
+            patch("micromech.secrets.secrets", mock_s),
+        ):
             resp = c.post(
                 "/api/setup/secrets",
                 json={"webui_password": ""},  # empty → None
@@ -327,7 +360,9 @@ class TestSaveSecretsWebUiPasswordHotReload:
     def test_save_secrets_value_error_returns_400(self, _mock):
         """ValueError from write_secrets returns 400."""
         c = _client()
-        with patch("micromech.core.secrets_file.write_secrets", side_effect=ValueError("bad value")):
+        with patch(
+            "micromech.core.secrets_file.write_secrets", side_effect=ValueError("bad value")
+        ):
             resp = c.post(
                 "/api/setup/secrets",
                 json={"telegram_bot_token": "abc"},
@@ -360,6 +395,7 @@ class TestSaveSecretsWebUiPasswordHotReload:
 # Line 620: setup_deploy — unknown chain returns 400
 # ---------------------------------------------------------------------------
 
+
 class TestSetupDeployUnknownChain:
     def test_unknown_chain_returns_400(self):
         """POST /api/setup/deploy with unknown chain name returns 400."""
@@ -383,6 +419,7 @@ class TestSetupDeployUnknownChain:
 # Lines 626-723: setup_deploy — SSE stream paths
 # ---------------------------------------------------------------------------
 
+
 class TestSetupDeployStream:
     def test_successful_deploy_emits_done_event(self):
         """Successful deploy stream emits a 'done' SSE event."""
@@ -405,9 +442,13 @@ class TestSetupDeployStream:
         mock_fresh_cfg = MagicMock()
         mock_fresh_cfg.chains = {"gnosis": MagicMock()}
 
-        with patch("micromech.core.config.MicromechConfig.load", side_effect=[mock_cfg, mock_fresh_cfg]), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc), \
-             patch("micromech.web.app._clear_setup_cache"):
+        with (
+            patch(
+                "micromech.core.config.MicromechConfig.load", side_effect=[mock_cfg, mock_fresh_cfg]
+            ),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+            patch("micromech.web.app._clear_setup_cache"),
+        ):
             resp = c.post(
                 "/api/setup/deploy",
                 json={"chain": "gnosis"},
@@ -447,8 +488,10 @@ class TestSetupDeployStream:
         mock_cfg = MagicMock()
         mock_cfg.chains = {}
 
-        with patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc):
+        with (
+            patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+        ):
             resp = c.post(
                 "/api/setup/deploy",
                 json={"chain": "gnosis"},
@@ -484,9 +527,13 @@ class TestSetupDeployStream:
         mock_fresh_cfg = MagicMock()
         mock_fresh_cfg.chains = {"gnosis": MagicMock()}
 
-        with patch("micromech.core.config.MicromechConfig.load", side_effect=[mock_cfg, mock_fresh_cfg]), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc), \
-             patch("micromech.web.app._clear_setup_cache"):
+        with (
+            patch(
+                "micromech.core.config.MicromechConfig.load", side_effect=[mock_cfg, mock_fresh_cfg]
+            ),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+            patch("micromech.web.app._clear_setup_cache"),
+        ):
             resp = c.post(
                 "/api/setup/deploy",
                 json={"chain": "gnosis"},
@@ -520,9 +567,11 @@ class TestSetupDeployStream:
         mock_cfg = MagicMock()
         mock_cfg.chains = {}
 
-        with patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc), \
-             patch("micromech.web.app.stdlib_queue") as mock_queue_mod:
+        with (
+            patch("micromech.core.config.MicromechConfig.load", return_value=mock_cfg),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+            patch("micromech.web.app.stdlib_queue") as mock_queue_mod,
+        ):
             # Supply a pre-filled queue so the rollback_done event is drained
             mock_queue_mod.Queue.return_value = pq
             resp = c.post(
@@ -540,13 +589,14 @@ class TestSetupDeployStream:
         step_names = [e.get("step") for e in events]
         if "rollback_done" in step_names:
             rollback_idx = step_names.index("rollback_done")
-            error_after = [s for s in step_names[rollback_idx + 1:] if s == "error"]
+            error_after = [s for s in step_names[rollback_idx + 1 :] if s == "error"]
             assert len(error_after) == 0
 
 
 # ---------------------------------------------------------------------------
 # Lines 874-932: api_metadata_publish — various paths
 # ---------------------------------------------------------------------------
+
 
 class TestMetadataPublish:
     def test_no_metadata_manager_returns_501(self):
@@ -568,6 +618,7 @@ class TestMetadataPublish:
         mm = MagicMock()
         c = _client(metadata_manager=mm)
         from micromech.web import app as app_mod
+
         with patch.object(app_mod, "_rate_limited", return_value=True):
             resp = c.post("/api/metadata/publish", headers=CSRF)
         assert resp.status_code == 429
@@ -658,6 +709,7 @@ class TestMetadataPublish:
 # Lines 1016-1072: metrics_stream — too many connections returns 429
 # ---------------------------------------------------------------------------
 
+
 class TestMetricsStream:
     def test_too_many_sse_connections_returns_429(self):
         """When semaphore is exhausted, metrics_stream returns 429."""
@@ -693,6 +745,7 @@ class TestMetricsStream:
 # Lines 1106-1111: staking_status — chain with service_key (success + exception)
 # ---------------------------------------------------------------------------
 
+
 class TestStakingStatusWithServiceKey:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_chain_with_service_key_returns_status(self, _mock):
@@ -707,9 +760,13 @@ class TestStakingStatusWithServiceKey:
         mock_lc = MagicMock()
         mock_lc.get_status.return_value = {"status": "staked", "service_id": 1}
 
-        with patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey123"}), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc):
+        with (
+            patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg),
+            patch(
+                "micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey123"}
+            ),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+        ):
             resp = c.get("/api/staking/status")
 
         assert resp.status_code == 200
@@ -728,9 +785,13 @@ class TestStakingStatusWithServiceKey:
         mock_lc = MagicMock()
         mock_lc.get_status.side_effect = RuntimeError("RPC error")
 
-        with patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey123"}), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc):
+        with (
+            patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg),
+            patch(
+                "micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey123"}
+            ),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+        ):
             resp = c.get("/api/staking/status")
 
         assert resp.status_code == 200
@@ -749,9 +810,13 @@ class TestStakingStatusWithServiceKey:
         mock_lc = MagicMock()
         mock_lc.get_status.return_value = None  # triggers `status or {"status": "unknown"}`
 
-        with patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey123"}), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc):
+        with (
+            patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg),
+            patch(
+                "micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey123"}
+            ),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+        ):
             resp = c.get("/api/staking/status")
 
         assert resp.status_code == 200
@@ -770,9 +835,11 @@ class TestStakingStatusWithServiceKey:
         mock_lc = MagicMock()
         mock_lc.get_status.return_value = {"status": "staked"}
 
-        with patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}), \
-             patch("micromech.management.MechLifecycle", return_value=mock_lc):
+        with (
+            patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg),
+            patch("micromech.core.bridge.get_service_info", return_value={"service_key": "0xkey"}),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+        ):
             resp = c.get("/api/staking/status?chain=gnosis")
 
         assert resp.status_code == 200
@@ -781,6 +848,7 @@ class TestStakingStatusWithServiceKey:
 # ---------------------------------------------------------------------------
 # Lines 1144-1180: karma_status — _get_karma with mech_address and bridge
 # ---------------------------------------------------------------------------
+
 
 class TestKarmaStatusBody:
     @patch("micromech.web.app._needs_setup", return_value=True)
@@ -811,11 +879,16 @@ class TestKarmaStatusBody:
 
         mock_w3.eth.contract.side_effect = [mock_marketplace, mock_karma_contract]
 
-        with patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.IwaBridge", return_value=mock_bridge), \
-             patch("micromech.core.bridge.get_service_info", return_value={"multisig_address": "0xmultisig"}), \
-             patch("micromech.runtime.contracts.load_marketplace_abi", return_value=[]), \
-             patch("micromech.runtime.contracts.KARMA_ABI", []):
+        with (
+            patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg),
+            patch("micromech.core.bridge.IwaBridge", return_value=mock_bridge),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0xmultisig"},
+            ),
+            patch("micromech.runtime.contracts.load_marketplace_abi", return_value=[]),
+            patch("micromech.runtime.contracts.KARMA_ABI", []),
+        ):
             resp = c.get("/api/karma")
 
         assert resp.status_code == 200
@@ -835,8 +908,10 @@ class TestKarmaStatusBody:
         mock_cfg.enabled_chains = {"gnosis": chain_cfg}
 
         c = _client()
-        with patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.IwaBridge", side_effect=Exception("rpc")):
+        with (
+            patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg),
+            patch("micromech.core.bridge.IwaBridge", side_effect=Exception("rpc")),
+        ):
             resp = c.get("/api/karma?chain=gnosis")
 
         assert resp.status_code == 200
@@ -866,11 +941,13 @@ class TestKarmaStatusBody:
         mock_karma_contract.functions.mapMechKarma.return_value.call.return_value = 5
         mock_w3.eth.contract.side_effect = [mock_marketplace, mock_karma_contract]
 
-        with patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg), \
-             patch("micromech.core.bridge.IwaBridge", return_value=mock_bridge), \
-             patch("micromech.core.bridge.get_service_info", return_value={}),  \
-             patch("micromech.runtime.contracts.load_marketplace_abi", return_value=[]), \
-             patch("micromech.runtime.contracts.KARMA_ABI", []):
+        with (
+            patch("micromech.web.app.MicromechConfig.load", return_value=mock_cfg),
+            patch("micromech.core.bridge.IwaBridge", return_value=mock_bridge),
+            patch("micromech.core.bridge.get_service_info", return_value={}),
+            patch("micromech.runtime.contracts.load_marketplace_abi", return_value=[]),
+            patch("micromech.runtime.contracts.KARMA_ABI", []),
+        ):
             resp = c.get("/api/karma")
 
         assert resp.status_code == 200
@@ -881,6 +958,7 @@ class TestKarmaStatusBody:
 # ---------------------------------------------------------------------------
 # Lines 1334-1352: logs_stream — endpoint registered + too-many-connections 429
 # ---------------------------------------------------------------------------
+
 
 class TestLogsStream:
     def test_logs_stream_endpoint_registered(self):
@@ -895,6 +973,7 @@ class TestLogsStream:
         import queue as stdlib_queue
 
         import micromech.web.app as app_mod
+
         fake_queues = [stdlib_queue.Queue() for _ in range(app_mod._MAX_SSE_CONNECTIONS)]
         original = list(app_mod._log_queues)
         app_mod._log_queues.clear()
@@ -920,6 +999,7 @@ class TestLogsStream:
 # Lines 1376-1377: _record_to_dict — exception in IPFS CID calculation swallowed
 # ---------------------------------------------------------------------------
 
+
 class TestRecordToDictIpfsCidException:
     def test_exception_in_normalize_multihash_is_swallowed(self):
         """When normalize_to_multihash raises, request_ipfs_cid is None (no crash)."""
@@ -938,7 +1018,9 @@ class TestRecordToDictIpfsCidException:
         record.result = None
         record.response = None
 
-        with patch("micromech.ipfs.client.normalize_to_multihash", side_effect=Exception("codec error")):
+        with patch(
+            "micromech.ipfs.client.normalize_to_multihash", side_effect=Exception("codec error")
+        ):
             result = _record_to_dict(record)
 
         assert result["request_ipfs_cid"] is None
@@ -961,8 +1043,13 @@ class TestRecordToDictIpfsCidException:
         record.result = None
         record.response = None
 
-        with patch("micromech.ipfs.client.normalize_to_multihash", return_value=b"\x12\x20" + b"\xab" * 32), \
-             patch("micromech.ipfs.client.multihash_to_cid", side_effect=Exception("cid error")):
+        with (
+            patch(
+                "micromech.ipfs.client.normalize_to_multihash",
+                return_value=b"\x12\x20" + b"\xab" * 32,
+            ),
+            patch("micromech.ipfs.client.multihash_to_cid", side_effect=Exception("cid error")),
+        ):
             result = _record_to_dict(record)
 
         assert result["request_ipfs_cid"] is None
@@ -971,6 +1058,7 @@ class TestRecordToDictIpfsCidException:
 # ---------------------------------------------------------------------------
 # Rate-limiting: setup_wallet — too many requests returns 429
 # ---------------------------------------------------------------------------
+
 
 class TestSetupWalletRateLimit:
     def test_rate_limited_returns_429(self):
@@ -993,6 +1081,7 @@ class TestSetupWalletRateLimit:
 # _get_client_ip — X-Forwarded-For with TRUST_PROXY
 # ---------------------------------------------------------------------------
 
+
 class TestGetClientIp:
     def test_trust_proxy_uses_forwarded_for(self):
         """When MICROMECH_TRUST_PROXY is set, X-Forwarded-For is used."""
@@ -1001,7 +1090,6 @@ class TestGetClientIp:
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
-
             app = _app()
 
             # Create a request with X-Forwarded-For header and check /api/health
@@ -1020,6 +1108,7 @@ class TestGetClientIp:
         mock_req.client = None
 
         import micromech.web.app as app_mod
+
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = False
         try:
@@ -1032,6 +1121,7 @@ class TestGetClientIp:
         """TRUST_PROXY set but no X-Forwarded-For → falls back to client.host."""
         import micromech.web.app as app_mod
         from micromech.web.app import _get_client_ip
+
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
@@ -1048,10 +1138,12 @@ class TestGetClientIp:
 # Lines 133, 139-143: _rate_limited — endpoint not in limits + IP eviction
 # ---------------------------------------------------------------------------
 
+
 class TestRateLimited:
     def test_endpoint_not_in_limits_returns_false(self):
         """Endpoints not in _RATE_LIMITS are never rate-limited."""
         from micromech.web.app import _rate_limited
+
         result = _rate_limited("/api/some/unknown/endpoint", "1.2.3.4")
         assert result is False
 
@@ -1070,6 +1162,7 @@ class TestRateLimited:
 
         try:
             import time
+
             # Fill bucket with 2 old IPs
             old_time = time.time() - 10
             app_mod._rate_counters[endpoint]["1.1.1.1"] = [old_time]
@@ -1086,6 +1179,7 @@ class TestRateLimited:
 # ---------------------------------------------------------------------------
 # Lines 278-280: bearer auth — valid Bearer token allows access
 # ---------------------------------------------------------------------------
+
 
 class TestBearerAuthValidToken:
     @patch("micromech.web.app._needs_setup", return_value=True)
@@ -1144,6 +1238,7 @@ class TestBearerAuthValidToken:
 # Lines 532-536: get_secrets — reads and masks SENSITIVE_KEYS
 # ---------------------------------------------------------------------------
 
+
 class TestGetSecretsMasking:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_sensitive_values_are_masked(self, _mock):
@@ -1197,6 +1292,7 @@ class TestGetSecretsMasking:
 # Lines 548, 562: save_secrets — EDITABLE_KEYS filter + skip '***' values
 # ---------------------------------------------------------------------------
 
+
 class TestSaveSecretsFiltering:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_unknown_keys_are_ignored(self, _mock):
@@ -1238,6 +1334,7 @@ class TestSaveSecretsFiltering:
 # Lines 502-505: setup_wallet — write_secret called when wallet is created
 # ---------------------------------------------------------------------------
 
+
 class TestSetupWalletWriteSecretOnCreate:
     def test_write_secret_called_on_wallet_creation(self):
         """write_secret is called with wallet_password and webui_password on create."""
@@ -1250,8 +1347,10 @@ class TestSetupWalletWriteSecretOnCreate:
                 "created": True,
             }
 
-        with patch("asyncio.to_thread", side_effect=fake_to_thread) as _ft, \
-             patch("micromech.core.secrets_file.write_secret") as mock_write:
+        with (
+            patch("asyncio.to_thread", side_effect=fake_to_thread) as _ft,
+            patch("micromech.core.secrets_file.write_secret") as mock_write,
+        ):
             resp = c.post(
                 "/api/setup/wallet",
                 json={"password": "validpassword123"},
@@ -1270,6 +1369,7 @@ class TestSetupWalletWriteSecretOnCreate:
 # run the real inner function (mocking its dependencies)
 # ---------------------------------------------------------------------------
 
+
 class TestCreateOrUnlockBody:
     def test_new_wallet_creation_full_path(self):
         """Full _create_or_unlock path: wallet doesn't exist, created, mnemonic retrieved."""
@@ -1286,12 +1386,17 @@ class TestCreateOrUnlockBody:
             fake_wallet_path = tmpdir + "/wallet.json"
             # wallet does NOT exist → wallet_existed = False
 
-            with patch.dict("sys.modules", {
-                "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
-            }), \
-            patch("iwa.core.constants.WALLET_PATH", fake_wallet_path), \
-            patch("micromech.core.secrets_file.write_secret"), \
-            patch("micromech.secrets.secrets"):
+            with (
+                patch.dict(
+                    "sys.modules",
+                    {
+                        "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
+                    },
+                ),
+                patch("iwa.core.constants.WALLET_PATH", fake_wallet_path),
+                patch("micromech.core.secrets_file.write_secret"),
+                patch("micromech.secrets.secrets"),
+            ):
                 resp = c.post(
                     "/api/setup/wallet",
                     json={"password": "validpassword123"},
@@ -1319,10 +1424,15 @@ class TestCreateOrUnlockBody:
             with open(fake_wallet_path, "w") as f:
                 f.write("{}")
 
-            with patch.dict("sys.modules", {
-                "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
-            }), \
-            patch("iwa.core.constants.WALLET_PATH", fake_wallet_path):
+            with (
+                patch.dict(
+                    "sys.modules",
+                    {
+                        "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
+                    },
+                ),
+                patch("iwa.core.constants.WALLET_PATH", fake_wallet_path),
+            ):
                 resp = c.post(
                     "/api/setup/wallet",
                     json={"password": "validpassword123"},
@@ -1349,10 +1459,15 @@ class TestCreateOrUnlockBody:
             with open(fake_wallet_path, "w") as f:
                 f.write("{}")
 
-            with patch.dict("sys.modules", {
-                "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
-            }), \
-            patch("iwa.core.constants.WALLET_PATH", fake_wallet_path):
+            with (
+                patch.dict(
+                    "sys.modules",
+                    {
+                        "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
+                    },
+                ),
+                patch("iwa.core.constants.WALLET_PATH", fake_wallet_path),
+            ):
                 resp = c.post(
                     "/api/setup/wallet",
                     json={"password": "wrongpassword123"},
@@ -1376,12 +1491,17 @@ class TestCreateOrUnlockBody:
             fake_wallet_path = tmpdir + "/wallet.json"
             # wallet does NOT exist
 
-            with patch.dict("sys.modules", {
-                "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
-            }), \
-            patch("iwa.core.constants.WALLET_PATH", fake_wallet_path), \
-            patch("micromech.core.secrets_file.write_secret"), \
-            patch("micromech.secrets.secrets"):
+            with (
+                patch.dict(
+                    "sys.modules",
+                    {
+                        "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
+                    },
+                ),
+                patch("iwa.core.constants.WALLET_PATH", fake_wallet_path),
+                patch("micromech.core.secrets_file.write_secret"),
+                patch("micromech.secrets.secrets"),
+            ):
                 resp = c.post(
                     "/api/setup/wallet",
                     json={"password": "validpassword123"},
@@ -1405,10 +1525,15 @@ class TestCreateOrUnlockBody:
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_wallet_path = tmpdir + "/wallet.json"
 
-            with patch.dict("sys.modules", {
-                "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
-            }), \
-            patch("iwa.core.constants.WALLET_PATH", fake_wallet_path):
+            with (
+                patch.dict(
+                    "sys.modules",
+                    {
+                        "iwa.core.keys": MagicMock(KeyStorage=mock_ks_cls),
+                    },
+                ),
+                patch("iwa.core.constants.WALLET_PATH", fake_wallet_path),
+            ):
                 resp = c.post(
                     "/api/setup/wallet",
                     json={"password": "validpassword123"},
@@ -1421,6 +1546,7 @@ class TestCreateOrUnlockBody:
 # ---------------------------------------------------------------------------
 # Line 366-367: setup_state — bridge access raises exception
 # ---------------------------------------------------------------------------
+
 
 class TestSetupStateBridgeRaisesOnAccess:
     @patch("micromech.web.app._needs_setup", return_value=True)
@@ -1448,6 +1574,7 @@ class TestSetupStateBridgeRaisesOnAccess:
 
         # Simulate the bridge import failing inside setup_state
         import sys
+
         original = sys.modules.get("micromech.core.bridge")
         sys.modules["micromech.core.bridge"] = None  # type: ignore
 
@@ -1465,6 +1592,7 @@ class TestSetupStateBridgeRaisesOnAccess:
 # ---------------------------------------------------------------------------
 # Lines 430, 548: rate limit on setup_wallet and save_secrets POST
 # ---------------------------------------------------------------------------
+
 
 class TestRateLimitOnSetupEndpoints:
     def test_setup_wallet_rate_limited(self):
@@ -1499,11 +1627,13 @@ class TestRateLimitOnSetupEndpoints:
 # Line 160: _get_client_ip — TRUST_PROXY but no X-Forwarded-For, no client
 # ---------------------------------------------------------------------------
 
+
 class TestGetClientIpTrustProxyNoHeader:
     def test_trust_proxy_no_forwarded_no_client_returns_unknown(self):
         """TRUST_PROXY=True, no X-Forwarded-For, no request.client → 'unknown'."""
         import micromech.web.app as app_mod
         from micromech.web.app import _get_client_ip
+
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
@@ -1520,6 +1650,7 @@ class TestGetClientIpTrustProxyNoHeader:
 # Line 430: setup_wallet — missing CSRF header returns 403
 # Line 548: save_secrets POST — missing CSRF header returns 403
 # ---------------------------------------------------------------------------
+
 
 class TestCsrfProtectionOnWalletAndSecrets:
     def test_setup_wallet_missing_csrf_returns_403(self):
@@ -1552,11 +1683,13 @@ class TestCsrfProtectionOnWalletAndSecrets:
 # (also covers the case where TRUST_PROXY but no X-Forwarded-For → falls through)
 # ---------------------------------------------------------------------------
 
+
 class TestGetClientIpEdgeCases:
     def test_trust_proxy_true_no_forwarded_header_no_client(self):
         """Line 160: TRUST_PROXY=True, no X-Forwarded-For, client=None → 'unknown'."""
         import micromech.web.app as app_mod
         from micromech.web.app import _get_client_ip
+
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
@@ -1578,6 +1711,7 @@ class TestGetClientIpEdgeCases:
         """
         import micromech.web.app as app_mod
         from micromech.web.app import _get_client_ip
+
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:
@@ -1594,6 +1728,7 @@ class TestGetClientIpEdgeCases:
         """TRUST_PROXY=True + single X-Forwarded-For IP → returns it."""
         import micromech.web.app as app_mod
         from micromech.web.app import _get_client_ip
+
         original = app_mod._TRUST_PROXY
         app_mod._TRUST_PROXY = True
         try:

@@ -171,11 +171,7 @@ class TestWriteSecretsCommentedTemplates:
     def test_uncomments_template_placeholder(self, tmp_path):
         """Commented-out template lines like '# telegram_token=' are replaced in-place."""
         p = tmp_path / "secrets.env"
-        p.write_text(
-            "# Telegram bot\n"
-            "# telegram_token=\n"
-            "# telegram_chat_id=\n"
-        )
+        p.write_text("# Telegram bot\n# telegram_token=\n# telegram_chat_id=\n")
         write_secrets({"telegram_token": "abc123", "telegram_chat_id": "999"}, path=p)
         result = read_secrets_file(p)
         assert result["telegram_token"] == "abc123"

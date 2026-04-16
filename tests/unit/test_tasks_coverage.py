@@ -21,6 +21,7 @@ from tests.conftest import make_test_config
 # Health task
 # ===========================================================================
 
+
 class TestHealthTask:
     @pytest.mark.asyncio
     async def test_no_health_url_skips(self):
@@ -42,8 +43,10 @@ class TestHealthTask:
         mock_resp.status_code = 200
         mock_get = AsyncMock(return_value=mock_resp)
 
-        with patch("micromech.tasks.health.secrets") as mock_secrets, \
-             patch("httpx.AsyncClient") as MockClient:
+        with (
+            patch("micromech.tasks.health.secrets") as mock_secrets,
+            patch("httpx.AsyncClient") as MockClient,
+        ):
             mock_secrets.health_url = "https://health.example.com/ping"
             instance = MockClient.return_value.__aenter__.return_value
             instance.get = mock_get
@@ -60,8 +63,10 @@ class TestHealthTask:
         mock_resp.status_code = 503
         mock_get = AsyncMock(return_value=mock_resp)
 
-        with patch("micromech.tasks.health.secrets") as mock_secrets, \
-             patch("httpx.AsyncClient") as MockClient:
+        with (
+            patch("micromech.tasks.health.secrets") as mock_secrets,
+            patch("httpx.AsyncClient") as MockClient,
+        ):
             mock_secrets.health_url = "https://health.example.com/ping"
             instance = MockClient.return_value.__aenter__.return_value
             instance.get = mock_get
@@ -72,8 +77,10 @@ class TestHealthTask:
         """Network errors are caught and logged — task must not crash."""
         from micromech.tasks.health import health_task
 
-        with patch("micromech.tasks.health.secrets") as mock_secrets, \
-             patch("httpx.AsyncClient") as MockClient:
+        with (
+            patch("micromech.tasks.health.secrets") as mock_secrets,
+            patch("httpx.AsyncClient") as MockClient,
+        ):
             mock_secrets.health_url = "https://health.example.com/ping"
             instance = MockClient.return_value.__aenter__.return_value
             instance.get = AsyncMock(side_effect=Exception("connection refused"))
@@ -83,6 +90,7 @@ class TestHealthTask:
 # ===========================================================================
 # Watchdog task
 # ===========================================================================
+
 
 class TestWatchdogTask:
     def test_record_task_success_updates_timestamp(self):
@@ -123,8 +131,10 @@ class TestWatchdogTask:
         wd._last_task_success = time.monotonic() - wd.STALE_THRESHOLD_SECONDS - 60
         wd._alert_sent = False
 
-        with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("micromech.tasks.watchdog.CHECK_INTERVAL_SECONDS", 0):
+        with (
+            patch("asyncio.sleep", side_effect=fake_sleep),
+            patch("micromech.tasks.watchdog.CHECK_INTERVAL_SECONDS", 0),
+        ):
             try:
                 await wd.watchdog_loop(notification)
             except StopAsyncIteration:
@@ -152,8 +162,10 @@ class TestWatchdogTask:
         wd._last_task_success = time.monotonic()  # just ran
         wd._alert_sent = False
 
-        with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("micromech.tasks.watchdog.CHECK_INTERVAL_SECONDS", 0):
+        with (
+            patch("asyncio.sleep", side_effect=fake_sleep),
+            patch("micromech.tasks.watchdog.CHECK_INTERVAL_SECONDS", 0),
+        ):
             try:
                 await wd.watchdog_loop(notification)
             except StopAsyncIteration:
@@ -180,8 +192,10 @@ class TestWatchdogTask:
         wd._last_task_success = time.monotonic() - wd.STALE_THRESHOLD_SECONDS - 60
         wd._alert_sent = True  # already sent
 
-        with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("micromech.tasks.watchdog.CHECK_INTERVAL_SECONDS", 0):
+        with (
+            patch("asyncio.sleep", side_effect=fake_sleep),
+            patch("micromech.tasks.watchdog.CHECK_INTERVAL_SECONDS", 0),
+        ):
             try:
                 await wd.watchdog_loop(notification)
             except StopAsyncIteration:
@@ -208,8 +222,10 @@ class TestWatchdogTask:
         wd._last_task_success = time.monotonic() - wd.STALE_THRESHOLD_SECONDS - 60
         wd._alert_sent = False
 
-        with patch("asyncio.sleep", side_effect=fake_sleep), \
-             patch("micromech.tasks.watchdog.CHECK_INTERVAL_SECONDS", 0):
+        with (
+            patch("asyncio.sleep", side_effect=fake_sleep),
+            patch("micromech.tasks.watchdog.CHECK_INTERVAL_SECONDS", 0),
+        ):
             try:
                 await wd.watchdog_loop(notification)
             except StopAsyncIteration:
@@ -222,30 +238,37 @@ class TestWatchdogTask:
 # Update check task
 # ===========================================================================
 
+
 class TestParseVersion:
     def test_simple_version(self):
         from micromech.tasks.update_check import parse_version
+
         assert parse_version("1.2.3") == (1, 2, 3)
 
     def test_with_v_prefix(self):
         from micromech.tasks.update_check import parse_version
+
         assert parse_version("v0.7.7") == (0, 7, 7)
 
     def test_with_prerelease_suffix(self):
         from micromech.tasks.update_check import parse_version
+
         assert parse_version("1.2.3-beta") == (1, 2, 3)
 
     def test_with_build_metadata(self):
         from micromech.tasks.update_check import parse_version
+
         assert parse_version("1.2.3+build.1") == (1, 2, 3)
 
     def test_non_numeric_part(self):
         from micromech.tasks.update_check import parse_version
+
         result = parse_version("1.x.3")
         assert result == (1, 0, 3)
 
     def test_version_comparison(self):
         from micromech.tasks.update_check import parse_version
+
         assert parse_version("1.2.3") < parse_version("1.2.4")
         assert parse_version("0.7.7") > parse_version("0.7.6")
 
@@ -296,9 +319,7 @@ class TestCheckDockerhubLatest:
 
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {
-            "results": [{"name": "latest"}]
-        }
+        mock_resp.json.return_value = {"results": [{"name": "latest"}]}
 
         with patch("httpx.AsyncClient") as MockClient:
             instance = MockClient.return_value.__aenter__.return_value
@@ -341,8 +362,10 @@ class TestUpdateCheckTask:
         notification = NotificationService()
         notification.send = AsyncMock()
 
-        with patch("micromech.tasks.update_check.check_dockerhub_latest", return_value=None), \
-             patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"):
+        with (
+            patch("micromech.tasks.update_check.check_dockerhub_latest", return_value=None),
+            patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"),
+        ):
             await update_check_task(notification)
 
         notification.send.assert_not_called()
@@ -356,8 +379,10 @@ class TestUpdateCheckTask:
         notification = NotificationService()
         notification.send = AsyncMock()
 
-        with patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.16"), \
-             patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"):
+        with (
+            patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.16"),
+            patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"),
+        ):
             await update_check_task(notification)
 
         notification.send.assert_not_called()
@@ -371,8 +396,10 @@ class TestUpdateCheckTask:
         notification = NotificationService()
         notification.send = AsyncMock()
 
-        with patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.17"), \
-             patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"):
+        with (
+            patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.17"),
+            patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"),
+        ):
             await update_check_task(notification)
 
         notification.send.assert_called_once()
@@ -387,8 +414,10 @@ class TestUpdateCheckTask:
         notification = NotificationService()
         notification.send = AsyncMock()
 
-        with patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.17"), \
-             patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"):
+        with (
+            patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.17"),
+            patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"),
+        ):
             await update_check_task(notification)
 
         notification.send.assert_not_called()
@@ -409,10 +438,12 @@ class TestUpdateCheckTask:
         trigger = tmp_path / ".update-request"
         result_path = tmp_path / ".update-result"
 
-        with patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.17"), \
-             patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"), \
-             patch("micromech.tasks.update_check.TRIGGER_PATH", trigger), \
-             patch("micromech.tasks.update_check.RESULT_PATH", result_path):
+        with (
+            patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.17"),
+            patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"),
+            patch("micromech.tasks.update_check.TRIGGER_PATH", trigger),
+            patch("micromech.tasks.update_check.RESULT_PATH", result_path),
+        ):
             await update_check_task(notification, config)
 
         # Should have sent "Auto-Update Scheduled" and "Auto-Update Triggered"
@@ -447,8 +478,10 @@ class TestAutoUpdatePollTask:
         trigger = tmp_path / ".update-request"
         result_path = tmp_path / ".update-result"
 
-        with patch("micromech.tasks.update_check.TRIGGER_PATH", trigger), \
-             patch("micromech.tasks.update_check.RESULT_PATH", result_path):
+        with (
+            patch("micromech.tasks.update_check.TRIGGER_PATH", trigger),
+            patch("micromech.tasks.update_check.RESULT_PATH", result_path),
+        ):
             await auto_update_poll_task(notification)
 
         notification.send.assert_called_once()
@@ -470,8 +503,10 @@ class TestAutoUpdatePollTask:
         trigger = tmp_path / ".update-request"
         result_path = tmp_path / ".update-result"
 
-        with patch("micromech.tasks.update_check.TRIGGER_PATH", trigger), \
-             patch("micromech.tasks.update_check.RESULT_PATH", result_path):
+        with (
+            patch("micromech.tasks.update_check.TRIGGER_PATH", trigger),
+            patch("micromech.tasks.update_check.RESULT_PATH", result_path),
+        ):
             await auto_update_poll_task(notification)
 
         notification.send.assert_called_once()
@@ -484,6 +519,7 @@ class TestAutoUpdatePollTask:
 # ===========================================================================
 # Low balance alert task
 # ===========================================================================
+
 
 class TestLowBalanceAlertTask:
     @pytest.mark.asyncio
@@ -514,8 +550,10 @@ class TestLowBalanceAlertTask:
         notification.send = AsyncMock()
         lifecycle = MagicMock()
 
-        with patch("micromech.core.bridge.check_balances", return_value=(0.1, 10.0)), \
-             patch("micromech.core.bridge.get_service_info", return_value={}):
+        with (
+            patch("micromech.core.bridge.check_balances", return_value=(0.1, 10.0)),
+            patch("micromech.core.bridge.get_service_info", return_value={}),
+        ):
             await low_balance_alert_task({"gnosis": lifecycle}, {}, notification, config)
 
         notification.send.assert_called()
@@ -532,8 +570,10 @@ class TestLowBalanceAlertTask:
         notification.send = AsyncMock()
         lifecycle = MagicMock()
 
-        with patch("micromech.core.bridge.check_balances", return_value=(5.0, 10.0)), \
-             patch("micromech.core.bridge.get_service_info", return_value={}):
+        with (
+            patch("micromech.core.bridge.check_balances", return_value=(5.0, 10.0)),
+            patch("micromech.core.bridge.get_service_info", return_value={}),
+        ):
             await low_balance_alert_task({"gnosis": lifecycle}, {}, notification, config)
 
         notification.send.assert_not_called()
@@ -553,9 +593,13 @@ class TestLowBalanceAlertTask:
             "is_staked": False,
         }
 
-        with patch("micromech.core.bridge.check_balances", return_value=(1.0, 10.0)), \
-             patch("micromech.core.bridge.get_service_info",
-                   return_value={"service_key": "0xkey", "service_id": 1}):
+        with (
+            patch("micromech.core.bridge.check_balances", return_value=(1.0, 10.0)),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey", "service_id": 1},
+            ),
+        ):
             await low_balance_alert_task({"gnosis": lifecycle}, {}, notification, config)
 
         notification.send.assert_called()
@@ -572,8 +616,7 @@ class TestLowBalanceAlertTask:
         notification.send = AsyncMock()
         lifecycle = MagicMock()
 
-        with patch("micromech.core.bridge.check_balances",
-                   side_effect=Exception("rpc error")):
+        with patch("micromech.core.bridge.check_balances", side_effect=Exception("rpc error")):
             # Must not raise — error is per-chain and caught
             await low_balance_alert_task({"gnosis": lifecycle}, {}, notification, config)
 
@@ -581,6 +624,7 @@ class TestLowBalanceAlertTask:
 # ===========================================================================
 # Metadata check task
 # ===========================================================================
+
 
 class TestMetadataCheckTask:
     @pytest.mark.asyncio
@@ -667,6 +711,7 @@ class TestMetadataCheckTask:
 # ===========================================================================
 # prediction_request helpers (pure functions, no external deps)
 # ===========================================================================
+
 
 class TestPredictionRequestHelpers:
     """_extract_json and _validate_prediction both work on strings (JSON in/out)."""

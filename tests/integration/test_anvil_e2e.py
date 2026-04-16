@@ -56,7 +56,15 @@ SUPPLY_STAKING_ADDR = "0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44"
 MECH_FACTORY = "0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF"
 TOKEN_UTILITY = "0xa45E64d13A30a51b91ae0eb182e88a40e9b18eD8"
 ACTIVITY_CHECKER_ADDR = "0x7ac6030aCcc7041070F8be2a83bE4f6bC4fF720f"
-_LIVENESS_RATIO_ABI = [{"inputs":[],"name":"livenessRatio","outputs":[{"type":"uint256"}],"stateMutability":"view","type":"function"}]
+_LIVENESS_RATIO_ABI = [
+    {
+        "inputs": [],
+        "name": "livenessRatio",
+        "outputs": [{"type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    }
+]
 
 
 def _load_abi(name: str) -> list:
@@ -640,8 +648,9 @@ class TestFullServerCycleE2E:
             "service_key": f"gnosis:{MECH_SERVICE_ID}",
             "multisig_address": MECH_MULTISIG,
         }
-        with patch("micromech.core.bridge.get_service_info", return_value=svc_info), patch(
-            "micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value=svc_info),
+            patch("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0),
         ):
             server = MechServer(config, bridges={"gnosis": bridge})
 
@@ -1021,7 +1030,9 @@ class TestMechLifecycleE2E:
                 # Steps 2-6: create_service → spin_up → create_mech
                 # (100% real production code via MechLifecycle.full_deploy)
                 # ==============================================================
-                print("\n--- Steps 2-6: full_deploy() [create → activate → register → deploy Safe → create mech] ---")
+                print(
+                    "\n--- Steps 2-6: full_deploy() [create → activate → register → deploy Safe → create mech] ---"
+                )
 
                 lc = MechLifecycle(config, "gnosis")
                 result = lc.full_deploy(agent_id=40, bond_olas=bond_olas)

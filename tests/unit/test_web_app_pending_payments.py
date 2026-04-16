@@ -91,8 +91,7 @@ class TestPendingPaymentsSuccess:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw"
-                "._get_balance_tracker_address",
+                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
@@ -122,8 +121,7 @@ class TestPendingPaymentsSuccess:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw"
-                "._get_balance_tracker_address",
+                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
@@ -154,8 +152,7 @@ class TestPendingPaymentsSuccess:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw"
-                "._get_balance_tracker_address",
+                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
@@ -226,8 +223,7 @@ class TestPendingPaymentsNotConfigured:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw"
-                "._get_balance_tracker_address",
+                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
                 return_value=None,
             ),
         ):
@@ -298,8 +294,7 @@ class TestPendingPaymentsErrors:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw"
-                "._get_balance_tracker_address",
+                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
@@ -358,8 +353,7 @@ class TestPendingPaymentsChainFilter:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw"
-                "._get_balance_tracker_address",
+                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
@@ -391,8 +385,7 @@ class TestPendingPaymentsChainFilter:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw"
-                "._get_balance_tracker_address",
+                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
@@ -400,9 +393,7 @@ class TestPendingPaymentsChainFilter:
                 return_value=0.0,
             ),
         ):
-            resp = c.get(
-                "/api/marketplace/pending-payments?chain=unknown"
-            )
+            resp = c.get("/api/marketplace/pending-payments?chain=unknown")
 
         assert resp.status_code == 200
         # Falls back to all enabled_chains when chain not found
@@ -430,8 +421,7 @@ class TestPendingPaymentsChainFilter:
                 return_value=mock_bridge,
             ),
             patch(
-                "micromech.tasks.payment_withdraw"
-                "._get_balance_tracker_address",
+                "micromech.tasks.payment_withdraw._get_balance_tracker_address",
                 return_value=_BT,
             ),
             patch(
