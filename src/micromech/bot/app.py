@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
+from micromech.bot.commands.addresses import addresses_command
 from micromech.bot.commands.checkpoint import checkpoint_command, handle_checkpoint_callback
 from micromech.bot.commands.claim import claim_command, handle_claim_callback
 from micromech.bot.commands.contracts import contracts_command
@@ -84,6 +85,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/queue \\- Request queue status\n"
         "/info \\- Version and runtime info\n"
         "/logs \\- Download last 24h logs\n"
+        "/addresses \\- Export wallet addresses as CSV\n"
         "/settings \\- Toggle features and edit values\n"
         "/update \\- Check for updates\n"
         "/restart \\- Restart runtime"
@@ -196,6 +198,7 @@ def create_application(
     app.add_handler(CommandHandler("queue", queue_command))
     app.add_handler(CommandHandler("info", info_command))
     app.add_handler(CommandHandler("logs", logs_command))
+    app.add_handler(CommandHandler("addresses", addresses_command))
     app.add_handler(CommandHandler("settings", settings_command))
     app.add_handler(CommandHandler("update", update_command))
     app.add_handler(CommandHandler("restart", restart_command))
