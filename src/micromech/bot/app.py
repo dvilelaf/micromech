@@ -192,6 +192,7 @@ def create_application(
     # R3-L2: pre-initialize the claim-inflight set so /claim doesn't rely on
     # lazy first-use creation.
     app.bot_data["claim_inflight"] = set()
+    app.bot_data["withdraw_inflight"] = set()
 
     # Commands
     app.add_handler(CommandHandler("start", start_command))

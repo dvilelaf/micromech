@@ -529,3 +529,34 @@ class TestRunWithdraw:
 
         assert ok is False
         assert "balance tracker" in msg
+
+    @pytest.mark.asyncio
+    async def test_transfer_to_master_fails_returns_partial_success(self):
+        """If step 3 (_transfer_to_master) fails, funds are in Safe → return True with warning."""
+        from micromech.bot.commands.withdraw import _run_withdraw
+
+        bridge = _make_bridge()
+        bridge.web3.eth.get_balance.return_value = int(3e18)
+        chain_config = _make_config_with_mech().enabled_chains["gnosis"]
+
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "c" * 40},
+            ),
+            patch(
+                "micromech.core.marketplace.get_balance_tracker_address",
+                return_value="0x" + "b" * 40,
+            ),
+            patch("micromech.tasks.payment_withdraw._withdraw"),
+            patch("micromech.tasks.payment_withdraw._drain_mech_to_safe"),
+            patch(
+                "micromech.tasks.payment_withdraw._transfer_to_master",
+                side_effect=RuntimeError("Safe tx failed"),
+            ),
+        ):
+            ok, msg = await _run_withdraw(bridge, "gnosis", chain_config)
+
+        assert ok is True
+        assert "drained to Safe" in msg
+        assert "transfer to master failed" in msg

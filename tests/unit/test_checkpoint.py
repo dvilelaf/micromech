@@ -20,6 +20,7 @@ def reset_last_alerted_epoch():
 def _make_contract(events: dict) -> MagicMock:
     contract = MagicMock()
     contract.chain_interface.web3.eth.block_number = 100_000
+    contract.chain_interface.with_retry.side_effect = lambda fn, **kw: fn()
     contract.get_checkpoint_events.return_value = events
     return contract
 

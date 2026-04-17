@@ -128,12 +128,19 @@ async def _run_withdraw(
         mech_wei,
     )
 
-    # Step 3: Safe → master
-    await asyncio.to_thread(
-        _transfer_to_master, bridge, chain_name, multisig, mech_wei
-    )
-
+    # Step 3: Safe → master (funds are in Safe if this fails)
     amount = mech_wei / 1e18
+    try:
+        await asyncio.to_thread(
+            _transfer_to_master, bridge, chain_name, multisig, mech_wei
+        )
+    except Exception as e:
+        return True, (
+            f"{bold_md(chain_name.upper())}: "
+            f"{code_md(f'{amount:.6f} xDAI')} drained to Safe "
+            f"but transfer to master failed: {e}"
+        )
+
     return True, (
         f"{bold_md(chain_name.upper())}: "
         f"Withdrawn {code_md(f'{amount:.6f} xDAI')} to master"
@@ -147,6 +154,7 @@ def _chains_with_mech(config: MicromechConfig, bridges: dict) -> dict:
         for k, v in config.enabled_chains.items()
         if v.mech_address
         and k in bridges
+        and hasattr(bridges[k], "wallet")
         and hasattr(bridges[k].wallet, "safe_service")
     }
 

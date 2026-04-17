@@ -41,7 +41,8 @@ async def _check_eviction_events(
 
     try:
         current_block = await asyncio.to_thread(
-            lambda: contract.chain_interface.web3.eth.block_number
+            contract.chain_interface.with_retry,
+            lambda: contract.chain_interface.web3.eth.block_number,
         )
         from_block = max(0, current_block - _CHECKPOINT_SEARCH_BLOCKS)
 
