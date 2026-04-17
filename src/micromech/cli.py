@@ -407,6 +407,7 @@ def run(
                         BotCommand("settings", "Toggle features and edit values"),
                         BotCommand("logs", "Download last 24h logs"),
                         BotCommand("addresses", "Export wallet addresses as CSV"),
+                        BotCommand("withdraw", "Withdraw pending mech payments"),
                         BotCommand("info", "Version and runtime info"),
                         BotCommand("help", "Show all commands"),
                     ]
