@@ -36,6 +36,11 @@ from micromech.bot.commands.settings import (
 from micromech.bot.commands.status import status_command
 from micromech.bot.commands.update import update_command
 from micromech.bot.commands.wallet import wallet_command
+from micromech.bot.commands.withdraw import (
+    ACTION_WITHDRAW,
+    handle_withdraw_callback,
+    withdraw_command,
+)
 from micromech.bot.formatting import bold_md
 from micromech.bot.security import authorized_only, rate_limited
 from micromech.core.config import MicromechConfig
@@ -88,6 +93,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/settings \\- Toggle features and edit values\n"
         "/logs \\- Download last 24h logs\n"
         "/addresses \\- Export wallet addresses as CSV\n"
+        "/withdraw \\- Withdraw pending mech payments\n"
         "/info \\- Version and runtime info"
     )
     if not update.message:
@@ -129,6 +135,8 @@ async def global_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             await handle_manage_callback(update, context, payload)
         elif action == ACTION_MANAGE_CONFIRM:
             await handle_manage_confirm_callback(update, context, payload)
+        elif action == ACTION_WITHDRAW:
+            await handle_withdraw_callback(update, context, payload)
         else:
             await query.answer("Unknown action")
     except Exception as e:
@@ -202,6 +210,7 @@ def create_application(
     app.add_handler(CommandHandler("logs", logs_command))
     app.add_handler(CommandHandler("addresses", addresses_command))
     app.add_handler(CommandHandler("info", info_command))
+    app.add_handler(CommandHandler("withdraw", withdraw_command))
 
     # Text input for settings value editing
     app.add_handler(
