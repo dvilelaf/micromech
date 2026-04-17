@@ -44,7 +44,7 @@ DEFAULT_MAX_CONCURRENT = 10
 DEFAULT_REQUEST_TIMEOUT = 300  # 5 minutes
 DEFAULT_EVENT_POLL_INTERVAL = 15  # seconds
 DEFAULT_EVENT_LOOKBACK_BLOCKS = 1000
-DEFAULT_DELIVERY_BATCH_SIZE = 10
+DEFAULT_DELIVERY_BATCH_SIZE = 1  # 1 delivery per Safe tx — required for staking liveness (isRatioPass condition: delivery_delta <= nonce_delta)
 DEFAULT_DELIVERY_INTERVAL = 10  # seconds
 DEFAULT_DELIVERY_FLUSH_TIMEOUT = 60  # seconds — flush batch if oldest request is this old
 DEFAULT_DELIVERY_MAX_RETRIES = 5  # consecutive failures before permanent failure
