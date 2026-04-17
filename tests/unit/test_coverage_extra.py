@@ -794,7 +794,7 @@ class TestPollOnceFullPath:
     """Cover poll_once with new blocks and event resolution (lines 71, 76-106)."""
 
     @pytest.mark.asyncio
-    async def test_sets_last_block_on_first_poll(self):
+    async def test_sets_last_block_on_first_poll(self, tmp_path):
         from micromech.core.constants import DEFAULT_EVENT_LOOKBACK_BLOCKS
 
         mock_bridge = MagicMock()
@@ -802,6 +802,8 @@ class TestPollOnceFullPath:
         mock_bridge.web3.eth.block_number = 1000
 
         listener = EventListener(MicromechConfig(), CHAIN_CFG, bridge=mock_bridge)
+        # Redirect persisted-block path to tmp so real data/ state doesn't interfere
+        listener._block_state_path = tmp_path / ".last_block_gnosis"
         assert listener._last_block is None
 
         with patch.object(listener, "_fetch_events", return_value=[]):
