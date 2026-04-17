@@ -674,6 +674,8 @@ class TestDeliverBatchFlushConditions:
     @pytest.mark.asyncio
     async def test_no_flush_when_too_few_and_not_old(self, monkeypatch):
         """Small batch of fresh records is held until flush conditions are met."""
+        # Use batch_size=5 so that 1 record is genuinely "too few"
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_BATCH_SIZE", 5)
         monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 60)
         bridge = _make_bridge()
         q = _make_queue()
