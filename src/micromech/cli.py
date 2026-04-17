@@ -397,6 +397,7 @@ def run(
                         BotCommand("status", "Mech status per chain"),
                         BotCommand("manage", "Stake/unstake per chain"),
                         BotCommand("claim", "Claim staking rewards"),
+                        BotCommand("withdraw", "Withdraw pending mech payments"),
                         BotCommand("wallet", "Wallet addresses and balances"),
                         BotCommand("checkpoint", "Call staking checkpoint"),
                         BotCommand("contracts", "Staking contract info"),
@@ -407,7 +408,6 @@ def run(
                         BotCommand("settings", "Toggle features and edit values"),
                         BotCommand("logs", "Download last 24h logs"),
                         BotCommand("addresses", "Export wallet addresses as CSV"),
-                        BotCommand("withdraw", "Withdraw pending mech payments"),
                         BotCommand("info", "Version and runtime info"),
                         BotCommand("help", "Show all commands"),
                     ]
