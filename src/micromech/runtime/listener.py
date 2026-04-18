@@ -276,6 +276,7 @@ class EventListener:
 
         request_ids = args.get("requestIds", [])
         request_datas = args.get("requestDatas", [])
+        requester = str(args.get("requester", ""))
 
         results = []
         for i, rid in enumerate(request_ids):
@@ -295,6 +296,7 @@ class EventListener:
                 MechRequest(
                     request_id=rid_hex,
                     chain=self.chain_config.chain,
+                    sender=requester,
                     data=data,
                     prompt=prompt,
                     tool=tool,

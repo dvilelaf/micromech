@@ -130,6 +130,31 @@ class TestParseMarketplaceEvent:
         assert len(reqs) == 1
         assert reqs[0].request_id == "ee" * 32
 
+    def test_sender_populated_from_requester(self):
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
+        requester = "0x" + "ab" * 20
+        event = _make_event(MECH_ADDR)
+        event["args"]["requester"] = requester
+        reqs = listener._parse_marketplace_event(event, None)
+        assert len(reqs) == 1
+        assert reqs[0].sender == requester
+
+    def test_multiple_requests_share_same_sender(self):
+        listener = EventListener(MicromechConfig(), CHAIN_CFG)
+        requester = "0x" + "cd" * 20
+        data1 = json.dumps({"prompt": "q1", "tool": "echo"}).encode()
+        data2 = json.dumps({"prompt": "q2", "tool": "llm"}).encode()
+        event = _make_event(
+            MECH_ADDR,
+            request_ids=[b"\x01" * 32, b"\x02" * 32],
+            request_datas=[data1, data2],
+        )
+        event["args"]["requester"] = requester
+        reqs = listener._parse_marketplace_event(event, None)
+        assert len(reqs) == 2
+        assert reqs[0].sender == requester
+        assert reqs[1].sender == requester
+
     def test_multiple_requests_in_event(self):
         listener = EventListener(MicromechConfig(), CHAIN_CFG)
         data1 = json.dumps({"prompt": "q1", "tool": "echo"}).encode()

@@ -96,7 +96,7 @@ class TestXdaiSweepTask:
         wallet.account_service.get_address_by_tag.side_effect = Exception("not found")
         bridge = _make_bridge(wallet)
         notification = NotificationService()
-        notification.send = AsyncMock()
+        notification.notify = AsyncMock()
 
         mock_iwa_config = MagicMock()
         mock_iwa_config.core.whitelist.get.return_value = DEST_ADDR
@@ -108,7 +108,7 @@ class TestXdaiSweepTask:
             await xdai_sweep_task({"gnosis": bridge}, notification, cfg)
 
         wallet.send.assert_called_once()
-        notification.send.assert_awaited_once()
+        notification.notify.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_sweeps_when_balance_above_threshold(self):
@@ -116,7 +116,7 @@ class TestXdaiSweepTask:
         wallet = _make_wallet(balance=35.0)
         bridge = _make_bridge(wallet)
         notification = NotificationService()
-        notification.send = AsyncMock()
+        notification.notify = AsyncMock()
 
         with patch("micromech.core.bridge.get_wallet", return_value=wallet):
             await xdai_sweep_task({"gnosis": bridge}, notification, cfg)
@@ -127,8 +127,8 @@ class TestXdaiSweepTask:
         assert call_kw["to_address_or_tag"] == DEST_ADDR
         assert call_kw["amount_wei"] == int(20.0 * 1e18)
         assert call_kw["chain_name"] == "gnosis"
-        notification.send.assert_awaited_once()
-        msg = notification.send.call_args[0][1]
+        notification.notify.assert_awaited_once()
+        msg = notification.notify.call_args[0][0]
         assert "20.0000" in msg
 
     @pytest.mark.asyncio

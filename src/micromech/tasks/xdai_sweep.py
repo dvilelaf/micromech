@@ -90,9 +90,12 @@ async def xdai_sweep_task(
         )
 
         logger.info("xDAI sweep complete. TX: {}", tx_hash)
-        await notification_service.send(
-            "xDAI Sweep",
-            f"Amount: {sweep_amount:.4f} xDAI\nTo: {tag} ({dest_addr})\nTx: {tx_hash}",
+        explorer_url = f"https://gnosisscan.io/address/{dest_addr}"
+        logger.info("[xDAI Sweep] Amount: {:.4f} xDAI → {} ({})", sweep_amount, tag, dest_addr)
+        await notification_service.notify(
+            f"<b>xDAI Sweep</b>\n"
+            f"Amount: {sweep_amount:.4f} xDAI\n"
+            f"To: <a href=\"{explorer_url}\">{tag}</a>"
         )
 
     except Exception as e:
