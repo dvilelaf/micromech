@@ -36,7 +36,6 @@ Key assertions (in order of importance)
 3. CORRECTNESS: in-flight set prevents double-pickup           (safety proof)
 """
 
-import asyncio
 import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
@@ -46,7 +45,6 @@ import pytest
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.models import MechRequest, RequestRecord, ToolResult
 from micromech.runtime.delivery import DeliveryManager
-
 
 # ---------------------------------------------------------------------------
 # Delay constants — keep STALL_DELAY large enough for a clear signal,
@@ -446,10 +444,10 @@ class TestConcurrentWorkerStallResilience:
         )
 
         print(
-            f"\n  [Test] In-flight safety:"
-            f"\n    in-flight record skipped ✓"
-            f"\n    submit_batch_delivery not called ✓"
-            f"\n    in_flight set unchanged ✓"
+            "\n  [Test] In-flight safety:"
+            "\n    in-flight record skipped ✓"
+            "\n    submit_batch_delivery not called ✓"
+            "\n    in_flight set unchanged ✓"
         )
 
     @pytest.mark.asyncio
