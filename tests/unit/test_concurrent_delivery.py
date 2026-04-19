@@ -1,20 +1,19 @@
-"""Concurrency integration test: DeliveryManager worker stall resilience.
+"""Delivery worker sequencing and correctness tests.
 
-Proves that when one worker blocks (GS013 stall, slow Safe TX, RPC timeout),
-the remaining workers complete their deliveries independently — the stall does
-NOT propagate to the whole delivery loop.
+On-chain deliveries are intentionally SEQUENTIAL to prevent Safe nonce races.
+Concurrent build_tx() calls return the same nonce, causing GS026 (invalid
+signature after another worker advances the nonce first). By processing
+on-chain records one at a time, each worker gets a unique nonce.
 
-Architecture recap
-------------------
-_deliver_concurrent() launches one asyncio.Task per record via asyncio.gather().
-Each task calls _deliver_single_onchain(), which in turn calls:
+Off-chain (HTTP) deliveries have no nonce constraint and remain concurrent.
 
-    await self._prepare_onchain(record)          # async, event-loop
-    await asyncio.to_thread(_submit_batch_delivery, ...)  # thread pool
+Architecture
+------------
+_deliver_concurrent() iterates on-chain records sequentially (for loop),
+then gathers off-chain records with asyncio.gather(). Each on-chain step:
 
-asyncio.to_thread() releases the event loop while the thread runs — so other
-workers can proceed while one thread is blocked.  This is the mechanism that
-makes stall resilience possible.
+    await self._prepare_onchain(record)          # async — IPFS/prep
+    await asyncio.to_thread(_submit_batch_delivery, ...)  # Safe TX
 
 Mocking strategy
 ----------------
@@ -23,17 +22,11 @@ Mocking strategy
   * STALL_ID request: STALL_DELAY seconds  (simulates GS013 + backoff)
   * FAST_ID requests: FAST_DELAY seconds   (normal TX)
 
-No Anvil required — everything is mocked at the Safe TX submission layer.
-The _anvil_forks session fixture is autouse but only skips the whole session
-when no Anvil AND no secrets.env are present.  This test runs standalone via:
-
-    uv run pytest tests/integration/test_concurrent_delivery.py -v -s
-
-Key assertions (in order of importance)
------------------------------------------
-1. ORDERING: fast workers complete before the stalled worker  (order proof)
-2. TIMING:   concurrent elapsed < serial lower bound          (wall-clock proof)
-3. CORRECTNESS: in-flight set prevents double-pickup           (safety proof)
+Key assertions
+--------------
+1. CORRECTNESS: all records delivered, in-flight set prevents double-pickup
+2. ORDERING:    on-chain records delivered sequentially (stall blocks fast)
+3. TIMING:      total elapsed ≈ sum of delays (sequential)
 """
 
 import time
@@ -154,18 +147,15 @@ class TestConcurrentWorkerStallResilience:
 
     @pytest.mark.asyncio
     async def test_fast_workers_complete_before_stalled_worker(self):
-        """CORE ORDERING PROOF: fast workers deliver before the stalled worker.
+        """CORRECTNESS PROOF: all records delivered sequentially, no nonce race.
 
-        With 3 concurrent workers (DEFAULT_DELIVERY_WORKERS=3):
-        - Worker A picks STALL_ID → sleeps STALL_DELAY=2.0s
-        - Worker B picks FAST1_ID → sleeps FAST_DELAY=0.3s  → finishes at ~0.3s
-        - Worker C picks FAST2_ID → sleeps FAST_DELAY=0.3s  → finishes at ~0.3s
+        On-chain submissions are intentionally sequential to prevent Safe nonce
+        races (concurrent build_tx() calls return the same nonce → GS026).
 
-        If workers were SERIAL, workers B and C would not even start until A finishes
-        at 2.0s.  With concurrent workers, B and C complete at 0.3s.
+        Queue order: STALL_ID, FAST1_ID, FAST2_ID (as returned by get_undelivered).
+        Expected completion order: STALL → FAST1 → FAST2 (sequential).
 
-        The ordering assertion is the primary proof: it does not rely on exact
-        timing and is robust to scheduling variance and CI slowness.
+        All 3 must be delivered regardless of individual request latency.
         """
         stall_record = _make_record(STALL_ID)
         fast1_record = _make_record(FAST1_ID)
@@ -188,48 +178,33 @@ class TestConcurrentWorkerStallResilience:
         ):
             delivered = await dm._deliver_concurrent()
 
-        elapsed = time.monotonic() - t0
-
         # --- All 3 records were delivered ---
         assert delivered == 3, f"Expected 3 delivered, got {delivered}"
         assert q.mark_delivered.call_count == 3
 
-        # --- Ordering: fast workers completed before the stalled worker ---
+        # --- All completed ---
+        assert STALL_BYTES in completed_at, "Stall worker did not complete"
         assert FAST1_BYTES in completed_at, "Fast worker 1 did not complete"
         assert FAST2_BYTES in completed_at, "Fast worker 2 did not complete"
-        assert STALL_BYTES in completed_at, "Stall worker did not complete"
 
-        assert completed_at[FAST1_BYTES] < completed_at[STALL_BYTES], (
-            f"Fast worker 1 finished at {completed_at[FAST1_BYTES]:.3f}s AFTER "
-            f"stall worker at {completed_at[STALL_BYTES]:.3f}s — workers may be serial."
+        # --- Sequential order: stall first (it's first in queue), then fast workers ---
+        assert completed_at[STALL_BYTES] < completed_at[FAST1_BYTES], (
+            "Stall should complete before fast1 (sequential order, stall is first in queue)"
         )
-        assert completed_at[FAST2_BYTES] < completed_at[STALL_BYTES], (
-            f"Fast worker 2 finished at {completed_at[FAST2_BYTES]:.3f}s AFTER "
-            f"stall worker at {completed_at[STALL_BYTES]:.3f}s — workers may be serial."
-        )
-
-        print(
-            f"\n  [Test] Ordering proof:"
-            f"\n    stall worker:  {completed_at[STALL_BYTES]:.3f}s"
-            f"\n    fast worker 1: {completed_at[FAST1_BYTES]:.3f}s ✓ before stall"
-            f"\n    fast worker 2: {completed_at[FAST2_BYTES]:.3f}s ✓ before stall"
-            f"\n    total elapsed: {elapsed:.3f}s"
+        assert completed_at[FAST1_BYTES] < completed_at[FAST2_BYTES], (
+            "fast1 should complete before fast2 (sequential order)"
         )
 
     @pytest.mark.asyncio
-    async def test_concurrent_time_bounded_by_max_not_sum(self):
-        """TIMING PROOF: concurrent elapsed ≈ max(delays), not sum(delays).
+    async def test_sequential_time_is_sum_of_delays(self):
+        """TIMING PROOF: sequential on-chain submission → elapsed ≈ sum of delays.
 
-        With concurrent workers:  elapsed ≈ STALL_DELAY  (2.0s)
-        With serial workers:      elapsed ≈ STALL_DELAY + 2*FAST_DELAY  (2.6s)
+        On-chain submissions are sequential (nonce-race prevention). Total time
+        is bounded by STALL + FAST + FAST, not just max(delays).
 
-        The assertion: elapsed < STALL_DELAY + FAST_DELAY
-        This proves the total is bounded by the slowest worker, not the sum.
-        We subtract a tolerance so the assertion is tight.
-
-        [Perf] This is a timing-sensitive assertion. It may be flaky on
-        extremely loaded CI machines. The 0.5s headroom covers 99th-percentile
-        thread scheduling variance.
+        This is expected and acceptable — each tick (10s) processes up to
+        DEFAULT_DELIVERY_WORKERS requests sequentially. A stalled request delays
+        only the current tick, not the entire queue.
         """
         stall_record = _make_record(STALL_ID)
         fast1_record = _make_record(FAST1_ID)
@@ -254,27 +229,17 @@ class TestConcurrentWorkerStallResilience:
 
         elapsed = time.monotonic() - t0
 
-        # Serial lower bound: minimum time if workers were sequential
-        serial_lower_bound = STALL_DELAY + FAST_DELAY   # 2.3s
+        # Sequential total: STALL + FAST + FAST = 2.6s
+        expected_min = STALL_DELAY + 2 * FAST_DELAY - 0.2   # 2.4s with tolerance
+        expected_max = STALL_DELAY + 2 * FAST_DELAY + 1.0   # 3.6s generous headroom
 
-        # Concurrent upper bound: max(delays) + scheduling headroom
-        concurrent_upper_bound = STALL_DELAY + 0.5      # 2.5s
-
-        assert elapsed < serial_lower_bound, (
-            f"[Perf] elapsed={elapsed:.3f}s >= serial_lower_bound={serial_lower_bound:.2f}s. "
-            f"Workers appear to be running serially. Concurrent delivery is broken."
+        assert elapsed >= expected_min, (
+            f"[Perf] elapsed={elapsed:.3f}s < expected_min={expected_min:.2f}s. "
+            f"Submissions may be concurrent (nonce race risk)."
         )
-        assert elapsed < concurrent_upper_bound, (
-            f"[Perf] elapsed={elapsed:.3f}s — slower than expected even for concurrent mode. "
-            f"Thread pool may be saturated (need ≥3 threads)."
-        )
-
-        saved = serial_lower_bound - elapsed
-        print(
-            f"\n  [Perf] Timing bound:"
-            f"\n    concurrent elapsed: {elapsed:.3f}s"
-            f"\n    serial lower bound: {serial_lower_bound:.2f}s (STALL + FAST)"
-            f"\n    time saved vs serial: {saved:.3f}s"
+        assert elapsed < expected_max, (
+            f"[Perf] elapsed={elapsed:.3f}s > expected_max={expected_max:.2f}s. "
+            f"Thread pool may be starved."
         )
 
     @pytest.mark.asyncio
@@ -344,14 +309,11 @@ class TestConcurrentWorkerStallResilience:
         )
 
     @pytest.mark.asyncio
-    async def test_all_workers_start_near_simultaneously(self):
-        """Workers start within a short window of each other (true concurrency).
+    async def test_workers_start_sequentially(self):
+        """On-chain workers start sequentially: each waits for the previous to finish.
 
-        asyncio.gather() launches all tasks before any thread starts. The time
-        between the first and last thread start should be much less than FAST_DELAY.
-
-        This verifies that the concurrency is at the asyncio.gather level, not
-        just sequential execution with fast workers.
+        This verifies that the Safe TX submission is serialized — the second worker
+        only starts its submission after the first has completed (nonce-race prevention).
         """
         stall_record = _make_record(STALL_ID)
         fast1_record = _make_record(FAST1_ID)
@@ -366,7 +328,7 @@ class TestConcurrentWorkerStallResilience:
 
         def _submit_track_start(req_id_bytes_list, datas):
             rid = req_id_bytes_list[0]
-            started_at[rid] = time.monotonic() - t0  # record start time immediately
+            started_at[rid] = time.monotonic() - t0
             delay = STALL_DELAY if rid == STALL_BYTES else FAST_DELAY
             time.sleep(delay)
             return ("0x" + "ab" * 32, [True])
@@ -379,25 +341,14 @@ class TestConcurrentWorkerStallResilience:
 
         assert len(started_at) == 3, "All 3 workers must have started"
 
-        first_start = min(started_at.values())
-        last_start = max(started_at.values())
-        start_spread = last_start - first_start
-
-        # All workers start within FAST_DELAY/2 of each other
-        # (they all launch before the thread pool even picks them up)
-        max_spread = FAST_DELAY * 0.5  # 0.15s — generous for thread scheduling
-        assert start_spread < max_spread, (
-            f"Workers started {start_spread:.3f}s apart — "
-            f"expected < {max_spread:.2f}s (true concurrency: all start near-simultaneously). "
-            f"start times: {dict((k.hex()[:4], f'{v:.3f}s') for k,v in started_at.items())}"
+        # Sequential: fast1 starts after stall finishes (at ~STALL_DELAY)
+        assert started_at[FAST1_BYTES] >= STALL_DELAY - 0.1, (
+            f"fast1 started at {started_at[FAST1_BYTES]:.3f}s but stall takes "
+            f"{STALL_DELAY}s — submissions appear concurrent (nonce race risk)."
         )
-
-        print(
-            f"\n  [Test] Start times (concurrent launch):"
-            f"\n    stall:  t+{started_at[STALL_BYTES]:.3f}s"
-            f"\n    fast1:  t+{started_at[FAST1_BYTES]:.3f}s"
-            f"\n    fast2:  t+{started_at[FAST2_BYTES]:.3f}s"
-            f"\n    spread: {start_spread:.3f}s (should be < {max_spread:.2f}s)"
+        assert started_at[FAST2_BYTES] >= started_at[FAST1_BYTES] + FAST_DELAY - 0.1, (
+            f"fast2 started at {started_at[FAST2_BYTES]:.3f}s before fast1 "
+            f"({started_at[FAST1_BYTES]:.3f}s) finished — submissions not sequential."
         )
 
     @pytest.mark.asyncio
@@ -451,13 +402,12 @@ class TestConcurrentWorkerStallResilience:
         )
 
     @pytest.mark.asyncio
-    async def test_stall_does_not_prevent_successful_delivery_of_others(self):
-        """[Test] Even when one worker's TX stalls, the others reach mark_delivered.
+    async def test_all_requests_delivered_despite_stall(self):
+        """[Test] All requests are delivered even when one TX is slow.
 
-        This is the direct consequence of stall resilience: the queue drains
-        for non-stalled requests regardless of how long the slow TX takes.
-        Verifies mark_delivered was called exactly twice (for the 2 fast requests)
-        even though the stall worker takes much longer.
+        With sequential on-chain delivery, a slow TX blocks until it completes,
+        then the next request is processed. All 3 must be delivered.
+        Order is sequential: stall first (first in queue), then fast1, fast2.
         """
         stall_record = _make_record(STALL_ID)
         fast1_record = _make_record(FAST1_ID)
@@ -467,10 +417,6 @@ class TestConcurrentWorkerStallResilience:
         bridge = _make_bridge()
         dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
 
-        # Track the order in which mark_delivered is called.
-        # Do NOT call the original mock — side_effect replaces the call entirely;
-        # calling original_mark_delivered() from within the side_effect would
-        # re-enter the mock → infinite recursion.
         delivery_order: list[str] = []
 
         def _track_delivery(request_id, **kw):
@@ -490,26 +436,6 @@ class TestConcurrentWorkerStallResilience:
 
         assert delivered == 3
         assert len(delivery_order) == 3
-
-        # Fast requests must appear in delivery_order BEFORE the stall request
-        stall_pos = delivery_order.index(STALL_ID)
-        fast1_pos = delivery_order.index(FAST1_ID)
-        fast2_pos = delivery_order.index(FAST2_ID)
-
-        assert fast1_pos < stall_pos, (
-            f"Fast1 delivered at position {fast1_pos}, "
-            f"stall delivered at position {stall_pos}. "
-            f"Expected fast workers to complete first."
-        )
-        assert fast2_pos < stall_pos, (
-            f"Fast2 delivered at position {fast2_pos}, "
-            f"stall delivered at position {stall_pos}. "
-            f"Expected fast workers to complete first."
-        )
-
-        print(
-            f"\n  [Test] Delivery order (concurrent):"
-            f"\n    {delivery_order[0][:14]}... delivered 1st"
-            f"\n    {delivery_order[1][:14]}... delivered 2nd"
-            f"\n    {delivery_order[2][:14]}... delivered 3rd (stall worker)"
-        )
+        # Sequential: stall (first in queue) completes first, then fast1, fast2
+        assert delivery_order[0] == STALL_ID, "Stall (first in queue) should be delivered first"
+        assert set(delivery_order) == {STALL_ID, FAST1_ID, FAST2_ID}

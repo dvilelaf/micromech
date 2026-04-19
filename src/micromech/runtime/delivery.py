@@ -788,11 +788,21 @@ class DeliveryManager:
         for r in selected:
             self._in_flight.add(r.request.request_id)
 
-        tasks = (
-            [self._deliver_single_onchain(r) for r in onchain]
-            + [self._deliver_single_offchain_concurrent(r) for r in offchain]
+        # On-chain deliveries are sequential: concurrent build_tx() calls
+        # return the same Safe nonce, causing GS026 (invalid signature after
+        # another worker already advanced the nonce). Off-chain deliveries
+        # (HTTP) have no nonce constraint and run concurrently.
+        onchain_results = []
+        for r in onchain:
+            onchain_results.append(await self._deliver_single_onchain(r))
+
+        offchain_tasks = [
+            self._deliver_single_offchain_concurrent(r) for r in offchain
+        ]
+        offchain_results = await asyncio.gather(
+            *offchain_tasks, return_exceptions=True
         )
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = onchain_results + list(offchain_results)
         return sum(1 for r in results if r is True)
 
     async def _deliver_single_onchain(self, record: RequestRecord) -> bool:
