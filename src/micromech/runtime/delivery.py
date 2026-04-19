@@ -763,23 +763,65 @@ class DeliveryManager:
                 self._wallet_warning_logged = True
             return 0
 
+        # Fetch a larger batch so expired records drain quickly without blocking
+        # fresh deliveries. Expired records are cheap to process (no Safe TX) so
+        # scanning more per tick reduces backlog faster. Delivery slots are still
+        # capped at DEFAULT_DELIVERY_WORKERS after the pre-filter.
+        _EXPIRED_SWEEP_LIMIT = 100
         records = self.queue.get_undelivered(
-            limit=DEFAULT_DELIVERY_WORKERS * 4, chain=self._chain_name
+            limit=max(DEFAULT_DELIVERY_WORKERS * 4, _EXPIRED_SWEEP_LIMIT),
+            chain=self._chain_name,
         )
         if not records:
             return 0
 
-        onchain = [
-            r for r in records
-            if not r.request.is_offchain
-            and r.request.request_id not in self._in_flight
-        ][:DEFAULT_DELIVERY_WORKERS]
+        now = datetime.now(timezone.utc)
 
-        offchain = [
-            r for r in records
-            if r.request.is_offchain
-            and r.request.request_id not in self._in_flight
-        ]
+        def _age_seconds(r: Any) -> float:
+            created = r.request.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            return (now - created).total_seconds()
+
+        # Pre-filter: skip records already past their on-chain responseTimeout.
+        # Submitting a Safe TX for an expired request mines OK but the marketplace
+        # rejects it as a late delivery — wasting gas and blocking fresh requests.
+        # Mark them failed immediately so the delivery slot goes to a live request.
+        candidates = [r for r in records if r.request.request_id not in self._in_flight]
+        fresh, n_skipped = [], 0
+        for r in candidates:
+            age = _age_seconds(r)
+            if age > r.request.timeout:
+                logger.warning(
+                    "Skipping expired request {} age={:.0f}s > timeout={}s",
+                    r.request.request_id[:16] + "...",
+                    age,
+                    r.request.timeout,
+                )
+                try:
+                    self.queue.mark_failed(
+                        r.request.request_id,
+                        f"pre_delivery_expired: age={age:.0f}s timeout={r.request.timeout}s",
+                    )
+                except Exception as mark_err:
+                    logger.warning(
+                        "Failed to mark expired request {} as failed: {}",
+                        r.request.request_id[:16] + "...",
+                        mark_err,
+                    )
+                if self._metrics:
+                    self._metrics.record_delivery_failed(
+                        r.request.request_id, "pre_delivery_expired", chain=self._chain_name
+                    )
+                n_skipped += 1
+            else:
+                fresh.append(r)
+
+        if n_skipped:
+            logger.info("Skipped {} expired requests this tick", n_skipped)
+
+        onchain = [r for r in fresh if not r.request.is_offchain][:DEFAULT_DELIVERY_WORKERS]
+        offchain = [r for r in fresh if r.request.is_offchain]
 
         selected = onchain + offchain
         if not selected:
@@ -803,7 +845,15 @@ class DeliveryManager:
             *offchain_tasks, return_exceptions=True
         )
         results = onchain_results + list(offchain_results)
-        return sum(1 for r in results if r is True)
+        n_delivered = sum(1 for r in results if r is True)
+        if n_delivered:
+            logger.info(
+                "Tick delivered {} request(s) on-chain={} off-chain={}",
+                n_delivered,
+                sum(1 for r in onchain_results if r is True),
+                sum(1 for r in offchain_results if r is True),
+            )
+        return n_delivered
 
     async def _deliver_single_onchain(self, record: RequestRecord) -> bool:
         """Prepare and submit one on-chain request as a single Safe TX.

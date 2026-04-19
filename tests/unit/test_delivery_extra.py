@@ -60,6 +60,7 @@ def _make_record(request_id="0x" + "1" * 64, is_offchain=False, has_result=True)
     req.sender = None
     req.signature = None
     req.created_at = datetime.now(timezone.utc)
+    req.timeout = 300
     result = ToolResult(output='{"result": "ok"}', execution_time=0.1) if has_result else None
     return RequestRecord(request=req, result=result)
 

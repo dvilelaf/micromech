@@ -89,6 +89,7 @@ def _make_record(request_id: str) -> RequestRecord:
     req.sender = None
     req.signature = None
     req.created_at = datetime.now(timezone.utc)
+    req.timeout = 300
     result = ToolResult(output='{"result": "ok"}', execution_time=0.1)
     return RequestRecord(request=req, result=result)
 
@@ -439,3 +440,139 @@ class TestConcurrentWorkerStallResilience:
         # Sequential: stall (first in queue) completes first, then fast1, fast2
         assert delivery_order[0] == STALL_ID, "Stall (first in queue) should be delivered first"
         assert set(delivery_order) == {STALL_ID, FAST1_ID, FAST2_ID}
+
+    @pytest.mark.asyncio
+    async def test_expired_requests_skipped_without_safe_tx(self):
+        """[Test] Requests past their responseTimeout are marked failed immediately.
+
+        Submitting a Safe TX for an expired request mines OK but the marketplace
+        rejects it as a late delivery — wasting gas and blocking fresh requests.
+        The pre-filter must mark them failed without calling _submit_batch_delivery.
+        """
+        from datetime import timedelta
+
+        expired_record = _make_record(STALL_ID)
+        expired_record.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
+        expired_record.request.timeout = 300  # 5 min — record is 400s old → expired
+
+        fresh_record = _make_record(FAST1_ID)
+        fresh_record.request.created_at = datetime.now(timezone.utc)
+        fresh_record.request.timeout = 300  # fresh
+
+        q = _make_queue([expired_record, fresh_record])
+        bridge = _make_bridge()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        submit_call_count = [0]
+
+        def _count_submit(req_id_bytes_list, datas):
+            submit_call_count[0] += 1
+            return ("0x" + "ab" * 32, [True])
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+            patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
+        ):
+            delivered = await dm._deliver_concurrent()
+
+        # Only the fresh record should be delivered
+        assert delivered == 1, f"Expected 1 delivered, got {delivered}"
+        assert submit_call_count[0] == 1, (
+            f"_submit_batch_delivery called {submit_call_count[0]}x — "
+            "expired record should be skipped without a Safe TX"
+        )
+        # _submit_batch_delivery mocked to return [True] → no marketplace timeout.
+        # mark_failed called ONLY by pre-filter (expired detection), not delivery logic.
+        q.mark_failed.assert_called_once()
+        call_args = q.mark_failed.call_args[0]
+        assert call_args[0] == STALL_ID, "mark_failed called with wrong request_id"
+        assert "expired" in call_args[1], "mark_failed reason must mention 'expired'"
+
+    @pytest.mark.asyncio
+    async def test_all_expired_zero_delivered_zero_txs(self):
+        """[Test] When all records are expired, zero TXs are submitted and zero delivered."""
+        from datetime import timedelta
+
+        records = []
+        for rid in [STALL_ID, FAST1_ID, FAST2_ID]:
+            r = _make_record(rid)
+            r.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
+            r.request.timeout = 300
+            records.append(r)
+
+        q = _make_queue(records)
+        bridge = _make_bridge()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        submit_call_count = [0]
+
+        def _count_submit(req_id_bytes_list, datas):
+            submit_call_count[0] += 1
+            return ("0x" + "ab" * 32, [True])
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+            patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
+        ):
+            delivered = await dm._deliver_concurrent()
+
+        assert delivered == 0, "No records should be delivered when all are expired"
+        assert submit_call_count[0] == 0, "No Safe TXs should be submitted for expired records"
+        assert q.mark_failed.call_count == 3, "All 3 expired records must be marked failed"
+
+    @pytest.mark.asyncio
+    async def test_boundary_age_equals_timeout_is_not_skipped(self):
+        """[Test] A record aged exactly equal to timeout is NOT skipped (age > timeout, not >=)."""
+        from datetime import timedelta
+
+        boundary_record = _make_record(STALL_ID)
+        boundary_record.request.timeout = 300
+        # age = timeout - 1s → should NOT be pre-filtered (condition is `age > timeout`, not `>=`)
+        boundary_record.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=299)
+
+        q = _make_queue([boundary_record])
+        bridge = _make_bridge()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        submitted = [False]
+
+        def _submit(req_id_bytes_list, datas):
+            submitted[0] = True
+            return ("0x" + "ab" * 32, [True])
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+            patch.object(dm, "_submit_batch_delivery", side_effect=_submit),
+        ):
+            delivered = await dm._deliver_concurrent()
+
+        assert submitted[0], "Boundary record (age == timeout) must attempt delivery, not be skipped"
+        assert delivered == 1
+
+    @pytest.mark.asyncio
+    async def test_expired_offchain_request_skipped(self):
+        """[Test] Expired off-chain requests are also pre-filtered without calling _deliver_one."""
+        from datetime import timedelta
+
+        expired_offchain = _make_record(STALL_ID)
+        expired_offchain.request.is_offchain = True
+        expired_offchain.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
+        expired_offchain.request.timeout = 300
+
+        q = _make_queue([expired_offchain])
+        bridge = _make_bridge()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        deliver_one_called = [False]
+
+        async def _mock_deliver_one(record):
+            deliver_one_called[0] = True
+            return ("0x" + "ab" * 32, None)
+
+        with patch.object(dm, "_deliver_one", side_effect=_mock_deliver_one):
+            delivered = await dm._deliver_concurrent()
+
+        assert delivered == 0, "Expired off-chain request must not be delivered"
+        assert not deliver_one_called[0], "_deliver_one must not be called for expired off-chain"
+        q.mark_failed.assert_called_once()
+        assert "expired" in q.mark_failed.call_args[0][1]
