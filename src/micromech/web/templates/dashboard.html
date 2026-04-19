@@ -382,8 +382,12 @@
 
                 <div class="charts-grid">
                     <div class="glass chart-card">
-                        <h3>Daily Requests (30 days)</h3>
+                        <h3>Daily Requests <span class="chart-period">30 days</span></h3>
                         <canvas id="dailyChart"></canvas>
+                    </div>
+                    <div class="glass chart-card">
+                        <h3>Daily Earnings <span class="chart-period">30 days · xDAI</span></h3>
+                        <canvas id="earningsChart"></canvas>
                     </div>
                     <div class="glass chart-card">
                         <h3>Monthly Requests <span class="chart-period">12 months</span></h3>
@@ -659,6 +663,7 @@
         queueChart: null,
         channelChart: null,
         dailyChart: null,
+        earningsChart: null,
         monthlyChart: null,
         toolChart: null,
         sseConnected: false,
@@ -928,14 +933,20 @@
 
     // --- Historical Charts ---
     function loadCharts() {
-        // Daily
-        authFetch(API_BASE + '/api/metrics/daily?days=30').then(r => r.json()).then(data => {
+        // Daily requests + earnings (share one fetch + one status fetch)
+        Promise.all([
+            authFetch(API_BASE + '/api/metrics/daily?days=30').then(r => r.json()),
+            authFetch(API_BASE + '/api/status').then(r => r.json()),
+        ]).then(([data, status]) => {
+            const labels = data.map(d => d.day.substring(5));
+
+            // Daily Requests chart
             if (state.dailyChart) state.dailyChart.destroy();
-            const ctx = document.getElementById('dailyChart').getContext('2d');
-            state.dailyChart = new Chart(ctx, {
+            const ctxDaily = document.getElementById('dailyChart').getContext('2d');
+            state.dailyChart = new Chart(ctxDaily, {
                 type: 'line',
                 data: {
-                    labels: data.map(d => d.day.substring(5)),
+                    labels,
                     datasets: [
                         {
                             label: 'Total', data: data.map(d => d.total),
@@ -961,7 +972,31 @@
                     scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
                 },
             });
-        });
+
+            // Daily Earnings chart
+            const rateWei = status.delivery_rate || 10000000000000000;
+            const rateXdai = rateWei / 1e18;
+            if (state.earningsChart) state.earningsChart.destroy();
+            const ctxEarnings = document.getElementById('earningsChart').getContext('2d');
+            state.earningsChart = new Chart(ctxEarnings, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'xDAI earned',
+                        data: data.map(d => +(d.delivered * rateXdai).toFixed(4)),
+                        backgroundColor: 'rgba(46,204,113,0.6)',
+                        borderRadius: 4,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    interaction: { intersect: false, mode: 'index' },
+                    plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, pointStyle: 'circle' } } },
+                    scales: { y: { beginAtZero: true, ticks: { callback: v => v.toFixed(4) + ' xDAI' } } },
+                },
+            });
+        }).catch(err => console.error('loadCharts (earnings) failed:', err));
 
         // Monthly
         authFetch(API_BASE + '/api/metrics/monthly?months=12').then(r => r.json()).then(data => {

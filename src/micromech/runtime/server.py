@@ -18,6 +18,7 @@ from loguru import logger
 from micromech.core.config import MicromechConfig
 from micromech.core.constants import (
     DB_PATH,
+    DEFAULT_DELIVERY_RATE,
     DEFAULT_HOST,
     DEFAULT_MAX_CONCURRENT,
     DEFAULT_PORT,
@@ -257,6 +258,7 @@ class MechServer:
             "tools": self.registry.tool_ids,
             "delivered_total": self.queue.count_by_status().get("delivered", 0),
             "metrics": self.metrics.get_live_snapshot(),
+            "delivery_rate": next(iter(self.config.enabled_chains.values())).delivery_rate if self.config.enabled_chains else DEFAULT_DELIVERY_RATE,
         }
 
     async def run(

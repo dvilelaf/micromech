@@ -13,6 +13,8 @@ from typing import Any, Callable, Optional
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 
+from micromech.core.constants import DEFAULT_DELIVERY_RATE
+
 try:
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import JSONResponse
@@ -58,6 +60,7 @@ class StatusResponse(BaseModel):
     queue: dict[str, int] = Field(default_factory=dict)
     tools: list[str] = Field(default_factory=list)
     delivered_total: int = 0
+    delivery_rate: int = DEFAULT_DELIVERY_RATE
 
 
 class ResultResponse(BaseModel):
