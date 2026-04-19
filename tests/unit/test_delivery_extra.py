@@ -788,6 +788,36 @@ class TestSubmitBatchDelivery:
             [b"\x01" * 32, b"\x02" * 32], [b"data1", b"data2"]
         )
 
+    def test_receipt_fetch_failure_returns_conservative_fallback(self):
+        """When get_transaction_receipt raises, batch returns (tx_hash, [True]*n).
+
+        The contract does not revert on timeout — it silently records False for
+        late requests.  If we cannot parse the receipt, the safe default is to
+        assume all were accepted so we don't incorrectly mark delivered requests
+        as failed.
+        """
+        mock_contract = MagicMock()
+        bridge = _make_bridge()
+        # Make get_transaction_receipt raise — simulates RPC blip after TX mined
+        bridge.web3.eth.get_transaction_receipt.side_effect = Exception("RPC error")
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), bridge)
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "a" * 40},
+            ),
+            patch.object(dm, "_get_mech_contract", return_value=mock_contract),
+            patch.object(dm, "_submit_tx", return_value="0x" + "ab" * 32),
+        ):
+            tx_hash, flags = dm._submit_batch_delivery(
+                [b"\x01" * 32, b"\x02" * 32], [b"data1", b"data2"]
+            )
+
+        # TX hash preserved; flags default to True (conservative: don't mark as failed)
+        assert tx_hash == "0x" + "ab" * 32
+        assert flags == [True, True]
+
 
 # ---------------------------------------------------------------------------
 # _increment_failure — retry counter
