@@ -597,25 +597,30 @@ def _make_mock_web3_with_flags(flags: list[bool]) -> MagicMock:
     return web3
 
 
+def _marketplace_log(**extra) -> dict:
+    """Return a fake log dict addressed to the marketplace contract."""
+    return {"address": MARKETPLACE_ADDR, "_our_event": True, **extra}
+
+
 class TestDecodeDeliveryFlags:
     def test_all_accepted(self):
         flags = [True, True, True]
         web3 = _make_mock_web3_with_flags(flags)
-        receipt = {"logs": [{"_our_event": True}]}
+        receipt = {"logs": [_marketplace_log()]}
         result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 3)
         assert result == [True, True, True]
 
     def test_partial_timeout(self):
         flags = [True, False, True]
         web3 = _make_mock_web3_with_flags(flags)
-        receipt = {"logs": [{"_our_event": True}]}
+        receipt = {"logs": [_marketplace_log()]}
         result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 3)
         assert result == [True, False, True]
 
     def test_all_timed_out(self):
         flags = [False, False]
         web3 = _make_mock_web3_with_flags(flags)
-        receipt = {"logs": [{"_our_event": True}]}
+        receipt = {"logs": [_marketplace_log()]}
         result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 2)
         assert result == [False, False]
 
@@ -625,10 +630,23 @@ class TestDecodeDeliveryFlags:
         web3.to_checksum_address.side_effect = lambda x: x
         event_instance = MagicMock()
         event_instance.process_log.side_effect = Exception("wrong topic")
-        web3.eth.contract.return_value.events.MarketplaceDelivery.return_value = event_instance
-        receipt = {"logs": [{"_not_our_event": True}]}
+        web3.eth.contract.return_value.events.MarketplaceDelivery.return_value = (
+            event_instance
+        )
+        receipt = {"logs": [{"address": MARKETPLACE_ADDR, "_not_our_event": True}]}
         result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 2)
         assert result == [True, True]
+
+    def test_log_from_other_contract_ignored(self):
+        """Logs emitted by a different contract are skipped (address check)."""
+        # flags=[False] would indicate timeout if decoded — but the log comes
+        # from a different address, so it must be ignored entirely.
+        flags = [False]
+        web3 = _make_mock_web3_with_flags(flags)
+        other_addr = "0x" + "aa" * 20
+        receipt = {"logs": [{"address": other_addr, "_our_event": True}]}
+        result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 1)
+        assert result == [True]
 
     def test_empty_logs_returns_all_true(self):
         web3 = MagicMock()
@@ -650,7 +668,7 @@ class TestDecodeDeliveryFlags:
         """If event flags length != num_requests, falls back to all-True."""
         flags = [True, False]  # 2 flags
         web3 = _make_mock_web3_with_flags(flags)
-        receipt = {"logs": [{"_our_event": True}]}
+        receipt = {"logs": [_marketplace_log()]}
         # Ask for 3 but event only has 2
         result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 3)
         assert result == [True, True, True]

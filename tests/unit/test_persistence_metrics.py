@@ -221,3 +221,74 @@ class TestChainFiltering:
         assert len(base) == 1
         assert base[0].request.chain == "base"
         q.close()
+
+
+# ---------------------------------------------------------------------------
+# timed_out field in aggregate stats
+# ---------------------------------------------------------------------------
+
+
+class TestTimedOutStats:
+    """Verify timed_out is correctly counted in tool_stats and period_stats."""
+
+    def _seed_with_timeout(self, tmp_path):
+        """Create a queue with 1 delivered, 1 timed-out, 1 failed (other error)."""
+        q = PersistentQueue(tmp_path / "test.db")
+
+        # Delivered
+        req = _make_request("r-delivered", tool="echo")
+        q.add_request(req)
+        q.mark_executing("r-delivered")
+        q.mark_executed("r-delivered", ToolResult(output="ok", execution_time=1.0))
+        q.mark_delivered("r-delivered", tx_hash="0x" + "11" * 32)
+
+        # On-chain timeout
+        req = _make_request("r-timeout", tool="echo")
+        q.add_request(req)
+        q.mark_executing("r-timeout")
+        q.mark_executed("r-timeout", ToolResult(output="ok", execution_time=0.5))
+        q.mark_timed_out("r-timeout", tx_hash="0x" + "22" * 32)
+
+        # Generic failure (not timeout)
+        req = _make_request("r-failed", tool="echo")
+        q.add_request(req)
+        q.mark_failed("r-failed", "tool crashed")
+
+        return q
+
+    def test_tool_stats_includes_timed_out(self, tmp_path):
+        q = self._seed_with_timeout(tmp_path)
+        stats = q.tool_stats()
+        assert len(stats) == 1
+        s = stats[0]
+        assert s["tool"] == "echo"
+        assert s["delivered"] == 1
+        assert s["failed"] == 2       # timeout + generic failure both FAILED
+        assert s["timed_out"] == 1    # only the on_chain_timeout one
+        q.close()
+
+    def test_tool_stats_zero_timed_out_when_none(self, tmp_path):
+        q = PersistentQueue(tmp_path / "test.db")
+        req = _make_request("r1", tool="echo")
+        q.add_request(req)
+        q.mark_executing("r1")
+        q.mark_executed("r1", ToolResult(output="ok"))
+        q.mark_delivered("r1", tx_hash="0x" + "aa" * 32)
+
+        stats = q.tool_stats()
+        assert stats[0]["timed_out"] == 0
+        q.close()
+
+    def test_period_stats_includes_timed_out(self, tmp_path):
+        q = self._seed_with_timeout(tmp_path)
+        stats = q.period_stats(hours=24)
+        assert stats["failed"] == 2        # timeout + generic failure
+        assert stats["timed_out"] == 1     # only on_chain_timeout
+        assert stats["delivered"] == 1
+        q.close()
+
+    def test_period_stats_zero_timed_out_when_none(self, tmp_path):
+        q = PersistentQueue(tmp_path / "test.db")
+        stats = q.period_stats(hours=24)
+        assert stats["timed_out"] == 0
+        q.close()

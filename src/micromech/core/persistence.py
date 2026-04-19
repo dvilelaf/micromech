@@ -311,6 +311,13 @@ class PersistentQueue:
                 pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)).alias(
                     "failed"
                 ),
+                pw.fn.SUM(
+                    pw.Case(
+                        None,
+                        [(RequestRow.error == "on_chain_timeout", 1)],
+                        0,
+                    )
+                ).alias("timed_out"),
                 pw.fn.AVG(RequestRow.result_time).alias("avg_time"),
             )
             .where(RequestRow.tool != "")
@@ -324,6 +331,7 @@ class PersistentQueue:
                 "total": r.total,
                 "delivered": int(r.delivered or 0),
                 "failed": int(r.failed or 0),
+                "timed_out": int(r.timed_out or 0),
                 "avg_time": round(float(r.avg_time or 0), 3),
             }
             for r in query
@@ -422,6 +430,13 @@ class PersistentQueue:
                 "delivered"
             ),
             pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)).alias("failed"),
+            pw.fn.SUM(
+                pw.Case(
+                    None,
+                    [(RequestRow.error == "on_chain_timeout", 1)],
+                    0,
+                )
+            ).alias("timed_out"),
             pw.fn.AVG(RequestRow.result_time).alias("avg_time"),
         ).where(RequestRow.created_at >= cutoff)
         query = _chain_filter(query, chain)
@@ -431,19 +446,22 @@ class PersistentQueue:
                 "received": 0,
                 "delivered": 0,
                 "failed": 0,
+                "timed_out": 0,
                 "avg_time": 0.0,
                 "success_rate": 0.0,
             }
-        total, delivered, failed, avg_time = row
+        total, delivered, failed, timed_out, avg_time = row
         total = int(total or 0)
         delivered = int(delivered or 0)
         failed = int(failed or 0)
+        timed_out = int(timed_out or 0)
         avg_time = round(float(avg_time or 0), 3)
         success_rate = round(delivered / total * 100, 1) if total > 0 else 0.0
         return {
             "received": total,
             "delivered": delivered,
             "failed": failed,
+            "timed_out": timed_out,
             "avg_time": avg_time,
             "success_rate": success_rate,
         }

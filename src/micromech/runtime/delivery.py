@@ -70,34 +70,60 @@ def _decode_delivery_flags(
 
     Falls back to [True] * num_requests on any parsing error so that a missing
     or undecodable event never incorrectly marks requests as failed.
+    Logs a WARNING whenever the fallback fires so operators can investigate.
     """
     from micromech.runtime.contracts import load_marketplace_abi
 
+    # Normalize once for emitter-address comparison (defense-in-depth).
+    norm_marketplace = marketplace_address.lower()
     try:
         marketplace = web3.eth.contract(
             address=web3.to_checksum_address(marketplace_address),
             abi=load_marketplace_abi(),
         )
         for log in receipt.get("logs", []):
+            # Only process logs emitted by the marketplace contract.
+            # process_log matches topic[0] but does NOT verify the emitter
+            # address, so a different contract emitting the same event
+            # signature would otherwise be decoded as our event.
+            if log.get("address", "").lower() != norm_marketplace:
+                continue
             try:
                 event = marketplace.events.MarketplaceDelivery()
                 decoded = event.process_log(log)
                 flags = list(decoded["args"]["deliveredRequests"])
                 if len(flags) == num_requests:
                     return flags
-                # Length mismatch — shouldn't happen, but don't corrupt the batch
-                from loguru import logger as _logger
-                _logger.warning(
-                    "MarketplaceDelivery flags mismatch: got {} expected {}",
+                # Length mismatch — shouldn't happen, but don't corrupt batch
+                logger.warning(
+                    "MarketplaceDelivery flags mismatch: got {} expected {}"
+                    " — treating all as delivered (fallback)",
                     len(flags),
                     num_requests,
                 )
                 return [True] * num_requests
-            except Exception:
-                continue  # not our event, try next log
-    except Exception:
-        pass
+            except Exception as inner_exc:
+                # Log decode failure only when the log comes from the marketplace
+                # (already passed address filter) — helps diagnose ABI changes.
+                logger.debug(
+                    "Failed to decode MarketplaceDelivery log from marketplace: {}",
+                    inner_exc,
+                )
+                continue  # try next log
+    except Exception as exc:
+        logger.warning(
+            "Could not build marketplace contract for event decoding: {}"
+            " — treating all {} request(s) as delivered (fallback)",
+            exc,
+            num_requests,
+        )
+        return [True] * num_requests
 
+    logger.warning(
+        "MarketplaceDelivery event not found in receipt"
+        " — treating all {} request(s) as delivered (fallback)",
+        num_requests,
+    )
     return [True] * num_requests
 
 
@@ -544,6 +570,17 @@ class DeliveryManager:
                 delivery_data,
             )
         else:
+            # On-chain single-delivery (legacy path). In practice the main
+            # delivery loop routes on-chain requests through
+            # _deliver_onchain_batch / _deliver_single_onchain, which handle
+            # timeout detection via the returned flags. Timeout flags are
+            # intentionally discarded here — this path should never be reached
+            # for on-chain requests in normal operation.
+            logger.warning(
+                "_deliver_one called for on-chain request {} — timeout detection unavailable"
+                " on this path; use _deliver_onchain_batch or _deliver_single_onchain instead",
+                record.request.request_id[:20],
+            )
             tx_hash, _ = await asyncio.to_thread(
                 self._submit_delivery,
                 request_id,
