@@ -98,6 +98,37 @@ class TestStatusTransitions:
         assert record.request.status == STATUS_FAILED
         assert record.request.error == "delivery timeout"
 
+    def test_mark_timed_out(self, queue: PersistentQueue):
+        """mark_timed_out stores FAILED status with on_chain_timeout error and tx_hash."""
+        req = MechRequest(request_id="r1")
+        queue.add_request(req)
+        queue.mark_executing("r1")
+        queue.mark_executed("r1", ToolResult(output="ok"))
+
+        tx = "0x" + "ab" * 32
+        queue.mark_timed_out("r1", tx_hash=tx, ipfs_hash="QmTimeout")
+
+        record = queue.get_by_id("r1")
+        assert record.request.status == STATUS_FAILED
+        assert record.request.error == "on_chain_timeout"
+        # tx_hash and ipfs_hash are stored for traceability
+        assert record.response is not None
+        assert record.response.delivery_tx_hash == tx
+        assert record.response.ipfs_hash == "QmTimeout"
+
+    def test_mark_timed_out_without_ipfs(self, queue: PersistentQueue):
+        """mark_timed_out works when ipfs_hash is None."""
+        req = MechRequest(request_id="r1")
+        queue.add_request(req)
+        queue.mark_executing("r1")
+        queue.mark_executed("r1", ToolResult(output="ok"))
+
+        queue.mark_timed_out("r1", tx_hash="0x" + "cc" * 32)
+
+        record = queue.get_by_id("r1")
+        assert record.request.status == STATUS_FAILED
+        assert record.request.error == "on_chain_timeout"
+
 
 class TestStateTransitionGuards:
     """Test that invalid state transitions are rejected."""
@@ -116,6 +147,16 @@ class TestStateTransitionGuards:
         queue.mark_executing("r1")
         with pytest.raises(PersistenceError, match="not in executed"):
             queue.mark_delivered("r1", tx_hash="0x" + "0" * 64)
+
+    def test_timed_out_on_pending_raises(self, queue: PersistentQueue):
+        """mark_timed_out requires EXECUTED state, not PENDING."""
+        queue.add_request(MechRequest(request_id="r1"))
+        with pytest.raises(PersistenceError, match="not in executed"):
+            queue.mark_timed_out("r1", tx_hash="0x" + "0" * 64)
+
+    def test_timed_out_on_nonexistent_raises(self, queue: PersistentQueue):
+        with pytest.raises(PersistenceError, match="not found"):
+            queue.mark_timed_out("nonexistent", tx_hash="0x" + "0" * 64)
 
     def test_delivered_on_pending_raises(self, queue: PersistentQueue):
         queue.add_request(MechRequest(request_id="r1"))

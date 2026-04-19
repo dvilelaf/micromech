@@ -27,7 +27,7 @@ def _mock_service_info():
 
 
 from micromech.core.config import ChainConfig, MicromechConfig
-from micromech.core.constants import STATUS_EXECUTED
+from micromech.core.constants import STATUS_DELIVERED, STATUS_EXECUTED, STATUS_FAILED
 from micromech.core.models import MechRequest, ToolResult
 from micromech.core.persistence import PersistentQueue
 from micromech.runtime.delivery import DeliveryManager
@@ -224,7 +224,7 @@ class TestGetMechContract:
 
 class TestSubmitDelivery:
     def test_impersonation_path(self, queue: PersistentQueue):
-        """When impersonation succeeds (no Safe), returns tx hash without trying signed."""
+        """When impersonation succeeds (no Safe), returns (tx_hash, flags)."""
         config = MicromechConfig()
         bridge = MagicMock(spec=["web3"])  # No wallet → _has_safe=False
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
@@ -233,8 +233,10 @@ class TestSubmitDelivery:
         dm._via_impersonation = MagicMock(return_value="0xdeadbeef")
         dm._via_signed = MagicMock()
 
-        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
-        assert result == "0xdeadbeef"
+        tx_hash, flags = dm._submit_delivery("0x" + "aa" * 32, b"data")
+        assert tx_hash == "0xdeadbeef"
+        # Fallback flags when receipt parsing fails (invalid hex "deadbeef" length)
+        assert flags == [True]
         dm._via_signed.assert_not_called()
 
     def test_impersonation_failure_propagates(self, queue: PersistentQueue):
@@ -258,13 +260,14 @@ class TestSubmitDelivery:
         dm._get_mech_contract = MagicMock()
         dm._via_impersonation = MagicMock(return_value="0xtx")
 
-        result = dm._submit_delivery("0x" + "bb" * 32, b"data")
-        assert result == "0xtx"
+        tx_hash, flags = dm._submit_delivery("0x" + "bb" * 32, b"data")
+        assert tx_hash == "0xtx"
+        assert flags == [True]
 
 
 class TestSubmitViaSafe:
     def test_safe_path_success(self, queue: PersistentQueue):
-        """When Safe is available and succeeds, uses Safe TX."""
+        """When Safe is available and succeeds, returns (tx_hash, flags)."""
         config = MicromechConfig()
         bridge = MagicMock()
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge)
@@ -274,8 +277,9 @@ class TestSubmitViaSafe:
         dm._via_impersonation = MagicMock()
         dm._via_signed = MagicMock()
 
-        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
-        assert result == "0xsafe_hash"
+        tx_hash, flags = dm._submit_delivery("0x" + "aa" * 32, b"data")
+        assert tx_hash == "0xsafe_hash"
+        assert flags == [True]  # fallback when receipt parsing fails
         dm._via_impersonation.assert_not_called()
         dm._via_signed.assert_not_called()
 
@@ -305,8 +309,9 @@ class TestSubmitViaSafe:
         dm._via_impersonation = MagicMock(return_value="0ximp")
         dm._via_signed = MagicMock()
 
-        result = dm._submit_delivery("0x" + "aa" * 32, b"data")
-        assert result == "0ximp"
+        tx_hash, flags = dm._submit_delivery("0x" + "aa" * 32, b"data")
+        assert tx_hash == "0ximp"
+        assert flags == [True]
 
     def test_has_safe_property(self, queue: PersistentQueue):
         """_has_safe returns True only when bridge.wallet.safe_service exists."""
@@ -487,7 +492,7 @@ class TestDeliverOneIpfs:
         record = queue.get_by_id("r1")
 
         mock_push = AsyncMock(return_value=("bafkrei_test", "f01551220aabb"))
-        dm._submit_delivery = MagicMock(return_value="0xdeadbeef")
+        dm._submit_delivery = MagicMock(return_value=("0xdeadbeef", [True]))
 
         with patch("micromech.ipfs.client.push_to_ipfs", mock_push):
             tx_hash, ipfs_cid_hex = await dm._deliver_one(record)
@@ -514,7 +519,7 @@ class TestDeliverOneIpfs:
         record = queue.get_by_id("r2")
 
         mock_push = AsyncMock(side_effect=Exception("IPFS down"))
-        dm._submit_delivery = MagicMock(return_value="0xcafe")
+        dm._submit_delivery = MagicMock(return_value=("0xcafe", [True]))
 
         with patch("micromech.ipfs.client.push_to_ipfs", mock_push):
             tx_hash, ipfs_cid_hex = await dm._deliver_one(record)
@@ -545,7 +550,7 @@ class TestDeliverOneIpfs:
         queue.mark_executed("r4", ToolResult(output="my result"))
         record = queue.get_by_id("r4")
 
-        dm._submit_delivery = MagicMock(return_value="0xaa")
+        dm._submit_delivery = MagicMock(return_value=("0xaa", [True]))
 
         # Mock IPFS push to fail so raw JSON is delivered
         mock_push = AsyncMock(side_effect=Exception("IPFS down"))
@@ -560,3 +565,230 @@ class TestDeliverOneIpfs:
             "prompt": "my prompt",
             "tool": "llm",
         }
+
+
+# ---------------------------------------------------------------------------
+# _decode_delivery_flags — unit tests
+# ---------------------------------------------------------------------------
+
+
+from micromech.runtime.delivery import _decode_delivery_flags  # noqa: E402
+
+MARKETPLACE_ADDR = CHAIN_CFG.marketplace_address
+TX_HASH_HEX = "0x" + "ab" * 32
+
+
+def _make_mock_web3_with_flags(flags: list[bool]) -> MagicMock:
+    """Build a mock web3 whose MarketplaceDelivery event decodes to `flags`."""
+    web3 = MagicMock()
+    web3.to_checksum_address.side_effect = lambda x: x
+
+    event_instance = MagicMock()
+
+    def _process_log(log):
+        if log.get("_our_event"):
+            return {"args": {"deliveredRequests": flags}}
+        raise Exception("not our event")
+
+    event_instance.process_log.side_effect = _process_log
+    contract_mock = MagicMock()
+    contract_mock.events.MarketplaceDelivery.return_value = event_instance
+    web3.eth.contract.return_value = contract_mock
+    return web3
+
+
+class TestDecodeDeliveryFlags:
+    def test_all_accepted(self):
+        flags = [True, True, True]
+        web3 = _make_mock_web3_with_flags(flags)
+        receipt = {"logs": [{"_our_event": True}]}
+        result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 3)
+        assert result == [True, True, True]
+
+    def test_partial_timeout(self):
+        flags = [True, False, True]
+        web3 = _make_mock_web3_with_flags(flags)
+        receipt = {"logs": [{"_our_event": True}]}
+        result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 3)
+        assert result == [True, False, True]
+
+    def test_all_timed_out(self):
+        flags = [False, False]
+        web3 = _make_mock_web3_with_flags(flags)
+        receipt = {"logs": [{"_our_event": True}]}
+        result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 2)
+        assert result == [False, False]
+
+    def test_no_matching_log_returns_all_true(self):
+        """Falls back to all-True when no MarketplaceDelivery log is found."""
+        web3 = MagicMock()
+        web3.to_checksum_address.side_effect = lambda x: x
+        event_instance = MagicMock()
+        event_instance.process_log.side_effect = Exception("wrong topic")
+        web3.eth.contract.return_value.events.MarketplaceDelivery.return_value = event_instance
+        receipt = {"logs": [{"_not_our_event": True}]}
+        result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 2)
+        assert result == [True, True]
+
+    def test_empty_logs_returns_all_true(self):
+        web3 = MagicMock()
+        web3.to_checksum_address.side_effect = lambda x: x
+        receipt = {"logs": []}
+        result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 3)
+        assert result == [True, True, True]
+
+    def test_contract_build_fails_returns_all_true(self):
+        """If web3.eth.contract() raises, falls back to all-True."""
+        web3 = MagicMock()
+        web3.eth.contract.side_effect = Exception("RPC error")
+        web3.to_checksum_address.side_effect = lambda x: x
+        receipt = {"logs": []}
+        result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 2)
+        assert result == [True, True]
+
+    def test_length_mismatch_returns_all_true(self):
+        """If event flags length != num_requests, falls back to all-True."""
+        flags = [True, False]  # 2 flags
+        web3 = _make_mock_web3_with_flags(flags)
+        receipt = {"logs": [{"_our_event": True}]}
+        # Ask for 3 but event only has 2
+        result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 3)
+        assert result == [True, True, True]
+
+
+# ---------------------------------------------------------------------------
+# DeliveryManager: onchain batch timeout handling
+# ---------------------------------------------------------------------------
+
+
+def _add_executed(queue: PersistentQueue, request_id: str) -> None:
+    req = MechRequest(request_id=request_id, prompt="p", tool="echo")
+    queue.add_request(req)
+    queue.mark_executing(request_id)
+    queue.mark_executed(request_id, ToolResult(output="ok"))
+
+
+class TestOnchainBatchTimeout:
+    """_deliver_onchain_batch marks timed-out requests as failed."""
+
+    @pytest.fixture
+    def dm(self, queue):
+        config = MicromechConfig()
+        bridge = MagicMock()
+        bridge.wallet.key_storage = MagicMock()
+        return DeliveryManager(
+            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge
+        )
+
+    def _patch_prepare(self, dm):
+        async def _fake(record):
+            return b"\x00" * 32, b"data", "QmTest"
+        return patch.object(dm, "_prepare_onchain", side_effect=_fake)
+
+    @pytest.mark.asyncio
+    async def test_all_accepted(self, dm, queue):
+        _add_executed(queue, "a")
+        _add_executed(queue, "b")
+        records = queue.get_undelivered(limit=10)
+        with (
+            self._patch_prepare(dm),
+            patch.object(
+                dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [True, True])
+            ),
+        ):
+            count = await dm._deliver_onchain_batch(records)
+        assert count == 2
+        assert queue.get_by_id("a").request.status == STATUS_DELIVERED
+        assert queue.get_by_id("b").request.status == STATUS_DELIVERED
+
+    @pytest.mark.asyncio
+    async def test_all_timed_out(self, dm, queue):
+        _add_executed(queue, "a")
+        _add_executed(queue, "b")
+        records = queue.get_undelivered(limit=10)
+        with (
+            self._patch_prepare(dm),
+            patch.object(
+                dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [False, False])
+            ),
+        ):
+            count = await dm._deliver_onchain_batch(records)
+        assert count == 0
+        for rid in ("a", "b"):
+            r = queue.get_by_id(rid)
+            assert r.request.status == STATUS_FAILED
+            assert r.request.error == "on_chain_timeout"
+            assert r.response.delivery_tx_hash == TX_HASH_HEX
+
+    @pytest.mark.asyncio
+    async def test_partial_timeout(self, dm, queue):
+        """First accepted, second timed out."""
+        _add_executed(queue, "a")
+        _add_executed(queue, "b")
+        records = queue.get_undelivered(limit=10)
+        with (
+            self._patch_prepare(dm),
+            patch.object(
+                dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [True, False])
+            ),
+        ):
+            count = await dm._deliver_onchain_batch(records)
+        assert count == 1
+        assert queue.get_by_id("a").request.status == STATUS_DELIVERED
+        r_b = queue.get_by_id("b")
+        assert r_b.request.status == STATUS_FAILED
+        assert r_b.request.error == "on_chain_timeout"
+
+
+# ---------------------------------------------------------------------------
+# DeliveryManager: single-onchain timeout handling
+# ---------------------------------------------------------------------------
+
+
+class TestSingleOnchainTimeout:
+    """_deliver_single_onchain marks timed-out requests as failed."""
+
+    @pytest.fixture
+    def dm(self, queue):
+        config = MicromechConfig()
+        bridge = MagicMock()
+        bridge.wallet.key_storage = MagicMock()
+        return DeliveryManager(
+            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge
+        )
+
+    def _patch_prepare(self, dm):
+        async def _fake(record):
+            return b"\x00" * 32, b"data", "QmTest"
+        return patch.object(dm, "_prepare_onchain", side_effect=_fake)
+
+    @pytest.mark.asyncio
+    async def test_accepted(self, dm, queue):
+        _add_executed(queue, "r1")
+        record = queue.get_undelivered(limit=1)[0]
+        with (
+            self._patch_prepare(dm),
+            patch.object(
+                dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [True])
+            ),
+        ):
+            result = await dm._deliver_single_onchain(record)
+        assert result is True
+        assert queue.get_by_id("r1").request.status == STATUS_DELIVERED
+
+    @pytest.mark.asyncio
+    async def test_timed_out(self, dm, queue):
+        _add_executed(queue, "r1")
+        record = queue.get_undelivered(limit=1)[0]
+        with (
+            self._patch_prepare(dm),
+            patch.object(
+                dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [False])
+            ),
+        ):
+            result = await dm._deliver_single_onchain(record)
+        assert result is False
+        r = queue.get_by_id("r1")
+        assert r.request.status == STATUS_FAILED
+        assert r.request.error == "on_chain_timeout"
+        assert r.response.delivery_tx_hash == TX_HASH_HEX

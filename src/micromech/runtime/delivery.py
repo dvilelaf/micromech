@@ -29,6 +29,7 @@ from micromech.core.constants import (
     DEFAULT_DELIVERY_FLUSH_TIMEOUT,
     DEFAULT_DELIVERY_INTERVAL,
     DEFAULT_DELIVERY_MAX_RETRIES,
+    DEFAULT_DELIVERY_WORKERS,
     GAS_FALLBACK,
     GAS_FLOOR_DELIVERY,
     IPFS_API_URL,
@@ -53,6 +54,51 @@ def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
         msg = f"{error_prefix} transaction reverted: {tx_hash.hex()}"
         raise RuntimeError(msg)
     return tx_hash.hex()
+
+
+def _decode_delivery_flags(
+    web3: Any,
+    receipt: Any,
+    marketplace_address: str,
+    num_requests: int,
+) -> list[bool]:
+    """Decode MarketplaceDelivery event from a mined TX receipt.
+
+    Returns list[bool] of length num_requests. True = the marketplace accepted
+    the delivery (within responseTimeout); False = timeout (contract rejected
+    it as late but did not revert the TX).
+
+    Falls back to [True] * num_requests on any parsing error so that a missing
+    or undecodable event never incorrectly marks requests as failed.
+    """
+    from micromech.runtime.contracts import load_marketplace_abi
+
+    try:
+        marketplace = web3.eth.contract(
+            address=web3.to_checksum_address(marketplace_address),
+            abi=load_marketplace_abi(),
+        )
+        for log in receipt.get("logs", []):
+            try:
+                event = marketplace.events.MarketplaceDelivery()
+                decoded = event.process_log(log)
+                flags = list(decoded["args"]["deliveredRequests"])
+                if len(flags) == num_requests:
+                    return flags
+                # Length mismatch — shouldn't happen, but don't corrupt the batch
+                from loguru import logger as _logger
+                _logger.warning(
+                    "MarketplaceDelivery flags mismatch: got {} expected {}",
+                    len(flags),
+                    num_requests,
+                )
+                return [True] * num_requests
+            except Exception:
+                continue  # not our event, try next log
+    except Exception:
+        pass
+
+    return [True] * num_requests
 
 
 def _batch_age_seconds(records: list[RequestRecord]) -> float:
@@ -91,6 +137,7 @@ class DeliveryManager:
         self._wallet_warning_logged = False
         self._ipfs_warning_logged = False
         self._delivery_failures: dict[str, int] = {}
+        self._in_flight: set[str] = set()
 
     @property
     def delivered_count(self) -> int:
@@ -313,27 +360,54 @@ class DeliveryManager:
         datas = [item[2] for item in good]
 
         try:
-            tx_hash = await asyncio.to_thread(self._submit_batch_delivery, req_id_bytes_list, datas)
-            for record, _, _, ipfs_cid_hex in good:
-                self.queue.mark_delivered(
-                    record.request.request_id,
-                    tx_hash=tx_hash,
-                    ipfs_hash=ipfs_cid_hex,
-                )
-                # Clear failure counter on success so transient errors don't
-                # accumulate across unrelated delivery attempts.
-                self._delivery_failures.pop(record.request.request_id, None)
-                self._delivered_count += 1
-                if self._metrics:
-                    self._metrics.record_delivery(record.request.request_id, chain=self._chain_name)
+            tx_hash, delivered_flags = await asyncio.to_thread(
+                self._submit_batch_delivery, req_id_bytes_list, datas
+            )
+            n_delivered = 0
+            n_timed_out = 0
+            for (record, _, _, ipfs_cid_hex), accepted in zip(good, delivered_flags):
+                req_id = record.request.request_id
+                self._delivery_failures.pop(req_id, None)
+                if accepted:
+                    self.queue.mark_delivered(
+                        req_id,
+                        tx_hash=tx_hash,
+                        ipfs_hash=ipfs_cid_hex,
+                    )
+                    self._delivered_count += 1
+                    n_delivered += 1
+                    if self._metrics:
+                        self._metrics.record_delivery(
+                            req_id, chain=self._chain_name
+                        )
+                else:
+                    # The TX was mined but the contract rejected this request as
+                    # a late delivery (arrived after responseTimeout). Mark as
+                    # failed so Overview stats reflect the real on-chain outcome.
+                    logger.warning(
+                        "Request {} timed out on-chain (tx={})",
+                        req_id[:16] + "...",
+                        tx_hash[:18] + "...",
+                    )
+                    self.queue.mark_timed_out(
+                        req_id,
+                        tx_hash=tx_hash,
+                        ipfs_hash=ipfs_cid_hex,
+                    )
+                    n_timed_out += 1
+                    if self._metrics:
+                        self._metrics.record_delivery_failed(
+                            req_id, "on_chain_timeout", chain=self._chain_name
+                        )
             ids_short = ", ".join(r.request.request_id[:10] for r, *_ in good)
             logger.info(
-                "Batch delivered {} on-chain request(s) tx={} ids=[{}]",
-                len(good),
+                "Batch TX mined: {} delivered, {} timed out (tx={} ids=[{}])",
+                n_delivered,
+                n_timed_out,
                 tx_hash[:18] + "...",
                 ids_short,
             )
-            return len(good)
+            return n_delivered
         except Exception as e:
             ids = [r.request.request_id[:16] for r, *_ in good]
             logger.exception(
@@ -470,15 +544,22 @@ class DeliveryManager:
                 delivery_data,
             )
         else:
-            tx_hash = await asyncio.to_thread(
+            tx_hash, _ = await asyncio.to_thread(
                 self._submit_delivery,
                 request_id,
                 delivery_data,
             )
         return tx_hash, ipfs_cid_hex
 
-    def _submit_batch_delivery(self, req_id_bytes_list: list[bytes], datas: list[bytes]) -> str:
-        """Submit deliverToMarketplace([ids...], [datas...]) in a single Safe TX."""
+    def _submit_batch_delivery(
+        self, req_id_bytes_list: list[bytes], datas: list[bytes]
+    ) -> tuple[str, list[bool]]:
+        """Submit deliverToMarketplace([ids...], [datas...]) in a single Safe TX.
+
+        Returns (tx_hash, delivered_flags) where delivered_flags[i] is True if
+        the marketplace accepted request i (within responseTimeout) or False if
+        it was rejected as a late delivery (on-chain timeout).
+        """
         mech_contract = self._get_mech_contract()
         from micromech.core.bridge import get_service_info
 
@@ -492,9 +573,40 @@ class DeliveryManager:
             req_id_bytes_list,
             datas,
         )
-        return self._submit_tx(fn_call, from_addr, f"BatchDelivery[{len(req_id_bytes_list)}]")
+        label = f"BatchDelivery[{len(req_id_bytes_list)}]"
+        tx_hash = self._submit_tx(fn_call, from_addr, label)
 
-    def _submit_delivery(self, request_id: str, data: bytes) -> str:
+        # Parse per-request delivery outcome from the MarketplaceDelivery event.
+        # The contract accepts late deliveries without reverting, but records them
+        # as timeouts (deliveredRequests[i] = False). We must read this to avoid
+        # falsely counting timed-out requests as successful deliveries.
+        web3 = self.bridge.web3
+        try:
+            tx_hash_bytes = bytes.fromhex(tx_hash.removeprefix("0x"))
+            receipt = web3.eth.get_transaction_receipt(tx_hash_bytes)
+            if receipt is None:
+                receipt = web3.eth.wait_for_transaction_receipt(
+                    tx_hash_bytes, timeout=TX_RECEIPT_TIMEOUT
+                )
+        except Exception as e:
+            logger.warning(
+                "Could not fetch receipt for {} to check delivery flags: {}",
+                tx_hash[:18],
+                e,
+            )
+            return tx_hash, [True] * len(req_id_bytes_list)
+
+        flags = _decode_delivery_flags(
+            web3,
+            receipt,
+            self.chain_config.marketplace_address,
+            len(req_id_bytes_list),
+        )
+        return tx_hash, flags
+
+    def _submit_delivery(
+        self, request_id: str, data: bytes
+    ) -> tuple[str, list[bool]]:
         """Submit deliverToMarketplace for a single request.
 
         Converts request_id to bytes32 and delegates to _submit_batch_delivery.
@@ -591,6 +703,182 @@ class DeliveryManager:
         tx_hash = fn_call.transact({"from": from_addr, "gas": gas})
         return _wait_and_check_receipt(self.bridge.web3, tx_hash, label)
 
+    async def _deliver_concurrent(self) -> int:
+        """Deliver up to DEFAULT_DELIVERY_WORKERS requests concurrently.
+
+        Each on-chain request becomes one Safe TX (batch_size=1), preserving
+        delivery_delta == nonce_delta for staking liveness.  An in-flight set
+        prevents the same request being picked up by two concurrent workers.
+        Safe nonce conflicts between workers are handled by the existing
+        _refresh_nonce retry path in SafeTransactionExecutor.
+        """
+        if self.bridge is None:
+            return 0
+
+        try:
+            _ = self.bridge.wallet.key_storage
+        except Exception:
+            if not self._wallet_warning_logged:
+                logger.warning(
+                    "Delivery skipped: no wallet available. "
+                    "Set wallet_password in secrets.env or use the web wizard."
+                )
+                self._wallet_warning_logged = True
+            return 0
+
+        records = self.queue.get_undelivered(
+            limit=DEFAULT_DELIVERY_WORKERS * 4, chain=self._chain_name
+        )
+        if not records:
+            return 0
+
+        onchain = [
+            r for r in records
+            if not r.request.is_offchain
+            and r.request.request_id not in self._in_flight
+        ][:DEFAULT_DELIVERY_WORKERS]
+
+        offchain = [
+            r for r in records
+            if r.request.is_offchain
+            and r.request.request_id not in self._in_flight
+        ]
+
+        selected = onchain + offchain
+        if not selected:
+            return 0
+
+        for r in selected:
+            self._in_flight.add(r.request.request_id)
+
+        tasks = (
+            [self._deliver_single_onchain(r) for r in onchain]
+            + [self._deliver_single_offchain_concurrent(r) for r in offchain]
+        )
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return sum(1 for r in results if r is True)
+
+    async def _deliver_single_onchain(self, record: RequestRecord) -> bool:
+        """Prepare and submit one on-chain request as a single Safe TX.
+
+        One delivery = one Safe TX nonce, preserving staking liveness.
+        Always removes the record from in-flight in the finally block.
+        """
+        try:
+            req_id_bytes, delivery_data, ipfs_cid_hex = (
+                await self._prepare_onchain(record)
+            )
+            tx_hash, delivered_flags = await asyncio.to_thread(
+                self._submit_batch_delivery,
+                [req_id_bytes],
+                [delivery_data],
+            )
+            req_id = record.request.request_id
+            self._delivery_failures.pop(req_id, None)
+            accepted = delivered_flags[0] if delivered_flags else True
+            if accepted:
+                self.queue.mark_delivered(
+                    req_id,
+                    tx_hash=tx_hash,
+                    ipfs_hash=ipfs_cid_hex,
+                )
+                self._delivered_count += 1
+                if self._metrics:
+                    self._metrics.record_delivery(
+                        req_id, chain=self._chain_name
+                    )
+                logger.info(
+                    "Delivered {} tool={} tx={}",
+                    req_id[:16] + "...",
+                    record.request.tool,
+                    tx_hash[:18] + "...",
+                )
+            else:
+                # TX mined but rejected as late by the marketplace contract
+                logger.warning(
+                    "Request {} timed out on-chain (tx={})",
+                    req_id[:16] + "...",
+                    tx_hash[:18] + "...",
+                )
+                self.queue.mark_timed_out(
+                    req_id,
+                    tx_hash=tx_hash,
+                    ipfs_hash=ipfs_cid_hex,
+                )
+                if self._metrics:
+                    self._metrics.record_delivery_failed(
+                        req_id, "on_chain_timeout", chain=self._chain_name
+                    )
+            return accepted
+        except Exception as e:
+            logger.exception(
+                "Delivery failed for {}: {}",
+                record.request.request_id[:20] + "...",
+                e,
+            )
+            self._increment_failure(
+                record.request.request_id, f"tx: {e}"
+            )
+            if self._metrics:
+                self._metrics.record_delivery_failed(
+                    record.request.request_id,
+                    str(e),
+                    chain=self._chain_name,
+                )
+            return False
+        finally:
+            self._in_flight.discard(record.request.request_id)
+
+    async def _deliver_single_offchain_concurrent(
+        self, record: RequestRecord
+    ) -> bool:
+        """Deliver one off-chain request, removing from in-flight when done."""
+        try:
+            tx_hash, ipfs_hash = await self._deliver_one(record)
+            if tx_hash:
+                self.queue.mark_delivered(
+                    record.request.request_id,
+                    tx_hash=tx_hash,
+                    ipfs_hash=ipfs_hash,
+                )
+                self._delivered_count += 1
+                if self._metrics:
+                    self._metrics.record_delivery(
+                        record.request.request_id, chain=self._chain_name
+                    )
+                prompt_short = (
+                    record.request.prompt[:60]
+                    if record.request.prompt
+                    else ""
+                )
+                logger.info(
+                    "Delivered (offchain) {} tool={} tx={} prompt={}",
+                    record.request.request_id[:16] + "...",
+                    record.request.tool,
+                    tx_hash[:18] + "...",
+                    prompt_short,
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.error(
+                "Delivery failed for {}: {}",
+                record.request.request_id,
+                e,
+            )
+            self._increment_failure(
+                record.request.request_id, f"delivery: {e}"
+            )
+            if self._metrics:
+                self._metrics.record_delivery_failed(
+                    record.request.request_id,
+                    str(e),
+                    chain=self._chain_name,
+                )
+            return False
+        finally:
+            self._in_flight.discard(record.request.request_id)
+
     # TODO(H1): crash recovery for STATUS_DELIVERING
     # If the process dies between _submit_batch_delivery and mark_delivered, the
     # records remain in STATUS_EXECUTED (or a hypothetical STATUS_DELIVERING) and
@@ -599,18 +887,27 @@ class DeliveryManager:
     # batches on startup and check the chain for the TX hash before re-submitting.
 
     async def run(self) -> None:
-        """Run the delivery loop."""
+        """Run the delivery loop with concurrent workers.
+
+        Fires DEFAULT_DELIVERY_WORKERS concurrent Safe TXs each tick
+        (interval DEFAULT_DELIVERY_INTERVAL seconds).  An in-flight set
+        prevents double-delivery across concurrent workers.
+        """
         self._running = True
         interval = DEFAULT_DELIVERY_INTERVAL
 
         if self.bridge is None:
             logger.info("Delivery manager: no bridge — delivery disabled")
         else:
-            logger.info("Delivery manager started (interval {}s)", interval)
+            logger.info(
+                "Delivery manager started (interval {}s, workers {})",
+                interval,
+                DEFAULT_DELIVERY_WORKERS,
+            )
 
         while self._running:
             try:
-                count = await self.deliver_batch()
+                count = await self._deliver_concurrent()
                 if count:
                     logger.debug("Delivered {} responses", count)
             except Exception as e:

@@ -197,6 +197,36 @@ class PersistentQueue:
                 f"Cannot mark {request_id} as delivered: not found or not in executed state"
             )
 
+    def mark_timed_out(
+        self, request_id: str, tx_hash: str, ipfs_hash: Optional[str] = None
+    ) -> None:
+        """Mark request as failed due to on-chain timeout.
+
+        The TX was mined successfully but the marketplace contract rejected the
+        delivery because it arrived after responseTimeout. Stored as STATUS_FAILED
+        with error='on_chain_timeout' and the tx_hash for traceability.
+        Must be in EXECUTED state.
+        """
+        now = datetime.now(timezone.utc)
+        rows = (
+            RequestRow.update(
+                status=STATUS_FAILED,
+                error="on_chain_timeout",
+                delivery_tx_hash=tx_hash,
+                ipfs_hash=ipfs_hash,
+                updated_at=now,
+            )
+            .where(
+                RequestRow.request_id == request_id,
+                RequestRow.status == STATUS_EXECUTED,
+            )
+            .execute()
+        )
+        if rows == 0:
+            raise PersistenceError(
+                f"Cannot mark {request_id} as timed out: not found or not in executed state"
+            )
+
     def mark_failed(self, request_id: str, error: str) -> None:
         """Mark request as permanently failed."""
         rows = (

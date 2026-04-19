@@ -201,7 +201,7 @@ class TestDeliverOneIpfsUnavailable:
         dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), _make_bridge())
         with (
             patch("micromech.ipfs.client.push_to_ipfs", side_effect=Exception("ipfs down")),
-            patch.object(dm, "_submit_delivery", return_value="0xtx") as mock_submit,
+            patch.object(dm, "_submit_delivery", return_value=("0xtx", [True])) as mock_submit,
         ):
             tx, ipfs = await dm._deliver_one(_make_record())
 
@@ -260,7 +260,9 @@ class TestSubmitDelivery:
         ):
             result = dm._submit_delivery("http-not-hex-id", b"data")
 
-        assert result == "0xtx"
+        tx_hash, flags = result
+        assert tx_hash == "0xtx"
+        assert flags == [True]  # fallback when receipt fetch fails
         mock_tx.assert_called_once()
 
 
@@ -381,7 +383,7 @@ class TestViaImpersonation:
 class TestRunLoop:
     @pytest.mark.asyncio
     async def test_run_exits_after_stop_called(self):
-        """run() exits cleanly when stop() is called inside deliver_batch."""
+        """run() exits cleanly when stop() is called inside _deliver_concurrent."""
         dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), bridge=None)
 
         async def _one_shot():
@@ -389,7 +391,7 @@ class TestRunLoop:
             return 0
 
         with (
-            patch.object(dm, "deliver_batch", side_effect=_one_shot),
+            patch.object(dm, "_deliver_concurrent", side_effect=_one_shot),
             patch("micromech.runtime.delivery.asyncio.sleep", _instant_sleep),
         ):
             # wait_for is a safety net; the loop should exit on its own
@@ -397,7 +399,7 @@ class TestRunLoop:
 
     @pytest.mark.asyncio
     async def test_run_logs_delivery_count(self):
-        """run() debug-logs when deliver_batch returns a non-zero count."""
+        """run() debug-logs when _deliver_concurrent returns a non-zero count."""
         dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), _make_bridge())
         call_count = [0]
 
@@ -407,7 +409,7 @@ class TestRunLoop:
             return 3  # Non-zero → triggers logger.debug inside run()
 
         with (
-            patch.object(dm, "deliver_batch", side_effect=_one_delivery),
+            patch.object(dm, "_deliver_concurrent", side_effect=_one_delivery),
             patch("micromech.runtime.delivery.asyncio.sleep", _instant_sleep),
         ):
             await _real_asyncio.wait_for(dm.run(), timeout=5.0)
@@ -416,7 +418,7 @@ class TestRunLoop:
 
     @pytest.mark.asyncio
     async def test_run_handles_deliver_batch_exception(self):
-        """run() catches exceptions from deliver_batch and keeps looping."""
+        """run() catches exceptions from _deliver_concurrent and keeps looping."""
         dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), _make_bridge())
         call_count = [0]
 
@@ -428,7 +430,7 @@ class TestRunLoop:
             return 0
 
         with (
-            patch.object(dm, "deliver_batch", side_effect=_raise_then_stop),
+            patch.object(dm, "_deliver_concurrent", side_effect=_raise_then_stop),
             patch("micromech.runtime.delivery.asyncio.sleep", _instant_sleep),
         ):
             await _real_asyncio.wait_for(dm.run(), timeout=5.0)
@@ -572,7 +574,7 @@ class TestDeliverOnchainBatch:
 
         with (
             patch.object(dm, "_prepare_onchain", side_effect=_fake_prepare),
-            patch.object(dm, "_submit_batch_delivery", return_value="0xtxhash") as mock_submit,
+            patch.object(dm, "_submit_batch_delivery", return_value=("0xtxhash", [True, True, True])) as mock_submit,
         ):
             count = await dm._deliver_onchain_batch(records)
 
@@ -601,7 +603,7 @@ class TestDeliverOnchainBatch:
 
         with (
             patch.object(dm, "_prepare_onchain", side_effect=_selective_prepare),
-            patch.object(dm, "_submit_batch_delivery", return_value="0xtx"),
+            patch.object(dm, "_submit_batch_delivery", return_value=("0xtx", [True])),
         ):
             count = await dm._deliver_onchain_batch([good_record, bad_record])
 
@@ -777,7 +779,9 @@ class TestSubmitBatchDelivery:
         ):
             result = dm._submit_batch_delivery([b"\x01" * 32, b"\x02" * 32], [b"data1", b"data2"])
 
-        assert result == "0xtx"
+        tx_hash, flags = result
+        assert tx_hash == "0xtx"
+        assert flags == [True, True]  # fallback when receipt fetch fails
         mock_submit_tx.assert_called_once()
         # Verify deliverToMarketplace was called with the two-item arrays
         mock_contract.functions.deliverToMarketplace.assert_called_once_with(
@@ -851,3 +855,214 @@ class TestPrepareOnchainIpfsRecovery:
             await dm._prepare_onchain(record)
 
         assert dm._ipfs_warning_logged is False
+
+
+# ---------------------------------------------------------------------------
+# _deliver_single_onchain
+# ---------------------------------------------------------------------------
+
+
+class TestDeliverSingleOnchain:
+    @pytest.mark.asyncio
+    async def test_success_marks_delivered_and_returns_true(self):
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        dm._in_flight.add(record.request.request_id)
+
+        async def _fake_prepare(rec):
+            return b"\x00" * 32, b"data", "0xcid"
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_fake_prepare),
+            patch.object(dm, "_submit_batch_delivery", return_value=("0xtx", [True])),
+        ):
+            result = await dm._deliver_single_onchain(record)
+
+        assert result is True
+        q.mark_delivered.assert_called_once()
+        assert record.request.request_id not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_failure_increments_counter_and_returns_false(self):
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        dm._in_flight.add(record.request.request_id)
+
+        with patch.object(
+            dm, "_prepare_onchain", side_effect=RuntimeError("ipfs down")
+        ):
+            result = await dm._deliver_single_onchain(record)
+
+        assert result is False
+        q.mark_delivered.assert_not_called()
+        assert record.request.request_id not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_always_removes_from_in_flight_on_success(self):
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        dm._in_flight.add(record.request.request_id)
+
+        async def _fake_prepare(rec):
+            return b"\x00" * 32, b"data", None
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_fake_prepare),
+            patch.object(dm, "_submit_batch_delivery", return_value=("0xtx", [True])),
+        ):
+            await dm._deliver_single_onchain(record)
+
+        assert record.request.request_id not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_always_removes_from_in_flight_on_failure(self):
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        dm._in_flight.add(record.request.request_id)
+
+        with patch.object(
+            dm, "_prepare_onchain", side_effect=RuntimeError("boom")
+        ):
+            await dm._deliver_single_onchain(record)
+
+        assert record.request.request_id not in dm._in_flight
+
+
+# ---------------------------------------------------------------------------
+# _deliver_concurrent
+# ---------------------------------------------------------------------------
+
+
+class TestDeliverConcurrent:
+    @pytest.mark.asyncio
+    async def test_skips_without_bridge(self):
+        dm = DeliveryManager(
+            _make_config(), _make_chain_config(), _make_queue(), bridge=None
+        )
+        result = await dm._deliver_concurrent()
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_queue_empty(self):
+        bridge = _make_bridge()
+        q = _make_queue()
+        q.get_undelivered.return_value = []
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        result = await dm._deliver_concurrent()
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_skips_in_flight_records(self):
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+        q.get_undelivered.return_value = [record]
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        dm._in_flight.add(record.request.request_id)
+
+        with patch.object(dm, "_deliver_single_onchain") as mock_single:
+            result = await dm._deliver_concurrent()
+
+        assert result == 0
+        mock_single.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delivers_up_to_worker_limit_concurrently(self):
+        from micromech.core.constants import DEFAULT_DELIVERY_WORKERS
+
+        bridge = _make_bridge()
+        q = _make_queue()
+        records = [
+            _make_record(request_id=f"0x{i:064x}")
+            for i in range(DEFAULT_DELIVERY_WORKERS + 2)
+        ]
+        q.get_undelivered.return_value = records
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        async def _fake_deliver(rec):
+            return True
+
+        with patch.object(
+            dm, "_deliver_single_onchain", side_effect=_fake_deliver
+        ) as mock_single:
+            result = await dm._deliver_concurrent()
+
+        assert result == DEFAULT_DELIVERY_WORKERS
+        assert mock_single.call_count == DEFAULT_DELIVERY_WORKERS
+
+    @pytest.mark.asyncio
+    async def test_no_wallet_skips_and_warns(self):
+        class _LockedWallet:
+            @property
+            def key_storage(self):
+                raise Exception("locked")
+
+        bridge = MagicMock()
+        bridge.wallet = _LockedWallet()
+        q = _make_queue()
+        q.get_undelivered.return_value = [_make_record()]
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        result = await dm._deliver_concurrent()
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_mixed_onchain_offchain_respects_worker_limit(self):
+        """On-chain capped at DEFAULT_DELIVERY_WORKERS; off-chain gets remainder."""
+        from micromech.core.constants import DEFAULT_DELIVERY_WORKERS
+
+        bridge = _make_bridge()
+        q = _make_queue()
+        # 2 on-chain + 5 off-chain records in the fetched batch
+        onchain_records = [
+            _make_record(request_id=f"0x{i:064x}", is_offchain=False)
+            for i in range(2)
+        ]
+        offchain_records = [
+            _make_record(
+                request_id=f"0x{10 + i:064x}", is_offchain=True
+            )
+            for i in range(5)
+        ]
+        q.get_undelivered.return_value = onchain_records + offchain_records
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        async def _fake_single_on(rec):
+            return True
+
+        async def _fake_single_off(rec):
+            return True
+
+        with (
+            patch.object(
+                dm, "_deliver_single_onchain", side_effect=_fake_single_on
+            ) as mock_on,
+            patch.object(
+                dm,
+                "_deliver_single_offchain_concurrent",
+                side_effect=_fake_single_off,
+            ) as mock_off,
+        ):
+            result = await dm._deliver_concurrent()
+
+        # On-chain capped at min(2, DEFAULT_DELIVERY_WORKERS)
+        assert mock_on.call_count == min(2, DEFAULT_DELIVERY_WORKERS)
+        # All off-chain records in the batch are processed
+        assert mock_off.call_count == 5
+        assert result == mock_on.call_count + mock_off.call_count
