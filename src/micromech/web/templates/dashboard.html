@@ -677,6 +677,8 @@
         historyPageSize: 20,
         logLines: [],
         logInitialized: false,
+        lastStats24h: {},
+        lastStats7d: {},
     };
 
     // --- Chart.js defaults ---
@@ -743,8 +745,10 @@
     function updateLiveMetrics(data) {
         const live = data.live || {};
         const queue = data.queue || {};
-        const s24 = data.stats_24h || {};
-        const s7d = data.stats_7d || {};
+        if (data.stats_24h) state.lastStats24h = data.stats_24h;
+        if (data.stats_7d) state.lastStats7d = data.stats_7d;
+        const s24 = state.lastStats24h;
+        const s7d = state.lastStats7d;
 
         // Received / Delivered / Failed: 24h from DB (survives restarts)
         setText('m-received', s24.received ?? live.requests_received ?? 0);
