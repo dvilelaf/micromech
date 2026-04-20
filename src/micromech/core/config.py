@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from micromech.core.constants import (
     DEFAULT_CHAIN,
     DEFAULT_CONFIG_DIR,
+    DEFAULT_DELIVERY_INTERVAL,
     DEFAULT_DELIVERY_RATE,
     validate_eth_address,
 )
@@ -58,6 +59,9 @@ class MicromechConfig(BaseModel):
 
     # Chains (written by setup wizard)
     chains: dict[str, ChainConfig] = Field(default_factory=dict)
+
+    # Delivery
+    delivery_interval: int = Field(default=DEFAULT_DELIVERY_INTERVAL, ge=1, le=60)
 
     # Tasks
     checkpoint_interval_minutes: int = Field(default=10, ge=1, le=120)

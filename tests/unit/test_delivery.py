@@ -347,15 +347,11 @@ class TestDeliveryLifecycle:
         assert delivery_no_bridge.delivered_count == 0
 
     @pytest.mark.asyncio
-    async def test_run_loop_exits_on_stop(self, queue: PersistentQueue, monkeypatch):
+    async def test_run_loop_exits_on_stop(self, queue: PersistentQueue):
         """Run loop should exit when stop() is called."""
         import asyncio
 
-        monkeypatch.setattr(
-            "micromech.runtime.delivery.DEFAULT_DELIVERY_INTERVAL",
-            1,
-        )
-        config = MicromechConfig()
+        config = MicromechConfig(delivery_interval=1)
         dm = DeliveryManager(config=config, chain_config=CHAIN_CFG, queue=queue, bridge=None)
 
         async def stop_soon():

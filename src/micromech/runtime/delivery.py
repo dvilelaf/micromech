@@ -27,7 +27,6 @@ from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import (
     DEFAULT_DELIVERY_BATCH_SIZE,
     DEFAULT_DELIVERY_FLUSH_TIMEOUT,
-    DEFAULT_DELIVERY_INTERVAL,
     DEFAULT_DELIVERY_MAX_RETRIES,
     DEFAULT_DELIVERY_WORKERS,
     GAS_FALLBACK,
@@ -987,11 +986,11 @@ class DeliveryManager:
         """Run the delivery loop with concurrent workers.
 
         Fires DEFAULT_DELIVERY_WORKERS concurrent Safe TXs each tick
-        (interval DEFAULT_DELIVERY_INTERVAL seconds).  An in-flight set
+        (interval config.delivery_interval seconds).  An in-flight set
         prevents double-delivery across concurrent workers.
         """
         self._running = True
-        interval = DEFAULT_DELIVERY_INTERVAL
+        interval = self.config.delivery_interval
 
         if self.bridge is None:
             logger.info("Delivery manager: no bridge — delivery disabled")
