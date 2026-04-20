@@ -1201,6 +1201,7 @@
                 actionsHtml = `
                     <button class="btn btn-sm btn-secondary" data-action="checkpoint" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Checkpoint</button>
                     <button class="btn btn-sm btn-success" data-action="claim" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Claim Rewards</button>
+                    <button class="btn btn-sm btn-primary" data-action="withdraw" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Withdraw Payments</button>
                     <button class="btn btn-sm btn-danger" data-action="unstake" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Unstake</button>
                     <button class="btn btn-sm btn-secondary" data-action="status" data-chain="${escapeHtml(chainName)}" data-key="${escapeHtml(serviceKey)}">Refresh Status</button>`;
             } else if (stakingState === 'loading') {
@@ -1263,7 +1264,17 @@
             const data = await resp.json();
             if (data.success) {
                 el.style.color = 'var(--success)';
-                el.textContent = action + ' on ' + chain + ' succeeded' + (data.data ? ':\n' + JSON.stringify(data.data, null, 2) : '');
+                let msg = action + ' on ' + chain + ' succeeded';
+                if (action === 'withdraw' && data.data) {
+                    if (data.data.amount_xdai > 0) {
+                        msg += ': ' + data.data.amount_xdai.toFixed(6) + ' xDAI withdrawn';
+                    } else {
+                        msg += ': ' + (data.data.message || 'no pending payments');
+                    }
+                } else if (data.data) {
+                    msg += ':\n' + JSON.stringify(data.data, null, 2);
+                }
+                el.textContent = msg;
                 // Refresh management data after successful action
                 setTimeout(loadManagementTab, 1500);
             } else {

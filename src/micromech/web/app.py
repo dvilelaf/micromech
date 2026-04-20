@@ -1311,6 +1311,49 @@ def create_web_app(
             elif action == "status":
                 status = lc.get_status(service_key)
                 return {"success": True, "data": status}
+            elif action == "withdraw":
+                from micromech.core.bridge import IwaBridge, get_service_info
+                from micromech.core.marketplace import (
+                    get_balance_tracker_address,
+                    get_pending_balance,
+                )
+                from micromech.tasks.payment_withdraw import (
+                    _drain_mech_to_safe,
+                    _transfer_to_master,
+                    _withdraw,
+                )
+
+                chain_cfg = config.enabled_chains.get(chain)
+                if not chain_cfg or not chain_cfg.mech_address:
+                    return {"success": False, "error": "No mech_address configured for this chain"}
+
+                bridge = IwaBridge(chain_name=chain)
+                bt_address = get_balance_tracker_address(
+                    bridge, chain, chain_cfg.mech_address, chain_cfg.marketplace_address
+                )
+                if not bt_address:
+                    return {"success": False, "error": "Could not find balance tracker address"}
+
+                balance = get_pending_balance(bridge, bt_address, chain_cfg.mech_address)
+                if balance <= 0:
+                    return {"success": True, "action": "withdraw", "data": {"amount_xdai": 0.0, "message": "No pending payments"}}
+
+                svc_info = get_service_info(chain)
+                multisig = svc_info.get("multisig_address")
+                if not multisig:
+                    return {"success": False, "error": "No multisig_address found"}
+
+                _withdraw(bridge, chain, bt_address, chain_cfg.mech_address, multisig)
+
+                web3 = bridge.web3
+                mech_wei = bridge.with_retry(
+                    lambda: web3.eth.get_balance(web3.to_checksum_address(chain_cfg.mech_address))
+                )
+                _drain_mech_to_safe(bridge, chain, chain_cfg.mech_address, multisig, mech_wei)
+                _transfer_to_master(bridge, chain, multisig, mech_wei)
+
+                amount_xdai = round(mech_wei / 1e18, 6)
+                return {"success": True, "action": "withdraw", "data": {"amount_xdai": amount_xdai}}
             else:
                 return {"success": False, "error": f"Unknown action: {action}"}
 
