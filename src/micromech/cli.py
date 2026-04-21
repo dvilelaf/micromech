@@ -94,6 +94,9 @@ _REMOVED_FIELDS: dict[str, str | None] = {
     # claim_threshold_olas (OLAS units, default 1.0) replaced by
     # claim_threshold_eur (EUR units, default 10.0) — units incompatible.
     "claim_threshold_olas": None,
+    # xdai_sweep_amount_xdai (fixed send amount) replaced by
+    # xdai_sweep_reserve_xdai (keep this much, send the rest).
+    "xdai_sweep_amount_xdai": "xdai_sweep_reserve_xdai",
 }
 
 

@@ -78,7 +78,7 @@ class MicromechConfig(BaseModel):
     xdai_sweep_enabled: bool = True
     xdai_sweep_tag: str = ""
     xdai_sweep_threshold_xdai: float = Field(default=30.0, ge=0)
-    xdai_sweep_amount_xdai: float = Field(default=20.0, ge=0)
+    xdai_sweep_reserve_xdai: float = Field(default=10.0, ge=0)
     xdai_sweep_interval_hours: int = Field(default=6, ge=1, le=168)
     low_balance_alert_enabled: bool = True
     low_balance_alert_interval_hours: int = Field(default=6, ge=1, le=48)

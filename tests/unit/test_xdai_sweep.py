@@ -32,7 +32,7 @@ def _make_config(**kw):
     cfg.xdai_sweep_enabled = True
     cfg.xdai_sweep_tag = "sweep_dest"
     cfg.xdai_sweep_threshold_xdai = 30.0
-    cfg.xdai_sweep_amount_xdai = 20.0
+    cfg.xdai_sweep_reserve_xdai = 10.0
     cfg.xdai_sweep_interval_hours = 6
     return cfg
 
@@ -111,9 +111,10 @@ class TestXdaiSweepTask:
         notification.notify.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_sweeps_when_balance_above_threshold(self):
-        cfg = _make_config()
-        wallet = _make_wallet(balance=35.0)
+    async def test_sweeps_balance_minus_reserve(self):
+        """Sends balance - reserve, keeping reserve in master wallet."""
+        cfg = _make_config()  # threshold=30, reserve=10
+        wallet = _make_wallet(balance=54.0)
         bridge = _make_bridge(wallet)
         notification = NotificationService()
         notification.notify = AsyncMock()
@@ -125,11 +126,29 @@ class TestXdaiSweepTask:
         call_kw = wallet.send.call_args.kwargs
         assert call_kw["from_address_or_tag"] == "master"
         assert call_kw["to_address_or_tag"] == DEST_ADDR
-        assert call_kw["amount_wei"] == int(20.0 * 1e18)
+        assert call_kw["amount_wei"] == int(44.0 * 1e18)  # 54 - 10 reserve
         assert call_kw["chain_name"] == "gnosis"
         notification.notify.assert_awaited_once()
         msg = notification.notify.call_args[0][0]
-        assert "20.0000" in msg
+        assert "44.0000" in msg
+
+    @pytest.mark.asyncio
+    async def test_sweep_amount_varies_with_balance(self):
+        """Different balances produce different sweep amounts (all minus reserve)."""
+        cfg = _make_config()  # threshold=30, reserve=10
+        for balance, expected_sweep in [(35.0, 25.0), (100.0, 90.0), (30.1, 20.1)]:
+            wallet = _make_wallet(balance=balance)
+            bridge = _make_bridge(wallet)
+            notification = NotificationService()
+            notification.notify = AsyncMock()
+
+            with patch("micromech.core.bridge.get_wallet", return_value=wallet):
+                await xdai_sweep_task({"gnosis": bridge}, notification, cfg)
+
+            sent_wei = wallet.send.call_args.kwargs["amount_wei"]
+            assert abs(sent_wei - int(expected_sweep * 1e18)) < 1000, (
+                f"balance={balance}: expected {expected_sweep} xDAI, got {sent_wei/1e18}"
+            )
 
     @pytest.mark.asyncio
     async def test_skips_when_no_gnosis_bridge(self):

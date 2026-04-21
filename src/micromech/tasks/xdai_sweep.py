@@ -1,9 +1,11 @@
 """xDAI sweep task.
 
-When the master wallet accumulates more xDAI than a configured threshold,
-sends a fixed amount to an address resolved by tag (wallet or iwa whitelist).
+When the master wallet balance exceeds xdai_sweep_threshold_xdai, sweeps all
+but xdai_sweep_reserve_xdai to the configured destination tag, leaving a fixed
+reserve in the master wallet.
 
-This lets excess xDAI earnings flow out automatically without manual transfers.
+Example: threshold=30, reserve=10 → if balance=54, sends 44 xDAI and keeps 10.
+
 If xdai_sweep_tag is empty, the task is a no-op.
 """
 
@@ -71,14 +73,19 @@ async def xdai_sweep_task(
             )
             return
 
-        sweep_amount = config.xdai_sweep_amount_xdai
+        sweep_amount = balance - config.xdai_sweep_reserve_xdai
+        if sweep_amount <= 0:
+            logger.debug("xDAI sweep: nothing to sweep after reserving {:.4f} xDAI", config.xdai_sweep_reserve_xdai)
+            return
+
         amount_wei = int(sweep_amount * 1e18)
 
         logger.info(
-            "xDAI sweep: sending {:.4f} xDAI to {} ({})",
+            "xDAI sweep: sending {:.4f} xDAI to {} ({}) — keeping {:.4f} reserve",
             sweep_amount,
             tag,
             dest_addr,
+            config.xdai_sweep_reserve_xdai,
         )
 
         tx_hash = await asyncio.to_thread(
@@ -91,10 +98,10 @@ async def xdai_sweep_task(
 
         logger.info("xDAI sweep complete. TX: {}", tx_hash)
         explorer_url = f"https://gnosisscan.io/address/{dest_addr}"
-        logger.info("[xDAI Sweep] Amount: {:.4f} xDAI → {} ({})", sweep_amount, tag, dest_addr)
         await notification_service.notify(
             f"<b>xDAI Sweep</b>\n"
             f"Amount: {sweep_amount:.4f} xDAI\n"
+            f"Reserve kept: {config.xdai_sweep_reserve_xdai:.4f} xDAI\n"
             f"To: <a href=\"{explorer_url}\">{tag}</a>"
         )
 
