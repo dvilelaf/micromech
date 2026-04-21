@@ -18,6 +18,7 @@ Batching strategy:
 
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -33,6 +34,7 @@ from micromech.core.constants import (
     GAS_FLOOR_DELIVERY,
     IPFS_API_URL,
 )
+from micromech.core.locks import get_safe_lock as get_safe_lock  # re-exported for compat
 from micromech.core.models import RequestRecord
 from micromech.core.persistence import PersistentQueue
 
@@ -41,6 +43,25 @@ if TYPE_CHECKING:
 
 
 TX_RECEIPT_TIMEOUT = 120  # seconds
+
+
+# Redacts 0x-prefixed hex blobs ≥ 64 chars (private keys, tx hashes, sigs).
+_HEX_BLOB_RE = re.compile(r"0x[0-9a-fA-F]{64,}", re.ASCII)
+
+
+def _sanitize_error(exc: BaseException, _depth: int = 0) -> str:
+    """Return a redacted string of an exception, traversing __cause__ up to depth 5.
+
+    Replaces 0x[64+ hex chars] with 0x[REDACTED] to prevent accidental key
+    or signature leakage in log lines and error messages.
+    """
+    if _depth > 5:
+        return "..."
+    msg = _HEX_BLOB_RE.sub("0x[REDACTED]", str(exc))
+    if exc.__cause__ is not None:
+        cause_msg = _sanitize_error(exc.__cause__, _depth + 1)
+        msg = f"{msg} (caused by: {cause_msg})"
+    return msg
 
 
 def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
@@ -181,6 +202,22 @@ class DeliveryManager:
     def _chain_name(self) -> str:
         """Chain name from this delivery manager's config."""
         return self.chain_config.chain
+
+    def _get_nonce_allocator(self) -> Any:
+        """Return the NonceAllocator for this delivery manager's Safe multisig."""
+        from micromech.core.bridge import get_service_info
+
+        svc_info = get_service_info(self.chain_config.chain)
+        multisig = svc_info.get("multisig_address")
+        if not multisig:
+            raise ValueError(
+                "multisig_address not configured — cannot get nonce allocator"
+            )
+        return self.bridge.wallet.safe_service.get_allocator(
+            multisig,
+            self._chain_name,
+            gap_alert_threshold=self.config.nonce_gap_alert_threshold,
+        )
 
     def _get_mech_contract(self) -> Any:
         """Lazy-load the mech contract instance."""
@@ -334,16 +371,17 @@ class DeliveryManager:
                         prompt_short,
                     )
             except Exception as e:
+                err_str = _sanitize_error(e)
                 logger.error(
                     "Delivery failed for {}: {}",
                     record.request.request_id,
-                    e,
+                    err_str,
                 )
                 if self._metrics:
                     self._metrics.record_delivery_failed(
-                        record.request.request_id, str(e), chain=self._chain_name
+                        record.request.request_id, err_str, chain=self._chain_name
                     )
-                self.queue.mark_failed(record.request.request_id, f"delivery: {e}")
+                self.queue.mark_failed(record.request.request_id, f"delivery: {err_str}")
 
         return delivered
 
@@ -421,6 +459,7 @@ class DeliveryManager:
                     )
                     n_timed_out += 1
                     if self._metrics:
+                        self._metrics.record_late_delivery(req_id, chain=self._chain_name)
                         self._metrics.record_delivery_failed(
                             req_id, "on_chain_timeout", chain=self._chain_name
                         )
@@ -446,15 +485,16 @@ class DeliveryManager:
                 ),
                 DEFAULT_DELIVERY_MAX_RETRIES,
             )
+            err_str = _sanitize_error(e)
             for record, *_ in good:
                 if self._metrics:
                     self._metrics.record_delivery_failed(
-                        record.request.request_id, str(e), chain=self._chain_name
+                        record.request.request_id, err_str, chain=self._chain_name
                     )
                 # Increment per-record counter; mark_failed only after MAX_RETRIES.
                 # TX reverts may be transient (gas, nonce, RPC) — leave in EXECUTED
                 # until the retry budget is exhausted.
-                self._increment_failure(record.request.request_id, f"tx: {e}")
+                self._increment_failure(record.request.request_id, f"tx: {err_str}")
             return 0
 
     async def _prepare_onchain(self, record: RequestRecord) -> tuple[bytes, bytes, Optional[str]]:
@@ -588,7 +628,10 @@ class DeliveryManager:
         return tx_hash, ipfs_cid_hex
 
     def _submit_batch_delivery(
-        self, req_id_bytes_list: list[bytes], datas: list[bytes]
+        self,
+        req_id_bytes_list: list[bytes],
+        datas: list[bytes],
+        safe_nonce: Optional[int] = None,
     ) -> tuple[str, list[bool]]:
         """Submit deliverToMarketplace([ids...], [datas...]) in a single Safe TX.
 
@@ -610,7 +653,7 @@ class DeliveryManager:
             datas,
         )
         label = f"BatchDelivery[{len(req_id_bytes_list)}]"
-        tx_hash = self._submit_tx(fn_call, from_addr, label)
+        tx_hash = self._submit_tx(fn_call, from_addr, label, safe_nonce=safe_nonce)
 
         # Parse per-request delivery outcome from the MarketplaceDelivery event.
         # The contract accepts late deliveries without reverting, but records them
@@ -694,7 +737,13 @@ class DeliveryManager:
         )
         return self._submit_tx(fn_call, from_addr, "Offchain delivery")
 
-    def _submit_tx(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
+    def _submit_tx(
+        self,
+        fn_call: Any,
+        from_addr: str,
+        label: str = "TX",
+        safe_nonce: Optional[int] = None,
+    ) -> str:
         """Submit a contract call via Safe (prod) or impersonation (local/test).
 
         Production: bridge has safe_service → _via_safe (Gnosis Safe execTransaction).
@@ -702,10 +751,16 @@ class DeliveryManager:
         Any failure propagates as an exception — no silent fallbacks.
         """
         if self._has_safe:
-            return self._via_safe(fn_call, from_addr, label)
+            return self._via_safe(fn_call, from_addr, label, safe_nonce=safe_nonce)
         return self._via_impersonation(fn_call, from_addr, label)
 
-    def _via_safe(self, fn_call: Any, from_addr: str, label: str = "TX") -> str:
+    def _via_safe(
+        self,
+        fn_call: Any,
+        from_addr: str,
+        label: str = "TX",
+        safe_nonce: Optional[int] = None,
+    ) -> str:
         """Submit via Gnosis Safe execTransaction (production path)."""
         mech_address = self.bridge.web3.to_checksum_address(
             self.chain_config.mech_address,
@@ -717,6 +772,8 @@ class DeliveryManager:
             value=0,
             chain_name=self._chain_name,
             data=call_data,
+            safe_nonce=safe_nonce,
+            allow_nonce_refresh=safe_nonce is None,
         )
         logger.info("Safe {} submitted chain={}: {}", label, self._chain_name, tx_hash)
         return tx_hash if isinstance(tx_hash, str) else tx_hash.hex()
@@ -745,8 +802,8 @@ class DeliveryManager:
         Each on-chain request becomes one Safe TX (batch_size=1), preserving
         delivery_delta == nonce_delta for staking liveness.  An in-flight set
         prevents the same request being picked up by two concurrent workers.
-        Safe nonce conflicts between workers are handled by the existing
-        _refresh_nonce retry path in SafeTransactionExecutor.
+        When a Safe service is available, NonceAllocator pre-assigns sequential
+        nonces so workers submit their Safe TXs in parallel without GS026 races.
         """
         if self.bridge is None:
             return 0
@@ -829,13 +886,43 @@ class DeliveryManager:
         for r in selected:
             self._in_flight.add(r.request.request_id)
 
-        # On-chain deliveries are sequential: concurrent build_tx() calls
-        # return the same Safe nonce, causing GS026 (invalid signature after
-        # another worker already advanced the nonce). Off-chain deliveries
-        # (HTTP) have no nonce constraint and run concurrently.
-        onchain_results = []
-        for r in onchain:
-            onchain_results.append(await self._deliver_single_onchain(r))
+        # Pre-assign sequential nonces then dispatch workers in parallel.
+        # Each worker gets its own nonce slot so concurrent Safe TXs don't
+        # collide on GS026.  Off-chain (HTTP) deliveries have no nonce
+        # constraint and always run concurrently.
+        # safe_lock coordinates with payment_withdraw_task so only one
+        # consumer submits Safe TXs at a time.
+        if onchain and self._has_safe and self.config.parallel_nonce_enabled:
+            from micromech.core.bridge import get_service_info
+
+            svc_info = get_service_info(self._chain_name)
+            multisig = svc_info.get("multisig_address", "")
+
+            allocator = self._get_nonce_allocator()
+            allocator.check_stuck(len(onchain))
+
+            async def _dispatch(r: RequestRecord) -> bool:
+                nonce = await asyncio.to_thread(allocator.allocate)
+                try:
+                    result = await self._deliver_single_onchain(r, safe_nonce=nonce)
+                    if not result:
+                        # Invalidate before release so _in_flight_nonces still
+                        # reflects this nonce at invalidation time (for drain).
+                        allocator.invalidate("delivery_failed")
+                    return result
+                finally:
+                    allocator.release(nonce)
+
+            async with get_safe_lock(multisig):
+                onchain_results: list[bool | BaseException] = list(
+                    await asyncio.gather(
+                        *[_dispatch(r) for r in onchain], return_exceptions=True
+                    )
+                )
+        else:
+            onchain_results = []
+            for r in onchain:
+                onchain_results.append(await self._deliver_single_onchain(r))
 
         offchain_tasks = [
             self._deliver_single_offchain_concurrent(r) for r in offchain
@@ -854,7 +941,9 @@ class DeliveryManager:
             )
         return n_delivered
 
-    async def _deliver_single_onchain(self, record: RequestRecord) -> bool:
+    async def _deliver_single_onchain(
+        self, record: RequestRecord, safe_nonce: Optional[int] = None
+    ) -> bool:
         """Prepare and submit one on-chain request as a single Safe TX.
 
         One delivery = one Safe TX nonce, preserving staking liveness.
@@ -868,6 +957,7 @@ class DeliveryManager:
                 self._submit_batch_delivery,
                 [req_id_bytes],
                 [delivery_data],
+                safe_nonce,
             )
             req_id = record.request.request_id
             self._delivery_failures.pop(req_id, None)
@@ -902,23 +992,25 @@ class DeliveryManager:
                     ipfs_hash=ipfs_cid_hex,
                 )
                 if self._metrics:
+                    self._metrics.record_late_delivery(req_id, chain=self._chain_name)
                     self._metrics.record_delivery_failed(
                         req_id, "on_chain_timeout", chain=self._chain_name
                     )
             return accepted
         except Exception as e:
+            err_str = _sanitize_error(e)
             logger.exception(
                 "Delivery failed for {}: {}",
                 record.request.request_id[:20] + "...",
-                e,
+                err_str,
             )
             self._increment_failure(
-                record.request.request_id, f"tx: {e}"
+                record.request.request_id, f"tx: {err_str}"
             )
             if self._metrics:
                 self._metrics.record_delivery_failed(
                     record.request.request_id,
-                    str(e),
+                    err_str,
                     chain=self._chain_name,
                 )
             return False
@@ -957,18 +1049,19 @@ class DeliveryManager:
                 return True
             return False
         except Exception as e:
+            err_str = _sanitize_error(e)
             logger.error(
                 "Delivery failed for {}: {}",
                 record.request.request_id,
-                e,
+                err_str,
             )
             self._increment_failure(
-                record.request.request_id, f"delivery: {e}"
+                record.request.request_id, f"delivery: {err_str}"
             )
             if self._metrics:
                 self._metrics.record_delivery_failed(
                     record.request.request_id,
-                    str(e),
+                    err_str,
                     chain=self._chain_name,
                 )
             return False
@@ -1006,6 +1099,7 @@ class DeliveryManager:
                 count = await self._deliver_concurrent()
                 if count:
                     logger.debug("Delivered {} responses", count)
+
             except Exception as e:
                 logger.exception("Delivery loop error: {}", e)
             await asyncio.sleep(interval)

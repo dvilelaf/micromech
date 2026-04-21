@@ -1,19 +1,18 @@
 """Delivery worker sequencing and correctness tests.
 
-On-chain deliveries are intentionally SEQUENTIAL to prevent Safe nonce races.
-Concurrent build_tx() calls return the same nonce, causing GS026 (invalid
-signature after another worker advances the nonce first). By processing
-on-chain records one at a time, each worker gets a unique nonce.
+There are two on-chain delivery paths in _deliver_concurrent():
 
-Off-chain (HTTP) deliveries have no nonce constraint and remain concurrent.
+1. PARALLEL path (_has_safe=True, production):
+   NonceAllocator pre-assigns sequential nonces; workers run concurrently via
+   asyncio.gather(). Each worker gets a unique nonce slot, avoiding GS026.
+   Tested by: TestParallelNonceDispatch
 
-Architecture
-------------
-_deliver_concurrent() iterates on-chain records sequentially (for loop),
-then gathers off-chain records with asyncio.gather(). Each on-chain step:
+2. SERIAL fallback path (_has_safe=False, Anvil/test):
+   On-chain records processed sequentially (for loop). Used in tests where
+   bridge has no safe_service (impersonation path).
+   Tested by: TestConcurrentWorkerStallResilience (serial correctness)
 
-    await self._prepare_onchain(record)          # async — IPFS/prep
-    await asyncio.to_thread(_submit_batch_delivery, ...)  # Safe TX
+Off-chain (HTTP) deliveries have no nonce constraint and always run concurrently.
 
 Mocking strategy
 ----------------
@@ -62,8 +61,8 @@ FAST2_BYTES = bytes.fromhex(FAST2_ID[2:])
 # ---------------------------------------------------------------------------
 
 
-def _make_config() -> MicromechConfig:
-    return MicromechConfig()
+def _make_config(parallel_nonce: bool = False) -> MicromechConfig:
+    return MicromechConfig(parallel_nonce_enabled=parallel_nonce)
 
 
 def _make_chain_config(**kw) -> ChainConfig:
@@ -129,7 +128,7 @@ def _make_submit_with_delay(completed_at: dict[bytes, float], t0: float):
     time.sleep() blocks the THREAD but NOT the event loop — asyncio.to_thread()
     releases the event loop during the sleep, allowing other workers to proceed.
     """
-    def _submit(req_id_bytes_list: list[bytes], datas: list[bytes]) -> tuple[str, list[bool]]:
+    def _submit(req_id_bytes_list: list[bytes], datas: list[bytes], safe_nonce=None) -> tuple[str, list[bool]]:
         rid = req_id_bytes_list[0]
         delay = STALL_DELAY if rid == STALL_BYTES else FAST_DELAY
         time.sleep(delay)
@@ -148,14 +147,13 @@ class TestConcurrentWorkerStallResilience:
 
     @pytest.mark.asyncio
     async def test_fast_workers_complete_before_stalled_worker(self):
-        """CORRECTNESS PROOF: all records delivered sequentially, no nonce race.
+        """SERIAL FALLBACK PATH: all records delivered sequentially (_has_safe=False).
 
-        On-chain submissions are intentionally sequential to prevent Safe nonce
-        races (concurrent build_tx() calls return the same nonce → GS026).
+        This test exercises the impersonation/Anvil path where bridge has no
+        safe_service.  On-chain submissions fall back to a sequential for loop.
 
-        Queue order: STALL_ID, FAST1_ID, FAST2_ID (as returned by get_undelivered).
-        Expected completion order: STALL → FAST1 → FAST2 (sequential).
-
+        Queue order: STALL_ID, FAST1_ID, FAST2_ID.
+        Expected completion order: STALL → FAST1 → FAST2.
         All 3 must be delivered regardless of individual request latency.
         """
         stall_record = _make_record(STALL_ID)
@@ -327,7 +325,7 @@ class TestConcurrentWorkerStallResilience:
         started_at: dict[bytes, float] = {}
         t0 = time.monotonic()
 
-        def _submit_track_start(req_id_bytes_list, datas):
+        def _submit_track_start(req_id_bytes_list, datas, safe_nonce=None):
             rid = req_id_bytes_list[0]
             started_at[rid] = time.monotonic() - t0
             delay = STALL_DELAY if rid == STALL_BYTES else FAST_DELAY
@@ -370,7 +368,7 @@ class TestConcurrentWorkerStallResilience:
 
         submit_call_count = [0]
 
-        def _count_submissions(req_id_bytes_list, datas):
+        def _count_submissions(req_id_bytes_list, datas, safe_nonce=None):
             submit_call_count[0] += 1
             return ("0x" + "ab" * 32, [True])
 
@@ -465,7 +463,7 @@ class TestConcurrentWorkerStallResilience:
 
         submit_call_count = [0]
 
-        def _count_submit(req_id_bytes_list, datas):
+        def _count_submit(req_id_bytes_list, datas, safe_nonce=None):
             submit_call_count[0] += 1
             return ("0x" + "ab" * 32, [True])
 
@@ -506,7 +504,7 @@ class TestConcurrentWorkerStallResilience:
 
         submit_call_count = [0]
 
-        def _count_submit(req_id_bytes_list, datas):
+        def _count_submit(req_id_bytes_list, datas, safe_nonce=None):
             submit_call_count[0] += 1
             return ("0x" + "ab" * 32, [True])
 
@@ -536,7 +534,7 @@ class TestConcurrentWorkerStallResilience:
 
         submitted = [False]
 
-        def _submit(req_id_bytes_list, datas):
+        def _submit(req_id_bytes_list, datas, safe_nonce=None):
             submitted[0] = True
             return ("0x" + "ab" * 32, [True])
 
@@ -576,3 +574,460 @@ class TestConcurrentWorkerStallResilience:
         assert not deliver_one_called[0], "_deliver_one must not be called for expired off-chain"
         q.mark_failed.assert_called_once()
         assert "expired" in q.mark_failed.call_args[0][1]
+
+
+# ---------------------------------------------------------------------------
+# PARALLEL PATH: _has_safe=True with NonceAllocator
+# ---------------------------------------------------------------------------
+
+
+def _make_bridge_with_safe() -> MagicMock:
+    """Bridge with safe_service → _has_safe=True → parallel dispatch path."""
+    bridge = MagicMock()
+    bridge.web3 = MagicMock()
+    bridge.web3.to_checksum_address = lambda x: x
+    bridge.wallet = MagicMock()
+    bridge.wallet.key_storage = MagicMock()
+    # safe_service is present — triggers parallel path
+    bridge.wallet.safe_service = MagicMock()
+    return bridge
+
+
+MULTISIG = "0x" + "cc" * 20
+
+
+def _make_allocator_mock(nonces: list[int]) -> MagicMock:
+    """Returns a mock allocator that hands out nonces sequentially."""
+    alloc = MagicMock()
+    alloc.allocate.side_effect = nonces
+    alloc.check_stuck = MagicMock()
+    alloc.invalidate = MagicMock()
+    alloc.release = MagicMock()
+    return alloc
+
+
+class TestParallelNonceDispatch:
+    """[Test] Parallel Safe TX dispatch via NonceAllocator (_has_safe=True)."""
+
+    @pytest.mark.asyncio
+    async def test_each_worker_gets_unique_nonce(self):
+        """Workers receive distinct pre-assigned nonces from the allocator."""
+        records = [_make_record(STALL_ID), _make_record(FAST1_ID), _make_record(FAST2_ID)]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+
+        allocator = _make_allocator_mock([10, 11, 12])
+        bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+        received_nonces: list[int] = []
+
+        def _submit(req_id_bytes_list, datas, safe_nonce=None):
+            received_nonces.append(safe_nonce)
+            return ("0x" + "ab" * 32, [True])
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_batch_delivery", side_effect=_submit),
+            ):
+                delivered = await dm._deliver_concurrent()
+
+        assert delivered == 3
+        assert sorted(received_nonces) == [10, 11, 12], "Each worker must get a unique nonce"
+        assert len(set(received_nonces)) == 3, "Nonces must be distinct"
+
+    @pytest.mark.asyncio
+    async def test_allow_nonce_refresh_false_passed_to_safe(self):
+        """_via_safe passes allow_nonce_refresh=False when safe_nonce is pre-assigned."""
+        record = _make_record(FAST1_ID)
+        q = _make_queue([record])
+        bridge = _make_bridge_with_safe()
+
+        allocator = _make_allocator_mock([7])
+        bridge.wallet.safe_service.get_allocator.return_value = allocator
+        bridge.wallet.safe_service.execute_safe_transaction.return_value = "0x" + "ab" * 32
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+            # Mock _submit_batch_delivery to capture call args without going further
+            submitted_args: list[dict] = []
+
+            def _capture_submit_tx(fn_call, from_addr, label="TX", safe_nonce=None):
+                submitted_args.append({"safe_nonce": safe_nonce})
+                return "0x" + "ab" * 32
+
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_tx", side_effect=_capture_submit_tx),
+            ):
+                await dm._deliver_concurrent()
+
+        assert len(submitted_args) == 1
+        assert submitted_args[0]["safe_nonce"] == 7, "Pre-assigned nonce must be forwarded to _submit_tx"
+
+    @pytest.mark.asyncio
+    async def test_failed_delivery_invalidates_allocator(self):
+        """When a worker fails, invalidate() is called so next tick refetches nonce."""
+        record = _make_record(FAST1_ID)
+        q = _make_queue([record])
+        bridge = _make_bridge_with_safe()
+
+        allocator = _make_allocator_mock([42])
+        bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_batch_delivery", side_effect=RuntimeError("GS025")),
+            ):
+                await dm._deliver_concurrent()
+
+        allocator.invalidate.assert_called_once_with("delivery_failed")
+
+    @pytest.mark.asyncio
+    async def test_check_stuck_called_with_onchain_count(self):
+        """check_stuck is called with the number of on-chain workers dispatched."""
+        records = [_make_record(STALL_ID), _make_record(FAST1_ID)]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+
+        allocator = _make_allocator_mock([0, 1])
+        bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_batch_delivery", return_value=("0x" + "ab" * 32, [True])),
+            ):
+                await dm._deliver_concurrent()
+
+        allocator.check_stuck.assert_called_once_with(2)
+
+    @pytest.mark.asyncio
+    async def test_parallel_workers_run_concurrently(self):
+        """Workers dispatch concurrently: total time < sum of individual delays."""
+        records = [_make_record(STALL_ID), _make_record(FAST1_ID), _make_record(FAST2_ID)]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+
+        allocator = _make_allocator_mock([0, 1, 2])
+        bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+        def _submit_with_delay(req_id_bytes_list, datas, safe_nonce=None):
+            # Each worker sleeps FAST_DELAY in a thread
+            time.sleep(FAST_DELAY)
+            return ("0x" + "ab" * 32, [True])
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_batch_delivery", side_effect=_submit_with_delay),
+            ):
+                t0 = time.monotonic()
+                delivered = await dm._deliver_concurrent()
+                elapsed = time.monotonic() - t0
+
+        assert delivered == 3
+        # Serial would take 3 * FAST_DELAY; parallel should be ~1 * FAST_DELAY + margin
+        assert elapsed < 2 * FAST_DELAY, (
+            f"Parallel workers took {elapsed:.2f}s — expected < {2 * FAST_DELAY:.2f}s "
+            f"(serial would take {3 * FAST_DELAY:.2f}s)"
+        )
+
+    @pytest.mark.asyncio
+    async def test_release_called_on_success_and_failure(self):
+        """allocator.release(nonce) is called in _dispatch finally even when delivery fails.
+
+        This ensures invalidate_and_wait() is never stuck waiting for orphaned nonces.
+        Two workers: one succeeds, one fails (GS025-like TX error).
+        Both must call release() with their allocated nonce.
+        """
+        success_record = _make_record(FAST1_ID)
+        fail_record = _make_record(FAST2_ID)
+        q = _make_queue([success_record, fail_record])
+        bridge = _make_bridge_with_safe()
+
+        allocator = _make_allocator_mock([5, 6])
+        bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+        call_count = [0]
+
+        def _submit_alternating(req_id_bytes_list, datas, safe_nonce=None):
+            call_count[0] += 1
+            if req_id_bytes_list[0] == FAST2_BYTES:
+                raise RuntimeError("GS025 nonce too high")
+            return ("0x" + "ab" * 32, [True])
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_batch_delivery", side_effect=_submit_alternating),
+            ):
+                await dm._deliver_concurrent()
+
+        # release must be called once per allocated nonce (success AND failure)
+        assert allocator.release.call_count == 2, (
+            f"release() must be called for both workers; got {allocator.release.call_count}"
+        )
+        released_nonces = {call.args[0] for call in allocator.release.call_args_list}
+        assert released_nonces == {5, 6}, f"Both nonces must be released; got {released_nonces}"
+
+    @pytest.mark.asyncio
+    async def test_parallel_path_disabled_by_default(self):
+        """parallel_nonce_enabled=False (default) takes the serial path even with _has_safe=True."""
+        records = [_make_record(FAST1_ID), _make_record(FAST2_ID)]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+
+        allocator = _make_allocator_mock([0, 1])
+        bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            # Default config: parallel_nonce_enabled=False
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_batch_delivery", return_value=("0x" + "ab" * 32, [True])),
+            ):
+                delivered = await dm._deliver_concurrent()
+
+        # Serial path: allocator is NOT used (get_allocator not called)
+        assert delivered == 2
+        bridge.wallet.safe_service.get_allocator.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_error: hex redaction + __cause__ chain traversal
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_error_redacts_hex_key():
+    """0x + 64-char hex (private key) is replaced with 0x[REDACTED]."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    private_key = "0x" + "ab" * 32  # 66 chars total
+    exc = ValueError(f"failed to sign with key {private_key}")
+    result = _sanitize_error(exc)
+    assert "0x[REDACTED]" in result
+    assert private_key not in result
+
+
+def test_sanitize_error_redacts_signature():
+    """0x + 130-char hex (ECDSA signature) is replaced with 0x[REDACTED]."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    signature = "0x" + "cd" * 65  # 132 chars total
+    exc = RuntimeError(f"invalid sig={signature}")
+    result = _sanitize_error(exc)
+    assert "0x[REDACTED]" in result
+    assert signature not in result
+
+
+def test_sanitize_error_traverses_cause_chain():
+    """__cause__ chain is traversed and redacted up to depth 5."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    inner_key = "0x" + "ff" * 32
+    inner = ConnectionError(f"RPC error key={inner_key}")
+    outer = RuntimeError("execution failed")
+    outer.__cause__ = inner
+
+    result = _sanitize_error(outer)
+    assert "execution failed" in result
+    assert "caused by:" in result
+    assert "RPC error" in result
+    assert inner_key not in result, "Inner key must be redacted in cause chain"
+
+
+def test_sanitize_error_short_hex_not_redacted():
+    """Short hex strings (< 64 chars after 0x) are NOT redacted."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    short_hex = "0x" + "ab" * 20  # only 42 chars — e.g. an address
+    exc = ValueError(f"bad address: {short_hex}")
+    result = _sanitize_error(exc)
+    assert short_hex in result, "Short hex (address) must NOT be redacted"
+
+
+def test_sanitize_error_empty_message():
+    """Exception with empty string does not raise."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    result = _sanitize_error(ValueError(""))
+    assert result == ""
+
+
+def test_sanitize_error_no_message():
+    """Exception with no args does not raise."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    result = _sanitize_error(Exception())
+    assert isinstance(result, str)
+
+
+def test_sanitize_error_depth_boundary():
+    """Depth guard: chain of exactly 6 levels returns '...' at level 6."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    # Build chain of depth 6: e0 → e1 → ... → e5
+    excs = [ValueError(f"level_{i}") for i in range(7)]
+    for i in range(6):
+        excs[i].__cause__ = excs[i + 1]
+
+    result = _sanitize_error(excs[0])
+    # Level 5 (0-indexed _depth=5) is the boundary — its cause returns "..."
+    assert "level_0" in result
+    assert "..." in result
+
+
+# ---------------------------------------------------------------------------
+# get_safe_lock: identity and isolation
+# ---------------------------------------------------------------------------
+
+
+def test_get_safe_lock_same_addr_returns_same_lock():
+    """get_safe_lock with the same address returns the identical asyncio.Lock."""
+    from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+    addr = "0x" + "aa" * 20
+    _SAFE_LOCKS.pop(addr, None)  # ensure clean state
+    lock1 = get_safe_lock(addr)
+    lock2 = get_safe_lock(addr)
+    assert lock1 is lock2
+    _SAFE_LOCKS.pop(addr, None)  # cleanup
+
+
+def test_get_safe_lock_different_addrs_independent():
+    """get_safe_lock with different addresses returns independent locks."""
+    from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+    addr_a = "0x" + "11" * 20
+    addr_b = "0x" + "22" * 20
+    for a in (addr_a, addr_b):
+        _SAFE_LOCKS.pop(a, None)
+    lock_a = get_safe_lock(addr_a)
+    lock_b = get_safe_lock(addr_b)
+    assert lock_a is not lock_b
+    for a in (addr_a, addr_b):
+        _SAFE_LOCKS.pop(a, None)
+
+
+# ---------------------------------------------------------------------------
+# payment_withdraw: safe_lock coordination
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_payment_withdraw_holds_lock_across_all_steps():
+    """All three Safe TX steps in payment_withdraw_task run under a single lock.
+
+    Verifies that get_safe_lock is acquired before _withdraw and released only
+    after _transfer_to_master, preventing concurrent deliveries from interleaving.
+    """
+    import asyncio as _asyncio
+
+    from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+    from micromech.tasks.payment_withdraw import payment_withdraw_task
+
+    multisig = "0x" + "ff" * 20
+    _SAFE_LOCKS.pop(multisig, None)
+
+    lock_held_during_withdraw: list[bool] = []
+    lock_held_during_drain: list[bool] = []
+    lock_held_during_transfer: list[bool] = []
+
+    real_lock = get_safe_lock(multisig)
+
+    async def _check_lock_held(step_name: list[bool]) -> None:
+        # If lock is held, trying to acquire it with wait=False fails
+        acquired = real_lock.locked()
+        step_name.append(acquired)
+
+    # Build a minimal config
+    from micromech.core.config import ChainConfig, MicromechConfig
+    chain_config = ChainConfig(
+        chain="gnosis",
+        marketplace_address="0x" + "a" * 40,
+        factory_address="0x" + "b" * 40,
+        staking_address="0x" + "c" * 40,
+        mech_address="0x" + "d" * 40,
+    )
+    config = MicromechConfig(
+        payment_withdraw_threshold_xdai=0.001,
+        chains={"gnosis": chain_config},
+    )
+
+    bridge = MagicMock()
+    bridge.web3 = MagicMock()
+    bridge.web3.to_checksum_address = lambda x: x
+    bridge.wallet.master_account.address = "0x" + "ee" * 20
+    bridge.with_retry = lambda fn, **kw: fn()
+
+    notification_service = MagicMock()
+    notification_service.send = MagicMock(side_effect=lambda *a, **kw: _asyncio.sleep(0))
+
+    with (
+        patch(
+            "micromech.tasks.payment_withdraw.get_balance_tracker_address",
+            return_value="0x" + "bb" * 20,
+        ),
+        patch(
+            "micromech.tasks.payment_withdraw.get_pending_balance",
+            return_value=1.0,
+        ),
+        patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": multisig},
+        ),
+        patch(
+            "micromech.tasks.payment_withdraw._withdraw",
+            side_effect=lambda *a, **kw: lock_held_during_withdraw.append(real_lock.locked()),
+        ),
+        patch(
+            "micromech.tasks.payment_withdraw._drain_mech_to_safe",
+            side_effect=lambda *a, **kw: lock_held_during_drain.append(real_lock.locked()),
+        ),
+        patch(
+            "micromech.tasks.payment_withdraw._transfer_to_master",
+            side_effect=lambda *a, **kw: lock_held_during_transfer.append(real_lock.locked()),
+        ),
+    ):
+        bridge.web3.eth.get_balance = MagicMock(return_value=10**18)
+        await payment_withdraw_task(
+            bridges={"gnosis": bridge},
+            notification_service=notification_service,
+            config=config,
+        )
+
+    assert lock_held_during_withdraw == [True], "Lock must be held during _withdraw"
+    assert lock_held_during_drain == [True], "Lock must be held during _drain_mech_to_safe"
+    assert lock_held_during_transfer == [True], "Lock must be held during _transfer_to_master"
+    assert not real_lock.locked(), "Lock must be released after all steps"
+
+    _SAFE_LOCKS.pop(multisig, None)

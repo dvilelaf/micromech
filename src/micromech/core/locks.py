@@ -1,9 +1,4 @@
-"""Per-Safe asyncio.Lock registry — shared across all Safe TX consumers.
-
-All consumers that submit Safe TXs (DeliveryManager, payment_withdraw_task, etc.)
-must acquire the per-Safe lock before submitting to prevent nonce collisions.
-"""
-
+"""Per-Safe asyncio.Lock registry — shared across all Safe TX consumers."""
 import asyncio
 
 _SAFE_LOCKS: dict[str, asyncio.Lock] = {}
