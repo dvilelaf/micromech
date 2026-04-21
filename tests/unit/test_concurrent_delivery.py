@@ -30,7 +30,7 @@ Key assertions
 
 import time
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -950,7 +950,6 @@ async def test_payment_withdraw_holds_lock_across_all_steps():
     Verifies that get_safe_lock is acquired before _withdraw and released only
     after _transfer_to_master, preventing concurrent deliveries from interleaving.
     """
-    import asyncio as _asyncio
 
     from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
     from micromech.tasks.payment_withdraw import payment_withdraw_task
@@ -990,7 +989,7 @@ async def test_payment_withdraw_holds_lock_across_all_steps():
     bridge.with_retry = lambda fn, **kw: fn()
 
     notification_service = MagicMock()
-    notification_service.send = MagicMock(side_effect=lambda *a, **kw: _asyncio.sleep(0))
+    notification_service.send = AsyncMock()
 
     with (
         patch(
@@ -1031,3 +1030,53 @@ async def test_payment_withdraw_holds_lock_across_all_steps():
     assert not real_lock.locked(), "Lock must be released after all steps"
 
     _SAFE_LOCKS.pop(multisig, None)
+
+
+# ---------------------------------------------------------------------------
+# get_safe_lock: case-insensitive address normalization
+# ---------------------------------------------------------------------------
+
+
+def test_get_safe_lock_normalizes_case():
+    """get_safe_lock returns the same lock regardless of address casing."""
+    from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+    addr_lower = "0x" + "ab" * 20
+    addr_upper = "0x" + "AB" * 20
+    addr_mixed = "0xAb" + "aB" * 19
+    for a in (addr_lower, addr_upper, addr_mixed):
+        _SAFE_LOCKS.pop(a.lower(), None)
+    lock1 = get_safe_lock(addr_lower)
+    lock2 = get_safe_lock(addr_upper)
+    lock3 = get_safe_lock(addr_mixed)
+    assert lock1 is lock2 is lock3, "Same Safe address in different casing must share one lock"
+    _SAFE_LOCKS.pop(addr_lower, None)
+
+
+# ---------------------------------------------------------------------------
+# _dispatch: NonceAllocatorBlockedError handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_allocate_blocked_error_does_not_crash():
+    """If allocator.allocate() raises, _dispatch returns False without UnboundLocalError."""
+    records = [_make_record(FAST1_ID)]
+    q = _make_queue(records)
+    bridge = _make_bridge_with_safe()
+
+    allocator = _make_allocator_mock([])
+    allocator.allocate.side_effect = RuntimeError("nonce allocator blocked")
+    bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+    with patch(
+        "micromech.core.bridge.get_service_info",
+        return_value={"multisig_address": MULTISIG},
+    ):
+        dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+        with patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare):
+            delivered = await dm._deliver_concurrent()
+
+    assert delivered == 0, "Blocked allocator must yield 0 delivered, not crash"
+    allocator.release.assert_not_called()
+    allocator.invalidate.assert_not_called()

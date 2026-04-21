@@ -1311,8 +1311,14 @@ def create_web_app(
             elif action == "status":
                 status = lc.get_status(service_key)
                 return {"success": True, "data": status}
-            elif action == "withdraw":
+            else:
+                return {"success": False, "error": f"Unknown action: {action}"}
+
+        # withdraw must run in the async event loop (needs get_safe_lock, an asyncio.Lock)
+        if action == "withdraw":
+            try:
                 from micromech.core.bridge import IwaBridge, get_service_info
+                from micromech.core.locks import get_safe_lock
                 from micromech.core.marketplace import (
                     get_balance_tracker_address,
                     get_pending_balance,
@@ -1323,39 +1329,46 @@ def create_web_app(
                     _withdraw,
                 )
 
-                chain_cfg = config.enabled_chains.get(chain)
+                cfg = MicromechConfig.load()
+                chain = body.get("chain", "gnosis")
+                chain_cfg = cfg.enabled_chains.get(chain)
                 if not chain_cfg or not chain_cfg.mech_address:
                     return {"success": False, "error": "No mech_address configured for this chain"}
 
                 bridge = IwaBridge(chain_name=chain)
-                bt_address = get_balance_tracker_address(
-                    bridge, chain, chain_cfg.mech_address, chain_cfg.marketplace_address
+                bt_address = await asyncio.to_thread(
+                    get_balance_tracker_address,
+                    bridge, chain, chain_cfg.mech_address, chain_cfg.marketplace_address,
                 )
                 if not bt_address:
                     return {"success": False, "error": "Could not find balance tracker address"}
 
-                balance = get_pending_balance(bridge, bt_address, chain_cfg.mech_address)
+                balance = await asyncio.to_thread(
+                    get_pending_balance, bridge, bt_address, chain_cfg.mech_address
+                )
                 if balance <= 0:
                     return {"success": True, "action": "withdraw", "data": {"amount_xdai": 0.0, "message": "No pending payments"}}
 
-                svc_info = get_service_info(chain)
+                svc_info = await asyncio.to_thread(get_service_info, chain)
                 multisig = svc_info.get("multisig_address")
                 if not multisig:
                     return {"success": False, "error": "No multisig_address found"}
 
-                _withdraw(bridge, chain, bt_address, chain_cfg.mech_address, multisig)
-
-                web3 = bridge.web3
-                mech_wei = bridge.with_retry(
-                    lambda: web3.eth.get_balance(web3.to_checksum_address(chain_cfg.mech_address))
-                )
-                _drain_mech_to_safe(bridge, chain, chain_cfg.mech_address, multisig, mech_wei)
-                _transfer_to_master(bridge, chain, multisig, mech_wei)
+                async with get_safe_lock(multisig):
+                    await asyncio.to_thread(_withdraw, bridge, chain, bt_address, chain_cfg.mech_address, multisig)
+                    web3 = bridge.web3
+                    mech_wei = await asyncio.to_thread(
+                        bridge.with_retry,
+                        lambda: web3.eth.get_balance(web3.to_checksum_address(chain_cfg.mech_address)),
+                    )
+                    await asyncio.to_thread(_drain_mech_to_safe, bridge, chain, chain_cfg.mech_address, multisig, mech_wei)
+                    await asyncio.to_thread(_transfer_to_master, bridge, chain, multisig, mech_wei)
 
                 amount_xdai = round(mech_wei / 1e18, 6)
                 return {"success": True, "action": "withdraw", "data": {"amount_xdai": amount_xdai}}
-            else:
-                return {"success": False, "error": f"Unknown action: {action}"}
+            except Exception:
+                logger.exception("withdraw action failed")
+                return {"success": False, "error": "Withdraw failed. Check server logs."}
 
         try:
             return await asyncio.to_thread(_run_action)
@@ -1618,6 +1631,8 @@ def create_web_app(
             result = []
             for tx in withdrawals:
                 chain_name = addr_to_chain.get(tx.from_address.lower() if tx.from_address else "", "")
+                if not chain_name and use_tag_filter:
+                    chain_name = getattr(tx, "chain_name", "") or "gnosis"
                 explorer = f"https://gnosisscan.io/tx/{tx.tx_hash}" if chain_name == "gnosis" else ""
                 result.append({
                     "date": tx.timestamp.isoformat(),

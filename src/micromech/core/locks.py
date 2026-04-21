@@ -12,6 +12,7 @@ def get_safe_lock(safe_addr: str) -> asyncio.Lock:
     Thread-safe: asyncio is single-threaded; no await in this function so
     two coroutines cannot interleave between the dict lookup and the insert.
     """
-    if safe_addr not in _SAFE_LOCKS:
-        _SAFE_LOCKS[safe_addr] = asyncio.Lock()
-    return _SAFE_LOCKS[safe_addr]
+    key = safe_addr.lower()
+    if key not in _SAFE_LOCKS:
+        _SAFE_LOCKS[key] = asyncio.Lock()
+    return _SAFE_LOCKS[key]

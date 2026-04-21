@@ -203,16 +203,8 @@ class DeliveryManager:
         """Chain name from this delivery manager's config."""
         return self.chain_config.chain
 
-    def _get_nonce_allocator(self) -> Any:
+    def _get_nonce_allocator(self, multisig: str) -> Any:
         """Return the NonceAllocator for this delivery manager's Safe multisig."""
-        from micromech.core.bridge import get_service_info
-
-        svc_info = get_service_info(self.chain_config.chain)
-        multisig = svc_info.get("multisig_address")
-        if not multisig:
-            raise ValueError(
-                "multisig_address not configured — cannot get nonce allocator"
-            )
         return self.bridge.wallet.safe_service.get_allocator(
             multisig,
             self._chain_name,
@@ -898,11 +890,20 @@ class DeliveryManager:
             svc_info = get_service_info(self._chain_name)
             multisig = svc_info.get("multisig_address", "")
 
-            allocator = self._get_nonce_allocator()
+            allocator = self._get_nonce_allocator(multisig)
             allocator.check_stuck(len(onchain))
 
             async def _dispatch(r: RequestRecord) -> bool:
-                nonce = await asyncio.to_thread(allocator.allocate)
+                nonce = None
+                try:
+                    nonce = await asyncio.to_thread(allocator.allocate)
+                except Exception:
+                    logger.warning(
+                        "[{}] Nonce allocator blocked/failed for {}, skipping",
+                        self._chain_name,
+                        r.request.request_id,
+                    )
+                    return False
                 try:
                     result = await self._deliver_single_onchain(r, safe_nonce=nonce)
                     if not result:
@@ -910,6 +911,9 @@ class DeliveryManager:
                         # reflects this nonce at invalidation time (for drain).
                         allocator.invalidate("delivery_failed")
                     return result
+                except Exception:
+                    allocator.invalidate("delivery_exception")
+                    return False
                 finally:
                     allocator.release(nonce)
 
