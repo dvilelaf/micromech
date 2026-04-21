@@ -273,8 +273,16 @@ class PersistentQueue:
         query = _chain_filter(query, chain)
         return [self._row_to_record(r) for r in query.limit(limit)]
 
-    def count_by_status(self, chain: Optional[str] = None) -> dict[str, int]:
-        """Count requests grouped by status. Returns 0 for all known statuses."""
+    def count_by_status(
+        self, chain: Optional[str] = None, hours: Optional[int] = None
+    ) -> dict[str, int]:
+        """Count requests grouped by status. Returns 0 for all known statuses.
+
+        For terminal statuses (executed/delivered/failed), applies an optional
+        time window via ``hours`` so the chart reflects recent activity rather
+        than all-time totals. Active statuses (pending/executing) are always
+        counted regardless of age — they represent the live queue state.
+        """
         all_statuses = {
             STATUS_PENDING: 0,
             STATUS_EXECUTING: 0,
@@ -282,12 +290,26 @@ class PersistentQueue:
             STATUS_DELIVERED: 0,
             STATUS_FAILED: 0,
         }
-        query = RequestRow.select(
+
+        # Active states: always show current queue regardless of age
+        active_q = RequestRow.select(
             RequestRow.status, pw.fn.COUNT(RequestRow.request_id).alias("cnt")
-        ).group_by(RequestRow.status)
-        query = _chain_filter(query, chain)
-        for row in query:
+        ).where(RequestRow.status.in_([STATUS_PENDING, STATUS_EXECUTING])).group_by(RequestRow.status)
+        active_q = _chain_filter(active_q, chain)
+        for row in active_q:
             all_statuses[row.status] = row.cnt
+
+        # Terminal states: filter by time window when requested
+        terminal_q = RequestRow.select(
+            RequestRow.status, pw.fn.COUNT(RequestRow.request_id).alias("cnt")
+        ).where(RequestRow.status.in_([STATUS_EXECUTED, STATUS_DELIVERED, STATUS_FAILED])).group_by(RequestRow.status)
+        terminal_q = _chain_filter(terminal_q, chain)
+        if hours is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            terminal_q = terminal_q.where(RequestRow.created_at >= cutoff)
+        for row in terminal_q:
+            all_statuses[row.status] = row.cnt
+
         return all_statuses
 
     def count_by_chain(self) -> dict[str, int]:

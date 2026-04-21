@@ -252,7 +252,7 @@ class MechServer:
         """Get current server status."""
         return {
             "status": "running" if self._running else "stopped",
-            "queue": self.queue.count_by_status(),
+            "queue": self.queue.count_by_status(hours=1),
             "queue_by_chain": self.queue.count_by_chain(),
             "chains": list(self.config.enabled_chains.keys()),
             "tools": self.registry.tool_ids,

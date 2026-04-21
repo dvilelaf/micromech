@@ -262,6 +262,43 @@ class TestQueries:
         assert counts[STATUS_DELIVERED] == 0
         assert counts[STATUS_FAILED] == 0
 
+    def test_count_by_status_hours_excludes_old_terminal(self, queue: PersistentQueue):
+        """Terminal statuses older than the window must be excluded; active states kept."""
+        old_time = datetime.now(timezone.utc) - timedelta(hours=2)
+
+        # Old delivered request (outside 1h window)
+        req_old = MechRequest(request_id="old-delivered", created_at=old_time)
+        queue.add_request(req_old)
+        queue.mark_executing("old-delivered")
+        queue.mark_executed("old-delivered", ToolResult(output="ok"))
+        queue.mark_delivered("old-delivered", "0x" + "0" * 64)
+
+        # Recent pending (always shown)
+        queue.add_request(MechRequest(request_id="recent-pending"))
+
+        counts = queue.count_by_status(hours=1)
+        assert counts[STATUS_DELIVERED] == 0   # old, excluded
+        assert counts[STATUS_PENDING] == 1     # active, always shown
+
+    def test_count_by_status_hours_includes_recent_terminal(self, queue: PersistentQueue):
+        """Terminal statuses within the window must be included."""
+        self._seed(queue)
+        counts = queue.count_by_status(hours=1)
+        assert counts[STATUS_DELIVERED] == 1
+        assert counts[STATUS_EXECUTED] == 2
+
+    def test_count_by_status_no_hours_returns_all(self, queue: PersistentQueue):
+        """Without hours param, all records are counted (backward compat)."""
+        old_time = datetime.now(timezone.utc) - timedelta(hours=5)
+        req_old = MechRequest(request_id="old-del", created_at=old_time)
+        queue.add_request(req_old)
+        queue.mark_executing("old-del")
+        queue.mark_executed("old-del", ToolResult(output="ok"))
+        queue.mark_delivered("old-del", "0x" + "0" * 64)
+
+        counts = queue.count_by_status()  # no hours → all-time
+        assert counts[STATUS_DELIVERED] == 1
+
 
 class TestCleanup:
     def test_cleanup_old_records(self, queue: PersistentQueue):
