@@ -128,6 +128,7 @@ class TestStatusTransitions:
         record = queue.get_by_id("r1")
         assert record.request.status == STATUS_FAILED
         assert record.request.error == "on_chain_timeout"
+        assert record.response.ipfs_hash is None
 
 
 class TestStateTransitionGuards:

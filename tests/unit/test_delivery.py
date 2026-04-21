@@ -575,7 +575,13 @@ TX_HASH_HEX = "0x" + "ab" * 32
 
 
 def _make_mock_web3_with_flags(flags: list[bool]) -> MagicMock:
-    """Build a mock web3 whose MarketplaceDelivery event decodes to `flags`."""
+    """Build a mock web3 whose MarketplaceDelivery event decodes to `flags`.
+
+    Mock chain: web3.eth.contract(address=..., abi=...) → contract_mock
+                contract_mock.events.MarketplaceDelivery() → event_instance
+                event_instance.process_log(log) → {"args": {"deliveredRequests": flags}}
+                  (raises if log lacks "_our_event" sentinel)
+    """
     web3 = MagicMock()
     web3.to_checksum_address.side_effect = lambda x: x
 
@@ -620,18 +626,44 @@ class TestDecodeDeliveryFlags:
         result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 2)
         assert result == [False, False]
 
-    def test_no_matching_log_returns_all_true(self):
-        """Falls back to all-True when no MarketplaceDelivery log is found."""
+    def test_process_log_raises_falls_back_to_all_true(self):
+        """Log from correct address but process_log raises → continue loop → final fallback."""
         web3 = MagicMock()
         web3.to_checksum_address.side_effect = lambda x: x
         event_instance = MagicMock()
-        event_instance.process_log.side_effect = Exception("wrong topic")
+        event_instance.process_log.side_effect = Exception("bad ABI")
         web3.eth.contract.return_value.events.MarketplaceDelivery.return_value = (
             event_instance
         )
         receipt = {"logs": [{"address": MARKETPLACE_ADDR, "_not_our_event": True}]}
         result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 2)
         assert result == [True, True]
+
+    def test_second_log_decoded_when_first_fails(self):
+        """First log raises decode error; second log decodes correctly."""
+        web3 = MagicMock()
+        web3.to_checksum_address.side_effect = lambda x: x
+        event_instance = MagicMock()
+        call_count = {"n": 0}
+
+        def _process_log(log):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise Exception("first log bad")
+            return {"args": {"deliveredRequests": [True, False]}}
+
+        event_instance.process_log.side_effect = _process_log
+        web3.eth.contract.return_value.events.MarketplaceDelivery.return_value = (
+            event_instance
+        )
+        receipt = {
+            "logs": [
+                {"address": MARKETPLACE_ADDR, "_our_event": True},
+                {"address": MARKETPLACE_ADDR, "_our_event": True},
+            ]
+        }
+        result = _decode_delivery_flags(web3, receipt, MARKETPLACE_ADDR, 2)
+        assert result == [True, False]
 
     def test_log_from_other_contract_ignored(self):
         """Logs emitted by a different contract are skipped (address check)."""
@@ -682,22 +714,32 @@ def _add_executed(queue: PersistentQueue, request_id: str) -> None:
     queue.mark_executed(request_id, ToolResult(output="ok"))
 
 
+def _make_onchain_dm(queue):
+    """Shared factory for DeliveryManager used in onchain timeout tests."""
+    config = MicromechConfig()
+    bridge = MagicMock()
+    bridge.wallet.key_storage = MagicMock()
+    return DeliveryManager(
+        config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge
+    )
+
+
+def _patch_prepare_ok(dm):
+    """Patch _prepare_onchain to always succeed with dummy data."""
+    async def _fake(record):
+        return b"\x00" * 32, b"data", "QmTest"
+    return patch.object(dm, "_prepare_onchain", side_effect=_fake)
+
+
 class TestOnchainBatchTimeout:
     """_deliver_onchain_batch marks timed-out requests as failed."""
 
     @pytest.fixture
     def dm(self, queue):
-        config = MicromechConfig()
-        bridge = MagicMock()
-        bridge.wallet.key_storage = MagicMock()
-        return DeliveryManager(
-            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge
-        )
+        return _make_onchain_dm(queue)
 
     def _patch_prepare(self, dm):
-        async def _fake(record):
-            return b"\x00" * 32, b"data", "QmTest"
-        return patch.object(dm, "_prepare_onchain", side_effect=_fake)
+        return _patch_prepare_ok(dm)
 
     @pytest.mark.asyncio
     async def test_all_accepted(self, dm, queue):
@@ -752,6 +794,53 @@ class TestOnchainBatchTimeout:
         r_b = queue.get_by_id("b")
         assert r_b.request.status == STATUS_FAILED
         assert r_b.request.error == "on_chain_timeout"
+        assert r_b.response.delivery_tx_hash == TX_HASH_HEX
+
+    @pytest.mark.asyncio
+    async def test_all_prep_fail_returns_zero(self, dm, queue):
+        """When all IPFS preps fail, batch returns 0 without submitting."""
+        _add_executed(queue, "a")
+        records = queue.get_undelivered(limit=10)
+
+        async def _fail(record):
+            raise RuntimeError("IPFS down")
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_fail),
+            patch.object(dm, "_submit_batch_delivery") as mock_submit,
+        ):
+            count = await dm._deliver_onchain_batch(records)
+
+        assert count == 0
+        mock_submit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_batch_ipfs_prep_partial_failure(self, dm, queue):
+        """First record fails prep; second succeeds — only second is delivered."""
+        _add_executed(queue, "a")
+        _add_executed(queue, "b")
+        records = queue.get_undelivered(limit=10)
+
+        call_count = {"n": 0}
+
+        async def _prep_first_fails(record):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise RuntimeError("IPFS timeout")
+            return b"\x00" * 32, b"data", "QmTest"
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_prep_first_fails),
+            patch.object(
+                dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [True])
+            ),
+        ):
+            count = await dm._deliver_onchain_batch(records)
+
+        assert count == 1
+        # The second record (b) was delivered; the first (a) was not permanently
+        # failed yet (uses retry budget) so it stays in EXECUTED.
+        assert queue.get_by_id("b").request.status == STATUS_DELIVERED
 
 
 # ---------------------------------------------------------------------------
@@ -764,17 +853,10 @@ class TestSingleOnchainTimeout:
 
     @pytest.fixture
     def dm(self, queue):
-        config = MicromechConfig()
-        bridge = MagicMock()
-        bridge.wallet.key_storage = MagicMock()
-        return DeliveryManager(
-            config=config, chain_config=CHAIN_CFG, queue=queue, bridge=bridge
-        )
+        return _make_onchain_dm(queue)
 
     def _patch_prepare(self, dm):
-        async def _fake(record):
-            return b"\x00" * 32, b"data", "QmTest"
-        return patch.object(dm, "_prepare_onchain", side_effect=_fake)
+        return _patch_prepare_ok(dm)
 
     @pytest.mark.asyncio
     async def test_accepted(self, dm, queue):

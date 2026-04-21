@@ -807,11 +807,26 @@ class TestParallelNonceDispatch:
         q = _make_queue([blocked_record, ok_record])
         bridge = _make_bridge_with_safe()
 
+        # Make allocate() raise for STALL_ID by tracking which record most
+        # recently finished _prepare_onchain.  Since asyncio is single-threaded
+        # and _instant_prepare has no awaits, gather advances each coroutine
+        # up to its next await in input order: STALL_ID reaches allocate() first.
+        # Tracking via _last_prepared makes the intent explicit and survives
+        # any future reordering of the input list.
+        _last_prepared: list[str] = []
+
+        async def _track_prepare(rec):
+            _last_prepared.append(rec.request.request_id)
+            return b"\x00" * 32, b"data", "QmTest"
+
+        def _allocate_keyed():
+            rid = _last_prepared.pop() if _last_prepared else None
+            if rid == STALL_ID:
+                raise RuntimeError("EOA gap exceeded — allocator blocked")
+            return 10
+
         allocator = MagicMock()
-        allocator.allocate.side_effect = [
-            RuntimeError("EOA gap exceeded — allocator blocked"),
-            10,
-        ]
+        allocator.allocate.side_effect = _allocate_keyed
         allocator.check_stuck = MagicMock()
         allocator.invalidate = MagicMock()
         allocator.release = MagicMock()
@@ -823,7 +838,7 @@ class TestParallelNonceDispatch:
         ):
             dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
             with (
-                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_prepare_onchain", side_effect=_track_prepare),
                 patch.object(
                     dm, "_submit_batch_delivery", return_value=("0x" + "ab" * 32, [True])
                 ),
@@ -1175,6 +1190,10 @@ async def test_prep_failure_does_not_allocate_nonce():
             delivered = await dm._deliver_concurrent()
 
     assert delivered == 1, "Only ok_record must be delivered when fail_record prep fails"
+    # Both records had _prepare_onchain called (gather dispatches all workers)
+    assert set(prep_call_order) == {STALL_ID, FAST1_ID}, (
+        f"Both records must attempt prep; got {prep_call_order}"
+    )
     # allocate() called exactly once — only for the ok_record (not for fail_record)
     assert allocator.allocate.call_count == 1, (
         f"allocate() must only be called for workers that passed prep; "
@@ -1206,3 +1225,36 @@ def test_sanitize_error_traverses_context_chain():
     assert "context:" in result
     assert "RPC error" in result
     assert inner_key not in result, "Inner key in __context__ must be redacted"
+
+
+def test_sanitize_error_cause_takes_priority_over_context():
+    """When both __cause__ and __context__ are set, __cause__ is used (explicit chain)."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    cause = ValueError("explicit cause")
+    context = RuntimeError("implicit context")
+    outer = RuntimeError("outer")
+    outer.__cause__ = cause
+    outer.__context__ = context
+
+    result = _sanitize_error(outer)
+    assert "caused by" in result
+    assert "explicit cause" in result
+    assert "implicit context" not in result, "__context__ must be ignored when __cause__ is set"
+
+
+def test_sanitize_error_depth_guard():
+    """Recursion stops at depth 5 and returns '...' to prevent infinite loops."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    # Build a chain of 8 exceptions — deeper than the depth=5 guard
+    exc = RuntimeError("level0")
+    current = exc
+    for i in range(1, 8):
+        child = RuntimeError(f"level{i}")
+        current.__cause__ = child
+        current = child
+
+    result = _sanitize_error(exc)
+    assert "..." in result, "Depth guard must emit '...' when chain exceeds 5 levels"
+    assert "level0" in result
