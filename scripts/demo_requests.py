@@ -17,14 +17,14 @@ import uuid
 import warnings
 from typing import Any
 
-from micromech.core.constants import IPFS_API_URL
-
 from eth_account import Account
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 from web3 import Web3
+
+from micromech.core.constants import IPFS_API_URL
 
 # Suppress web3 ABI mismatch warnings (marketplace ABI is minimal)
 warnings.filterwarnings("ignore", message=".*MismatchedABI.*")
@@ -321,6 +321,7 @@ def poll_results(
                         delivery_map: dict[str, bytes] = {}
                         try:
                             from web3._utils.events import EventLogErrorFlags
+
                             from micromech.runtime.contracts import load_mech_abi
 
                             receipt = w3.eth.get_transaction_receipt(tx_hash)
@@ -486,7 +487,7 @@ def main():
             console=console,
             refresh_per_second=2,
             get_renderable=lambda: build_table(rows, "micromech demo"),
-        ) as live:
+        ):
             while True:
                 count += 1
                 chain = random.choice(chains)

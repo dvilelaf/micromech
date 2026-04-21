@@ -30,7 +30,11 @@ import pytest
 
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.models import MechRequest, RequestRecord, ToolResult
-from micromech.runtime.delivery import DeliveryManager, _wait_and_check_receipt
+from micromech.runtime.delivery import (
+    DeliveryManager,
+    _decode_delivery_flags,
+    _wait_and_check_receipt,
+)
 
 
 def _make_config():
@@ -1097,3 +1101,262 @@ class TestDeliverConcurrent:
         # All off-chain records in the batch are processed
         assert mock_off.call_count == 5
         assert result == mock_on.call_count + mock_off.call_count
+
+
+# ---------------------------------------------------------------------------
+# _deliver_single_offchain_concurrent — success, no-tx, exception, metrics
+# ---------------------------------------------------------------------------
+
+_TX_HASH = "0x" + "ab" * 32
+
+
+def _enqueue_executed(queue, rid="r1"):
+    from micromech.core.models import MechRequest, ToolResult
+
+    req = MechRequest(request_id=rid, prompt="hi", tool="echo")
+    queue.add_request(req)
+    queue.mark_executing(rid)
+    queue.mark_executed(rid, ToolResult(output="out"))
+    return queue.get_by_id(rid)
+
+
+def _offchain_dm(queue):
+    bridge = MagicMock()
+    bridge.wallet.key_storage = MagicMock()
+    return DeliveryManager(
+        config=_make_config(), chain_config=_make_chain_config(), queue=queue, bridge=bridge
+    )
+
+
+class TestOffchainConcurrentCoverage:
+    """_deliver_single_offchain_concurrent: covers lines 1081-1126."""
+
+    @pytest.mark.asyncio
+    async def test_success_marks_delivered(self, queue):
+        from unittest.mock import AsyncMock
+
+        from micromech.core.constants import STATUS_DELIVERED
+
+        dm = _offchain_dm(queue)
+        record = _enqueue_executed(queue)
+        dm._in_flight.add("r1")
+        with patch.object(dm, "_deliver_one", new=AsyncMock(return_value=(_TX_HASH, "0xipfs"))):
+            result = await dm._deliver_single_offchain_concurrent(record)
+        assert result is True
+        assert queue.get_by_id("r1").request.status == STATUS_DELIVERED
+        assert dm._delivered_count == 1
+        assert "r1" not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_no_tx_hash_returns_false(self, queue):
+        from unittest.mock import AsyncMock
+
+        dm = _offchain_dm(queue)
+        record = _enqueue_executed(queue)
+        dm._in_flight.add("r1")
+        with patch.object(dm, "_deliver_one", new=AsyncMock(return_value=(None, None))):
+            result = await dm._deliver_single_offchain_concurrent(record)
+        assert result is False
+        assert "r1" not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_exception_increments_failure_and_cleans_inflight(self, queue):
+        from unittest.mock import AsyncMock
+
+        dm = _offchain_dm(queue)
+        record = _enqueue_executed(queue)
+        dm._in_flight.add("r1")
+        with patch.object(dm, "_deliver_one", new=AsyncMock(side_effect=RuntimeError("boom"))):
+            result = await dm._deliver_single_offchain_concurrent(record)
+        assert result is False
+        assert "r1" not in dm._in_flight
+        assert dm._delivery_failures.get("r1", 0) == 1
+
+    @pytest.mark.asyncio
+    async def test_success_records_delivery_metric(self, queue):
+        from unittest.mock import AsyncMock
+
+        dm = _offchain_dm(queue)
+        dm._metrics = MagicMock()
+        record = _enqueue_executed(queue)
+        with patch.object(dm, "_deliver_one", new=AsyncMock(return_value=(_TX_HASH, None))):
+            await dm._deliver_single_offchain_concurrent(record)
+        dm._metrics.record_delivery.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_exception_records_failure_metric(self, queue):
+        from unittest.mock import AsyncMock
+
+        dm = _offchain_dm(queue)
+        dm._metrics = MagicMock()
+        record = _enqueue_executed(queue)
+        with patch.object(dm, "_deliver_one", new=AsyncMock(side_effect=ValueError("err"))):
+            await dm._deliver_single_offchain_concurrent(record)
+        dm._metrics.record_delivery_failed.assert_called_once()
+
+
+class TestOnchainMetricsCoverage:
+    """Covers metrics branches in batch/single onchain paths (lines 437-457, 1041-1053, 1068)."""
+
+    def _make_dm_with_metrics(self, queue):
+        dm = _offchain_dm(queue)
+        dm._metrics = MagicMock()
+        return dm
+
+    def _patch_prepare(self, dm):
+        async def _fake(record):
+            return b"\x00" * 32, b"data", "QmTest"
+
+        return patch.object(dm, "_prepare_onchain", side_effect=_fake)
+
+    @pytest.mark.asyncio
+    async def test_batch_records_delivery_metric(self, queue):
+        from micromech.core.models import MechRequest, ToolResult
+
+        dm = self._make_dm_with_metrics(queue)
+        for rid in ("a", "b"):
+            req = MechRequest(request_id=rid, prompt="p", tool="echo")
+            queue.add_request(req)
+            queue.mark_executing(rid)
+            queue.mark_executed(rid, ToolResult(output="ok"))
+        records = queue.get_undelivered(limit=10)
+        with (
+            self._patch_prepare(dm),
+            patch.object(dm, "_submit_batch_delivery", return_value=(_TX_HASH, [True, True])),
+        ):
+            await dm._deliver_onchain_batch(records)
+        assert dm._metrics.record_delivery.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_batch_records_late_delivery_metric(self, queue):
+        from micromech.core.models import MechRequest, ToolResult
+
+        dm = self._make_dm_with_metrics(queue)
+        for rid in ("a", "b"):
+            req = MechRequest(request_id=rid, prompt="p", tool="echo")
+            queue.add_request(req)
+            queue.mark_executing(rid)
+            queue.mark_executed(rid, ToolResult(output="ok"))
+        records = queue.get_undelivered(limit=10)
+        with (
+            self._patch_prepare(dm),
+            patch.object(dm, "_submit_batch_delivery", return_value=(_TX_HASH, [False, False])),
+        ):
+            await dm._deliver_onchain_batch(records)
+        assert dm._metrics.record_late_delivery.call_count == 2
+        assert dm._metrics.record_delivery_failed.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_single_records_late_delivery_metric(self, queue):
+        from micromech.core.models import MechRequest, ToolResult
+
+        dm = self._make_dm_with_metrics(queue)
+        req = MechRequest(request_id="r1", prompt="p", tool="echo")
+        queue.add_request(req)
+        queue.mark_executing("r1")
+        queue.mark_executed("r1", ToolResult(output="ok"))
+        record = queue.get_undelivered(limit=1)[0]
+        with (
+            self._patch_prepare(dm),
+            patch.object(dm, "_submit_batch_delivery", return_value=(_TX_HASH, [False])),
+        ):
+            result = await dm._deliver_single_onchain(record)
+        assert result is False
+        dm._metrics.record_late_delivery.assert_called_once()
+        dm._metrics.record_delivery_failed.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _decode_delivery_flags — non-forked tests for coverage of lines 111-142
+# ---------------------------------------------------------------------------
+
+_MP_ADDR = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
+
+
+def _web3_with_flags(flags):
+    """Mock web3 whose MarketplaceDelivery.process_log returns the given flags."""
+    web3 = MagicMock()
+    web3.to_checksum_address.side_effect = lambda x: x
+    event_instance = MagicMock()
+
+    def _process(log):
+        if log.get("_our_event"):
+            return {"args": {"deliveredRequests": flags}}
+        raise Exception("not our event")
+
+    event_instance.process_log.side_effect = _process
+    web3.eth.contract.return_value.events.MarketplaceDelivery.return_value = event_instance
+    return web3
+
+
+def _mp_log(**extra):
+    return {"address": _MP_ADDR, "_our_event": True, **extra}
+
+
+class TestDecodeFlagsNonForked:
+    """_decode_delivery_flags: covers lines 111-142 outside forked subprocess."""
+
+    def test_all_accepted(self):
+        result = _decode_delivery_flags(_web3_with_flags([True, True]), {"logs": [_mp_log()]}, _MP_ADDR, 2)
+        assert result == [True, True]
+
+    def test_partial_timeout(self):
+        result = _decode_delivery_flags(_web3_with_flags([True, False]), {"logs": [_mp_log()]}, _MP_ADDR, 2)
+        assert result == [True, False]
+
+    def test_address_mismatch_ignored(self):
+        """Log from wrong address is skipped; final fallback returns all-True."""
+        result = _decode_delivery_flags(
+            _web3_with_flags([False]),
+            {"logs": [{"address": "0x" + "aa" * 20, "_our_event": True}]},
+            _MP_ADDR,
+            1,
+        )
+        assert result == [True]
+
+    def test_process_log_raises_continues(self):
+        """process_log raises on matching address → continue, final fallback."""
+        web3 = MagicMock()
+        web3.to_checksum_address.side_effect = lambda x: x
+        event_instance = MagicMock()
+        event_instance.process_log.side_effect = Exception("bad ABI")
+        web3.eth.contract.return_value.events.MarketplaceDelivery.return_value = event_instance
+        result = _decode_delivery_flags(web3, {"logs": [{"address": _MP_ADDR, "_bad": True}]}, _MP_ADDR, 2)
+        assert result == [True, True]
+
+    def test_length_mismatch_returns_all_true(self):
+        """Decoded flags length != num_requests → fallback."""
+        result = _decode_delivery_flags(
+            _web3_with_flags([True, False]),
+            {"logs": [_mp_log()]},
+            _MP_ADDR,
+            3,
+        )
+        assert result == [True, True, True]
+
+    def test_contract_build_fails_returns_all_true(self):
+        """web3.eth.contract() raises → outer except → all-True."""
+        web3 = MagicMock()
+        web3.eth.contract.side_effect = Exception("RPC error")
+        web3.to_checksum_address.side_effect = lambda x: x
+        result = _decode_delivery_flags(web3, {"logs": []}, _MP_ADDR, 2)
+        assert result == [True, True]
+
+    def test_second_log_decoded_when_first_fails(self):
+        """First log raises; second decodes correctly."""
+        web3 = MagicMock()
+        web3.to_checksum_address.side_effect = lambda x: x
+        event_instance = MagicMock()
+        calls = {"n": 0}
+
+        def _process(log):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise Exception("first bad")
+            return {"args": {"deliveredRequests": [True, False]}}
+
+        event_instance.process_log.side_effect = _process
+        web3.eth.contract.return_value.events.MarketplaceDelivery.return_value = event_instance
+        receipt = {"logs": [{"address": _MP_ADDR}, {"address": _MP_ADDR}]}
+        result = _decode_delivery_flags(web3, receipt, _MP_ADDR, 2)
+        assert result == [True, False]
