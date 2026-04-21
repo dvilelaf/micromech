@@ -923,12 +923,16 @@ class DeliveryManager:
                             self._in_flight.discard(r.request.request_id)
                             return False
 
+                        _ALLOCATE_TIMEOUT = 15  # seconds; prevents indefinite thread-pool hang
                         nonce = None
                         try:
-                            nonce = await asyncio.to_thread(allocator.allocate)
+                            nonce = await asyncio.wait_for(
+                                asyncio.to_thread(allocator.allocate),
+                                timeout=_ALLOCATE_TIMEOUT,
+                            )
                         except Exception:
                             logger.warning(
-                                "[{}] Nonce allocator blocked/failed for {}, skipping",
+                                "[{}] Nonce allocator blocked/timed-out for {}, skipping",
                                 self._chain_name,
                                 r.request.request_id,
                             )
@@ -983,15 +987,15 @@ class DeliveryManager:
         self,
         record: RequestRecord,
         safe_nonce: Optional[int] = None,
-        _prep_data: Optional[tuple] = None,
+        _prep_data: Optional[tuple[bytes, bytes, Optional[str]]] = None,
     ) -> bool:
         """Prepare and submit one on-chain request as a single Safe TX.
 
         One delivery = one Safe TX nonce, preserving staking liveness.
         Always removes the record from in-flight in the finally block.
-        _prep_data: pre-computed (req_id_bytes, delivery_data, ipfs_cid_hex) tuple;
-        when provided, skips the _prepare_onchain call (used by parallel _dispatch
-        to run prep before nonce allocation — prevents orphaned nonce slots on prep failure).
+        _prep_data: pre-computed (req_id_bytes, delivery_data, ipfs_cid_hex) tuple.
+        Only set by parallel _dispatch (prep before nonce allocation prevents orphaned
+        nonce slots). Serial path must leave as None (falls back to _prepare_onchain).
         """
         try:
             if _prep_data is not None:
