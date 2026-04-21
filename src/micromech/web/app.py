@@ -1489,15 +1489,14 @@ def create_web_app(
             else:
                 active_multisigs = multisigs
             multisig_set = set(active_multisigs.values())
-            if not multisig_set:
-                return {"year": effective_year, "total_xdai": 0.0, "total_eur": 0.0,
-                        "total_gas_eur": 0.0, "total_tax": 0.0, "total_net": 0.0,
-                        "effective_tax_rate": 0.0, "total_withdrawals": 0, "months": []}
+            use_tag_filter = not multisig_set
 
             start, end = _profits_date_range(effective_year, month)
 
             # Revenue: native xDAI transfers from multisig with meaningful value
-            # These are exclusively the _transfer_to_master step of payment_withdraw
+            # These are exclusively the _transfer_to_master step of payment_withdraw.
+            # Fallback: when multisig is not configured locally, match by to_tag='master'
+            # which uniquely identifies micromech→master transfers (triton uses 'triton-master').
             all_txs = list(
                 SentTransaction.select()
                 .where(
@@ -1506,10 +1505,13 @@ def create_web_app(
                 )
                 .order_by(SentTransaction.timestamp)
             )
-            multisig_txs = [
-                tx for tx in all_txs
-                if tx.from_address and tx.from_address.lower() in multisig_set
-            ]
+            if use_tag_filter:
+                multisig_txs = [tx for tx in all_txs if tx.to_tag == "master"]
+            else:
+                multisig_txs = [
+                    tx for tx in all_txs
+                    if tx.from_address and tx.from_address.lower() in multisig_set
+                ]
             withdrawals = [
                 tx for tx in multisig_txs
                 if (tx.value_eur or 0) > 0.001
@@ -1587,6 +1589,7 @@ def create_web_app(
             else:
                 active_multisigs = multisigs
             multisig_set = set(active_multisigs.values())
+            use_tag_filter = not multisig_set
             # Reverse map for chain labelling
             addr_to_chain = {v: k for k, v in active_multisigs.items()}
 
@@ -1599,12 +1602,18 @@ def create_web_app(
                 )
                 .order_by(SentTransaction.timestamp.desc())
             )
-            withdrawals = [
-                tx for tx in txs
-                if tx.from_address
-                and tx.from_address.lower() in multisig_set
-                and (tx.value_eur or 0) > 0.001
-            ]
+            if use_tag_filter:
+                withdrawals = [
+                    tx for tx in txs
+                    if tx.to_tag == "master" and (tx.value_eur or 0) > 0.001
+                ]
+            else:
+                withdrawals = [
+                    tx for tx in txs
+                    if tx.from_address
+                    and tx.from_address.lower() in multisig_set
+                    and (tx.value_eur or 0) > 0.001
+                ]
 
             result = []
             for tx in withdrawals:
