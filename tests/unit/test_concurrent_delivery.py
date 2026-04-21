@@ -853,9 +853,14 @@ class TestParallelNonceDispatch:
         assert allocator.release.call_args[0][0] == 10, (
             "release() must be called with the nonce that was actually allocated"
         )
-        # H1: blocked record must be removed from _in_flight (no leak)
+        # H1: BOTH records removed from _in_flight — the blocked one via explicit
+        # discard in the allocate except-path, the successful one via
+        # _deliver_single_onchain's finally.
         assert STALL_ID not in dm._in_flight, (
             "Blocked record must be removed from _in_flight when allocate() raises"
+        )
+        assert FAST1_ID not in dm._in_flight, (
+            "Successful record must be removed from _in_flight after delivery"
         )
 
     @pytest.mark.asyncio
@@ -1104,16 +1109,19 @@ def test_get_safe_lock_normalizes_case():
     """get_safe_lock returns the same lock regardless of address casing."""
     from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
 
-    addr_lower = "0x" + "ab" * 20
-    addr_upper = "0x" + "AB" * 20
-    addr_mixed = "0xAb" + "aB" * 19
-    for a in (addr_lower, addr_upper, addr_mixed):
-        _SAFE_LOCKS.pop(a.lower(), None)
-    lock1 = get_safe_lock(addr_lower)
-    lock2 = get_safe_lock(addr_upper)
-    lock3 = get_safe_lock(addr_mixed)
-    assert lock1 is lock2 is lock3, "Same Safe address in different casing must share one lock"
-    _SAFE_LOCKS.pop(addr_lower, None)
+    _SAFE_LOCKS.clear()
+    try:
+        addr_lower = "0x" + "ab" * 20
+        addr_upper = "0x" + "AB" * 20
+        addr_mixed = "0xAb" + "aB" * 19
+        lock1 = get_safe_lock(addr_lower)
+        lock2 = get_safe_lock(addr_upper)
+        lock3 = get_safe_lock(addr_mixed)
+        assert lock1 is lock2 is lock3, (
+            "Same Safe address in different casing must share one lock"
+        )
+    finally:
+        _SAFE_LOCKS.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -1258,3 +1266,4 @@ def test_sanitize_error_depth_guard():
     result = _sanitize_error(exc)
     assert "..." in result, "Depth guard must emit '...' when chain exceeds 5 levels"
     assert "level0" in result
+    assert "level6" not in result, "Level 6+ must not appear — depth guard must truncate"

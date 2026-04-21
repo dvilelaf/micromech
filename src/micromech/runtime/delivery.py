@@ -898,7 +898,14 @@ class DeliveryManager:
             async with get_safe_lock(multisig):
                 if self.config.parallel_nonce_enabled:
                     allocator = self._get_nonce_allocator(multisig)
-                    allocator.check_stuck(len(onchain))
+                    try:
+                        allocator.check_stuck(len(onchain))
+                    except Exception:
+                        # check_stuck failed — clean up _in_flight so requests
+                        # can be retried on the next tick rather than leaking.
+                        for r in onchain:
+                            self._in_flight.discard(r.request.request_id)
+                        raise
 
                     async def _dispatch(r: RequestRecord) -> bool:
                         # H4: prepare before allocating so a prep failure doesn't
@@ -928,18 +935,17 @@ class DeliveryManager:
                             # H1: discard here — _deliver_single_onchain never called
                             self._in_flight.discard(r.request.request_id)
                             return False
+                        # _deliver_single_onchain has its own except+finally; it
+                        # never propagates. The finally here releases the nonce
+                        # whether delivery succeeded, returned False, or (in the
+                        # unlikely event of a future refactor) raised.
                         try:
                             result = await self._deliver_single_onchain(
                                 r, safe_nonce=nonce, _prep_data=prep_data
                             )
                             if not result:
-                                # Invalidate before release so _in_flight_nonces still
-                                # reflects this nonce at invalidation time (for drain).
                                 allocator.invalidate("delivery_failed")
                             return result
-                        except Exception:
-                            allocator.invalidate("delivery_exception")
-                            return False
                         finally:
                             allocator.release(nonce)
 
@@ -1002,6 +1008,12 @@ class DeliveryManager:
             )
             req_id = record.request.request_id
             self._delivery_failures.pop(req_id, None)
+            if not delivered_flags:
+                logger.warning(
+                    "[{}] No delivery flags returned for {}; treating as accepted (fallback)",
+                    self._chain_name,
+                    record.request.request_id[:16] + "...",
+                )
             accepted = delivered_flags[0] if delivered_flags else True
             if accepted:
                 self.queue.mark_delivered(

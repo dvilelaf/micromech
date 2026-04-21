@@ -1360,6 +1360,7 @@ def create_web_app(
                     await asyncio.wait_for(lock.acquire(), timeout=_WITHDRAW_LOCK_TIMEOUT)
                 except asyncio.TimeoutError:
                     return {"success": False, "error": "Safe lock busy — delivery in progress, try again shortly"}
+                mech_wei = 0
                 try:
                     await asyncio.to_thread(_withdraw, bridge, chain, bt_address, chain_cfg.mech_address, multisig)
                     web3 = bridge.web3
@@ -1369,10 +1370,10 @@ def create_web_app(
                     )
                     await asyncio.to_thread(_drain_mech_to_safe, bridge, chain, chain_cfg.mech_address, multisig, mech_wei)
                     await asyncio.to_thread(_transfer_to_master, bridge, chain, multisig, mech_wei)
+                    amount_xdai = round(mech_wei / 1e18, 6)
                 finally:
                     lock.release()
 
-                amount_xdai = round(mech_wei / 1e18, 6)
                 return {"success": True, "action": "withdraw", "data": {"amount_xdai": amount_xdai}}
             except Exception:
                 logger.exception("withdraw action failed")

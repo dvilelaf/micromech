@@ -159,6 +159,15 @@ class TestStateTransitionGuards:
         with pytest.raises(PersistenceError, match="not found"):
             queue.mark_timed_out("nonexistent", tx_hash="0x" + "0" * 64)
 
+    def test_timed_out_on_delivered_raises(self, queue: PersistentQueue):
+        """mark_timed_out must fail if already DELIVERED (requires EXECUTED state)."""
+        queue.add_request(MechRequest(request_id="r1"))
+        queue.mark_executing("r1")
+        queue.mark_executed("r1", ToolResult(output="ok"))
+        queue.mark_delivered("r1", tx_hash="0x" + "0" * 64)
+        with pytest.raises(PersistenceError, match="not found or not in executed"):
+            queue.mark_timed_out("r1", tx_hash="0x" + "1" * 64)
+
     def test_delivered_on_pending_raises(self, queue: PersistentQueue):
         queue.add_request(MechRequest(request_id="r1"))
         with pytest.raises(PersistenceError, match="not in executed"):
