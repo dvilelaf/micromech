@@ -888,7 +888,12 @@ class DeliveryManager:
             from micromech.core.bridge import get_service_info
 
             svc_info = get_service_info(self._chain_name)
-            multisig = svc_info.get("multisig_address", "")
+            multisig = svc_info.get("multisig_address")
+            if not multisig:
+                raise ValueError(
+                    f"[{self._chain_name}] multisig_address not configured"
+                    " — cannot dispatch in parallel"
+                )
 
             allocator = self._get_nonce_allocator(multisig)
             allocator.check_stuck(len(onchain))

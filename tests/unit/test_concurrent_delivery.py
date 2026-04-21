@@ -796,6 +796,50 @@ class TestParallelNonceDispatch:
         assert released_nonces == {5, 6}, f"Both nonces must be released; got {released_nonces}"
 
     @pytest.mark.asyncio
+    async def test_allocate_raises_skips_worker_without_release(self):
+        """When allocate() raises (e.g. NonceAllocatorBlockedError), the worker returns
+        False and release() is NOT called for that worker (no nonce was assigned).
+
+        Other workers dispatched via gather() must still complete normally.
+        """
+        blocked_record = _make_record(STALL_ID)
+        ok_record = _make_record(FAST1_ID)
+        q = _make_queue([blocked_record, ok_record])
+        bridge = _make_bridge_with_safe()
+
+        allocator = MagicMock()
+        allocator.allocate.side_effect = [
+            RuntimeError("EOA gap exceeded — allocator blocked"),
+            10,
+        ]
+        allocator.check_stuck = MagicMock()
+        allocator.invalidate = MagicMock()
+        allocator.release = MagicMock()
+        bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(
+                    dm, "_submit_batch_delivery", return_value=("0x" + "ab" * 32, [True])
+                ),
+            ):
+                delivered = await dm._deliver_concurrent()
+
+        assert delivered == 1, f"Only the ok_record must succeed; got {delivered}"
+        assert allocator.release.call_count == 1, (
+            f"release() must only be called for the allocated nonce; "
+            f"got {allocator.release.call_count}"
+        )
+        assert allocator.release.call_args[0][0] == 10, (
+            "release() must be called with the nonce that was actually allocated"
+        )
+
+    @pytest.mark.asyncio
     async def test_parallel_path_disabled_by_default(self):
         """parallel_nonce_enabled=False (default) takes the serial path even with _has_safe=True."""
         records = [_make_record(FAST1_ID), _make_record(FAST2_ID)]
