@@ -85,6 +85,10 @@ class MicromechConfig(BaseModel):
     update_check_enabled: bool = True
     auto_update_enabled: bool = False
 
+    # Parallel Safe TX delivery (NonceAllocator)
+    parallel_nonce_enabled: bool = False
+    nonce_gap_alert_threshold: int = Field(default=3, ge=0, le=20)
+
     # Tools
     disabled_tools: list[str] = Field(default_factory=list)
 

@@ -1415,6 +1415,217 @@ def create_web_app(
             },
         )
 
+    # --- Profits tab ---
+
+    _SAVINGS_TAX_BRACKETS: list[tuple[float, float]] = [
+        (6_000, 0.19),
+        (44_000, 0.21),
+        (150_000, 0.23),
+        (100_000, 0.27),
+        (float("inf"), 0.30),
+    ]
+
+    def _profits_savings_tax(annual_profit_eur: float) -> tuple[float, float]:
+        if annual_profit_eur <= 0:
+            return 0.0, 0.0
+        remaining = annual_profit_eur
+        tax = 0.0
+        for size, rate in _SAVINGS_TAX_BRACKETS:
+            chunk = min(remaining, size)
+            tax += chunk * rate
+            remaining -= chunk
+            if remaining <= 0:
+                break
+        return round(tax, 2), round(tax / annual_profit_eur, 4)
+
+    def _profits_get_multisigs() -> dict[str, str]:
+        """Returns {chain_name: multisig_address_lower} for all enabled chains."""
+        from micromech.core.bridge import get_service_info
+
+        config = MicromechConfig.load()
+        result = {}
+        for chain_name in config.enabled_chains:
+            try:
+                svc = get_service_info(chain_name)
+                multisig = svc.get("multisig_address")
+                if multisig:
+                    result[chain_name] = multisig.lower()
+            except Exception:
+                pass
+        return result
+
+    def _profits_date_range(
+        year: int, month: Optional[int]
+    ) -> tuple:
+        import datetime as dt
+
+        start = dt.datetime(year, 1, 1)
+        end = dt.datetime(year + 1, 1, 1)
+        if month and 1 <= month <= 12:
+            start = dt.datetime(year, month, 1)
+            end = (
+                dt.datetime(year + 1, 1, 1)
+                if month == 12
+                else dt.datetime(year, month + 1, 1)
+            )
+        return start, end
+
+    @protected_router.get("/profits/summary")
+    async def profits_summary(
+        year: int = 0,
+        month: Optional[int] = None,
+        chain: Optional[str] = None,
+    ) -> dict:
+        def _run() -> dict:
+            import datetime as dt
+            from collections import defaultdict
+
+            from iwa.core.db import SentTransaction
+
+            effective_year = year or dt.datetime.now().year
+            multisigs = _profits_get_multisigs()
+            if chain and chain in multisigs:
+                active_multisigs = {chain: multisigs[chain]}
+            else:
+                active_multisigs = multisigs
+            multisig_set = set(active_multisigs.values())
+            if not multisig_set:
+                return {"year": effective_year, "total_xdai": 0.0, "total_eur": 0.0,
+                        "total_gas_eur": 0.0, "total_tax": 0.0, "total_net": 0.0,
+                        "effective_tax_rate": 0.0, "total_withdrawals": 0, "months": []}
+
+            start, end = _profits_date_range(effective_year, month)
+
+            # Revenue: native xDAI transfers from multisig with meaningful value
+            # These are exclusively the _transfer_to_master step of payment_withdraw
+            all_txs = list(
+                SentTransaction.select()
+                .where(
+                    SentTransaction.timestamp >= start,
+                    SentTransaction.timestamp < end,
+                )
+                .order_by(SentTransaction.timestamp)
+            )
+            multisig_txs = [
+                tx for tx in all_txs
+                if tx.from_address and tx.from_address.lower() in multisig_set
+            ]
+            withdrawals = [
+                tx for tx in multisig_txs
+                if (tx.value_eur or 0) > 0.001
+            ]
+
+            total_xdai = sum(
+                int(tx.amount_wei or 0) / 1e18 for tx in withdrawals
+            )
+            total_eur = sum(tx.value_eur or 0 for tx in withdrawals)
+            total_gas = sum(tx.gas_value_eur or 0 for tx in multisig_txs)
+
+            pre_tax = total_eur - total_gas
+            tax, effective_rate = _profits_savings_tax(pre_tax)
+            net = pre_tax - tax
+
+            monthly: dict[int, dict] = defaultdict(
+                lambda: {"xdai": 0.0, "eur": 0.0, "gas": 0.0, "count": 0}
+            )
+            for tx in withdrawals:
+                m = tx.timestamp.month
+                monthly[m]["xdai"] += int(tx.amount_wei or 0) / 1e18
+                monthly[m]["eur"] += tx.value_eur or 0
+                monthly[m]["count"] += 1
+            for tx in multisig_txs:
+                monthly[tx.timestamp.month]["gas"] += tx.gas_value_eur or 0
+
+            months = []
+            for m in range(1, 13):
+                d = monthly[m]
+                m_pre_tax = d["eur"] - d["gas"]
+                m_tax = m_pre_tax * effective_rate if m_pre_tax > 0 else 0.0
+                months.append({
+                    "month": m,
+                    "xdai": round(d["xdai"], 6),
+                    "eur": round(d["eur"], 2),
+                    "gas": round(d["gas"], 2),
+                    "tax": round(m_tax, 2),
+                    "net": round(m_pre_tax - m_tax, 2),
+                    "count": d["count"],
+                })
+
+            return {
+                "year": effective_year,
+                "total_xdai": round(total_xdai, 6),
+                "total_eur": round(total_eur, 2),
+                "total_gas_eur": round(total_gas, 2),
+                "total_tax": round(tax, 2),
+                "total_net": round(net, 2),
+                "effective_tax_rate": round(effective_rate * 100, 1),
+                "total_withdrawals": len(withdrawals),
+                "months": months,
+            }
+
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception:
+            logger.exception("profits/summary failed")
+            return {"error": "Failed to load profits data"}
+
+    @protected_router.get("/profits/withdrawals")
+    async def profits_withdrawals(
+        year: int = 0,
+        month: Optional[int] = None,
+        chain: Optional[str] = None,
+    ) -> list:
+        def _run() -> list:
+            import datetime as dt
+
+            from iwa.core.db import SentTransaction
+
+            effective_year = year or dt.datetime.now().year
+            multisigs = _profits_get_multisigs()
+            if chain and chain in multisigs:
+                active_multisigs = {chain: multisigs[chain]}
+            else:
+                active_multisigs = multisigs
+            multisig_set = set(active_multisigs.values())
+            # Reverse map for chain labelling
+            addr_to_chain = {v: k for k, v in active_multisigs.items()}
+
+            start, end = _profits_date_range(effective_year, month)
+            txs = list(
+                SentTransaction.select()
+                .where(
+                    SentTransaction.timestamp >= start,
+                    SentTransaction.timestamp < end,
+                )
+                .order_by(SentTransaction.timestamp.desc())
+            )
+            withdrawals = [
+                tx for tx in txs
+                if tx.from_address
+                and tx.from_address.lower() in multisig_set
+                and (tx.value_eur or 0) > 0.001
+            ]
+
+            result = []
+            for tx in withdrawals:
+                chain_name = addr_to_chain.get(tx.from_address.lower() if tx.from_address else "", "")
+                explorer = f"https://gnosisscan.io/tx/{tx.tx_hash}" if chain_name == "gnosis" else ""
+                result.append({
+                    "date": tx.timestamp.isoformat(),
+                    "chain": chain_name,
+                    "xdai": round(int(tx.amount_wei or 0) / 1e18, 6),
+                    "eur": round(tx.value_eur or 0, 2),
+                    "tx_hash": tx.tx_hash or "",
+                    "explorer_url": explorer,
+                })
+            return result
+
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception:
+            logger.exception("profits/withdrawals failed")
+            return []
+
     # Register routers on the app. Order does not matter for routing
     # (paths are distinct), but public_router goes first by convention.
     app.include_router(public_router)

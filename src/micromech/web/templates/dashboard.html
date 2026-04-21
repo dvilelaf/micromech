@@ -162,6 +162,13 @@
             padding: 1rem; font-family: var(--font-mono); font-size: 0.8rem; color: var(--text-muted);
             white-space: pre-wrap; display: none;
         }
+        .profits-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+        .profits-card { background: rgba(0,0,0,0.25); border: 1px solid var(--glass-border); border-radius: 12px; padding: 1rem 1.2rem; }
+        .profits-card .card-label { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 0.4rem; }
+        .profits-card .card-value { font-size: 1.25rem; font-weight: 600; font-family: var(--font-mono); }
+        .profits-chart-container { padding: 1rem; margin-bottom: 1.5rem; height: 280px; position: relative; }
+        .profits-filters { display: flex; gap: 0.5rem; align-items: center; margin-left: auto; }
+        .profits-filters select { background: rgba(0,0,0,0.3); border: 1px solid var(--glass-border); color: var(--text-color); border-radius: 6px; padding: 4px 8px; font-size: 0.82rem; }
         .chain-cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1rem; }
         .chain-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
         .chain-card-header h4 { font-size: 1rem; font-weight: 600; text-transform: capitalize; margin: 0; }
@@ -328,6 +335,7 @@
             <button class="tab-btn" data-tab="activity" role="tab" aria-selected="false">Live Activity</button>
             <button class="tab-btn" data-tab="tools" role="tab" aria-selected="false">Tools</button>
             <button class="tab-btn" data-tab="management" role="tab" aria-selected="false">Management</button>
+            <button class="tab-btn" data-tab="profits" role="tab" aria-selected="false">Profits</button>
             <button class="tab-btn" data-tab="logs" role="tab" aria-selected="false">Logs</button>
         </nav>
 
@@ -538,6 +546,40 @@
             </section>
 
             <!-- Logs Tab -->
+            <section id="tab-profits" class="tab-pane">
+                <div class="section-header">
+                    <h2 style="font-size:1.1rem;font-weight:600;margin:0;">Mech Profits</h2>
+                    <div class="profits-filters">
+                        <select id="profits-year" title="Filter by year"></select>
+                        <select id="profits-month" title="Filter by month">
+                            <option value="">All months</option>
+                            <option value="1">January</option><option value="2">February</option>
+                            <option value="3">March</option><option value="4">April</option>
+                            <option value="5">May</option><option value="6">June</option>
+                            <option value="7">July</option><option value="8">August</option>
+                            <option value="9">September</option><option value="10">October</option>
+                            <option value="11">November</option><option value="12">December</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="profits-summary" id="profits-summary"></div>
+                <div class="section-header mt-2"><h3>Monthly Breakdown</h3></div>
+                <div class="profits-chart-container glass"><canvas id="profits-chart"></canvas></div>
+                <div class="section-header mt-2"><h3>Withdrawal History</h3></div>
+                <div class="table-container glass">
+                    <table class="data-table">
+                        <thead><tr>
+                            <th>Date</th><th>Chain</th>
+                            <th class="val">xDAI</th><th class="val">EUR</th><th>Tx</th>
+                        </tr></thead>
+                        <tbody id="profits-body">
+                            <tr><td colspan="5" class="text-center text-muted">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="mb-3"></div>
+            </section>
+
             <section id="tab-logs" class="tab-pane">
                 <div class="log-header">
                     <button class="btn btn-sm btn-secondary" onclick="clearLogs()">Clear</button>
@@ -679,6 +721,9 @@
         logInitialized: false,
         lastStats24h: {},
         lastStats7d: {},
+        profitsYear: new Date().getFullYear(),
+        profitsMonth: null,
+        profitsChart: null,
     };
 
     // --- Chart.js defaults ---
@@ -701,6 +746,7 @@
         if (tabName === 'overview') { loadCharts(); loadOverviewToolStats(); }
         if (tabName === 'activity') loadHistory();
         if (tabName === 'management') loadManagementTab();
+        if (tabName === 'profits') initProfitsTab();
     }
     document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => switchTab(btn.dataset.tab));
@@ -2114,6 +2160,204 @@
                 `;
             }).join('');
         });
+    }
+
+    // --- Profits Tab ---
+    const MONTH_NAMES_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    function initProfitsTab() {
+        const yearSel = document.getElementById('profits-year');
+        if (!yearSel.options.length) {
+            const cur = new Date().getFullYear();
+            for (let y = cur; y >= 2025; y--) {
+                const o = document.createElement('option');
+                o.value = y; o.textContent = y;
+                yearSel.appendChild(o);
+            }
+            yearSel.value = state.profitsYear;
+            yearSel.addEventListener('change', () => { state.profitsYear = parseInt(yearSel.value); loadProfits(); });
+            document.getElementById('profits-month').addEventListener('change', e => {
+                state.profitsMonth = e.target.value ? parseInt(e.target.value) : null;
+                loadProfits();
+            });
+        }
+        loadProfits();
+    }
+
+    async function loadProfits() {
+        const y = state.profitsYear;
+        const mp = state.profitsMonth ? `&month=${state.profitsMonth}` : '';
+        try {
+            const [sumRes, wRes] = await Promise.all([
+                authFetch(`${API_BASE}/api/profits/summary?year=${y}${mp}`),
+                authFetch(`${API_BASE}/api/profits/withdrawals?year=${y}${mp}`),
+            ]);
+            if (!sumRes.ok || !wRes.ok) { showToast('Failed to load profits data', 'error'); return; }
+            const summary = await sumRes.json();
+            const withdrawals = await wRes.json();
+            renderProfitsSummary(summary);
+            renderProfitsChart(summary);
+            renderProfitsTable(withdrawals);
+        } catch (err) {
+            showToast('Error loading profits: ' + err.message, 'error');
+        }
+    }
+
+    function renderProfitsSummary(s) {
+        if (s.error) {
+            document.getElementById('profits-summary').innerHTML = `<p style="color:var(--text-muted)">${s.error}</p>`;
+            return;
+        }
+        const preTax = (s.total_eur || 0) - (s.total_gas_eur || 0);
+        const taxRate = s.effective_tax_rate || 0;
+        const avgRate = s.total_xdai > 0 ? (s.total_eur / s.total_xdai).toFixed(4) : 'N/A';
+        document.getElementById('profits-summary').innerHTML = `
+            <div class="profits-card">
+                <div class="card-label">Total xDAI</div>
+                <div class="card-value" style="color:var(--accent-color)">${(s.total_xdai||0).toFixed(4)}</div>
+            </div>
+            <div class="profits-card">
+                <div class="card-label">Avg. Rate (xDAI/EUR)</div>
+                <div class="card-value">${avgRate !== 'N/A' ? '€' + avgRate : avgRate}</div>
+            </div>
+            <div class="profits-card">
+                <div class="card-label">Gross Revenue</div>
+                <div class="card-value" style="color:var(--success)">€${(s.total_eur||0).toFixed(2)}</div>
+            </div>
+            <div class="profits-card">
+                <div class="card-label">Gas Costs</div>
+                <div class="card-value" style="color:#e74c3c">−€${(s.total_gas_eur||0).toFixed(2)}</div>
+            </div>
+            <div class="profits-card">
+                <div class="card-label">Pre-tax Profit</div>
+                <div class="card-value" style="color:${preTax>=0?'#3498db':'#e74c3c'}">€${preTax.toFixed(2)}</div>
+            </div>
+            <div class="profits-card">
+                <div class="card-label">IRPF Tax (${taxRate.toFixed(1)}%)</div>
+                <div class="card-value" style="color:#e67e22">−€${(s.total_tax||0).toFixed(2)}</div>
+            </div>
+            <div class="profits-card">
+                <div class="card-label">Net Profit</div>
+                <div class="card-value" style="color:${(s.total_net||0)>=0?'#2ecc71':'#e74c3c'}">€${(s.total_net||0).toFixed(2)}</div>
+            </div>
+            <div class="profits-card">
+                <div class="card-label">Withdrawals</div>
+                <div class="card-value" style="color:#9b59b6">${s.total_withdrawals||0}</div>
+            </div>`;
+    }
+
+    function renderProfitsChart(s) {
+        const ctx = document.getElementById('profits-chart');
+        if (!ctx) return;
+        if (state.profitsChart) { state.profitsChart.destroy(); state.profitsChart = null; }
+        const months = s.months || [];
+        const labels = months.map(m => MONTH_NAMES_SHORT[m.month - 1]);
+        state.profitsChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: [
+                    {
+                        label: 'xDAI Withdrawn',
+                        data: months.map(m => m.xdai),
+                        backgroundColor: 'rgba(0,210,255,0.6)',
+                        borderColor: 'rgba(0,210,255,1)',
+                        borderWidth: 1,
+                        yAxisID: 'y',
+                        order: 3,
+                    },
+                    {
+                        label: 'Gross EUR',
+                        data: months.map(m => m.eur),
+                        type: 'line',
+                        borderColor: 'rgba(46,204,113,0.5)',
+                        backgroundColor: 'transparent',
+                        borderWidth: 1,
+                        borderDash: [5, 5],
+                        pointRadius: 3,
+                        fill: false,
+                        yAxisID: 'y1',
+                        order: 2,
+                    },
+                    {
+                        label: 'Net Profit',
+                        data: months.map(m => m.net),
+                        type: 'line',
+                        borderColor: 'rgba(46,204,113,1)',
+                        backgroundColor: 'rgba(46,204,113,0.1)',
+                        borderWidth: 2,
+                        pointRadius: 4,
+                        fill: true,
+                        yAxisID: 'y1',
+                        order: 1,
+                    },
+                    {
+                        label: 'Gas Costs',
+                        data: months.map(m => m.gas),
+                        type: 'line',
+                        borderColor: 'rgba(231,76,60,0.8)',
+                        backgroundColor: 'transparent',
+                        borderWidth: 1,
+                        pointRadius: 3,
+                        fill: false,
+                        yAxisID: 'y1',
+                        order: 2,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { labels: { color: '#adb5bd', boxWidth: 12 } },
+                    tooltip: {
+                        callbacks: {
+                            label: c => c.dataset.yAxisID === 'y'
+                                ? `xDAI: ${c.parsed.y.toFixed(4)}`
+                                : `${c.dataset.label}: €${c.parsed.y.toFixed(2)}`,
+                        },
+                    },
+                },
+                scales: {
+                    x: { ticks: { color: '#adb5bd' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                    y: {
+                        type: 'linear', position: 'left',
+                        title: { display: true, text: 'xDAI', color: '#00d2ff' },
+                        ticks: { color: '#00d2ff' },
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                    },
+                    y1: {
+                        type: 'linear', position: 'right',
+                        title: { display: true, text: 'EUR (€)', color: '#2ecc71' },
+                        ticks: { color: '#2ecc71' },
+                        grid: { drawOnChartArea: false },
+                    },
+                },
+            },
+        });
+    }
+
+    function renderProfitsTable(withdrawals) {
+        const tbody = document.getElementById('profits-body');
+        if (!withdrawals.length) {
+            tbody.innerHTML = `<tr><td colspan="5" class="text-center text-muted">No withdrawals found for this period.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = withdrawals.map(w => {
+            const date = new Date(w.date).toLocaleString();
+            const short = w.tx_hash ? w.tx_hash.slice(0, 10) + '...' : '?';
+            const link = w.explorer_url
+                ? `<a href="${w.explorer_url}" target="_blank" rel="noopener" class="tx-link">${short}</a>`
+                : short;
+            return `<tr>
+                <td>${date}</td>
+                <td style="text-transform:capitalize">${w.chain || '?'}</td>
+                <td class="val">${(w.xdai||0).toFixed(4)}</td>
+                <td class="val">€${(w.eur||0).toFixed(2)}</td>
+                <td>${link}</td>
+            </tr>`;
+        }).join('');
     }
 
     // --- Init ---

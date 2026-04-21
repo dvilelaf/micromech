@@ -56,6 +56,11 @@ class MetricsCollector:
     executions_failed: int = 0
     deliveries_completed: int = 0
     deliveries_failed: int = 0
+    # Deliveries that were accepted by the Safe TX but rejected on-chain by the
+    # marketplace contract as late (responseTimeout exceeded). Distinct from
+    # deliveries_failed (which covers TX failures). Used for rollback monitoring:
+    # if mech_late_delivery_count > 2× baseline, consider disabling parallel delivery.
+    mech_late_delivery_count: int = 0
 
     # Rolling execution times (last 1000)
     _exec_times: deque[float] = field(default_factory=lambda: deque(maxlen=1000))
@@ -177,6 +182,18 @@ class MetricsCollector:
             )
         )
 
+    def record_late_delivery(self, request_id: str, chain: str = "") -> None:
+        """Record a delivery that was mined but rejected on-chain as late (responseTimeout)."""
+        self.mech_late_delivery_count += 1
+        self._events.append(
+            MetricsEvent(
+                timestamp=time.time(),
+                event_type="late_delivery",
+                request_id=request_id,
+                chain=chain,
+            )
+        )
+
     def get_live_snapshot(self) -> dict[str, Any]:
         """Lightweight snapshot for SSE streaming (no DB hit)."""
         return {
@@ -187,6 +204,7 @@ class MetricsCollector:
             "executions_failed": self.executions_failed,
             "deliveries_completed": self.deliveries_completed,
             "deliveries_failed": self.deliveries_failed,
+            "mech_late_delivery_count": self.mech_late_delivery_count,
             "avg_execution_time": round(self.avg_execution_time, 3),
             "p95_execution_time": round(self.p95_execution_time, 3),
             "success_rate": round(self.success_rate, 1),

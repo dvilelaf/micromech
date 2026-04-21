@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from micromech.core.locks import get_safe_lock
 from micromech.core.marketplace import (
     BALANCE_TRACKER_ABI,
     MECH_EXEC_ABI,
@@ -260,40 +261,66 @@ async def payment_withdraw_task(
                 multisig,
             )
 
-            # Step 1: processPaymentByMultisig → xDAI lands in mech contract
-            await asyncio.to_thread(
-                _withdraw,
-                bridge,
-                chain_name,
-                bt_address,
-                chain_config.mech_address,
-                multisig,
-            )
+            # All three steps submit Safe TXs — hold the per-Safe lock so
+            # delivery workers cannot submit concurrent TXs during withdrawal.
+            mech_actual_wei: int = 0
+            transfer_error: Exception | None = None
+            async with get_safe_lock(multisig):
+                # Step 1: processPaymentByMultisig → xDAI lands in mech contract
+                await asyncio.to_thread(
+                    _withdraw,
+                    bridge,
+                    chain_name,
+                    bt_address,
+                    chain_config.mech_address,
+                    multisig,
+                )
 
-            # Read actual mech balance in exact wei — avoids float round-trip
-            # precision loss and accounts for marketplace fees or concurrent txs.
-            web3 = bridge.web3
-            mech_actual_wei = await asyncio.to_thread(
-                bridge.with_retry,
-                lambda: web3.eth.get_balance(
-                    web3.to_checksum_address(chain_config.mech_address)
-                ),
-            )
-            logger.debug(
-                "[{}] Mech actual balance for drain: {} wei",
-                chain_name,
-                mech_actual_wei,
-            )
+                # Read actual mech balance in exact wei — avoids float round-trip
+                # precision loss and accounts for marketplace fees or concurrent txs.
+                # Why inside the lock: processPaymentByMultisig() just deposited
+                # xDAI into the mech. Reading under the lock ensures we drain
+                # exactly what was deposited, without racing against another
+                # consumer that could also drain the mech between _withdraw and
+                # _drain_mech_to_safe.
+                web3 = bridge.web3
+                mech_actual_wei = await asyncio.to_thread(
+                    bridge.with_retry,
+                    lambda: web3.eth.get_balance(
+                        web3.to_checksum_address(chain_config.mech_address)
+                    ),
+                )
+                logger.debug(
+                    "[{}] Mech actual balance for drain: {} wei",
+                    chain_name,
+                    mech_actual_wei,
+                )
 
-            # Step 2: mech.exec → pull xDAI from mech to Safe
-            await asyncio.to_thread(
-                _drain_mech_to_safe,
-                bridge,
-                chain_name,
-                chain_config.mech_address,
-                multisig,
-                mech_actual_wei,
-            )
+                # Step 2: mech.exec → pull xDAI from mech to Safe
+                await asyncio.to_thread(
+                    _drain_mech_to_safe,
+                    bridge,
+                    chain_name,
+                    chain_config.mech_address,
+                    multisig,
+                    mech_actual_wei,
+                )
+
+                # Step 3: transfer exactly what was drained from mech to master.
+                # Safe keeps its own pre-existing xDAI; only the mech payment forwarded.
+                try:
+                    await asyncio.to_thread(
+                        _transfer_to_master,
+                        bridge,
+                        chain_name,
+                        multisig,
+                        mech_actual_wei,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "[{}] xDAI transfer to master failed: {}", chain_name, e
+                    )
+                    transfer_error = e
 
             mech_actual_xdai = mech_actual_wei / 1e18
             logger.info(
@@ -302,16 +329,7 @@ async def payment_withdraw_task(
                 mech_actual_xdai,
             )
 
-            # Step 3: transfer exactly what was drained from mech to master.
-            # Safe keeps its own pre-existing xDAI; only the mech payment is forwarded.
-            try:
-                await asyncio.to_thread(
-                    _transfer_to_master,
-                    bridge,
-                    chain_name,
-                    multisig,
-                    mech_actual_wei,
-                )
+            if transfer_error is None:
                 master = str(bridge.wallet.master_account.address)
                 await notification_service.send(
                     "Mech Payment Withdrawn",
@@ -320,16 +338,13 @@ async def payment_withdraw_task(
                         f"\nTransferred to master: {master}"
                     ),
                 )
-            except Exception as e:
-                logger.error(
-                    "[{}] xDAI transfer to master failed: {}", chain_name, e
-                )
+            else:
                 await notification_service.send(
                     "Mech Payment Withdrawn",
                     (
                         f"Chain: {chain_name}\nAmount: {mech_actual_xdai:.6f} xDAI"
                         f"\nTo Safe: {multisig}"
-                        f"\nWARNING: transfer to master failed: {e}"
+                        f"\nWARNING: transfer to master failed: {transfer_error}"
                     ),
                 )
 
