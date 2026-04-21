@@ -32,6 +32,7 @@ from micromech.core.marketplace import (
     get_balance_tracker_address,
     get_pending_balance,
 )
+from micromech.runtime.delivery import _sanitize_error
 
 if TYPE_CHECKING:
     from micromech.core.bridge import IwaBridge
@@ -318,7 +319,7 @@ async def payment_withdraw_task(
                     )
                 except Exception as e:
                     logger.error(
-                        "[{}] xDAI transfer to master failed: {}", chain_name, e
+                        "[{}] xDAI transfer to master failed: {}", chain_name, _sanitize_error(e)
                     )
                     transfer_error = e
 
@@ -344,11 +345,11 @@ async def payment_withdraw_task(
                     (
                         f"Chain: {chain_name}\nAmount: {mech_actual_xdai:.6f} xDAI"
                         f"\nTo Safe: {multisig}"
-                        f"\nWARNING: transfer to master failed: {transfer_error}"
+                        f"\nWARNING: transfer to master failed: {_sanitize_error(transfer_error)}"
                     ),
                 )
 
         except Exception as e:
             logger.error(
-                "[{}] Payment withdraw task error: {}", chain_name, e
+                "[{}] Payment withdraw task error: {}", chain_name, _sanitize_error(e)
             )

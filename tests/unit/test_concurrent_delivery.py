@@ -838,6 +838,10 @@ class TestParallelNonceDispatch:
         assert allocator.release.call_args[0][0] == 10, (
             "release() must be called with the nonce that was actually allocated"
         )
+        # H1: blocked record must be removed from _in_flight (no leak)
+        assert STALL_ID not in dm._in_flight, (
+            "Blocked record must be removed from _in_flight when allocate() raises"
+        )
 
     @pytest.mark.asyncio
     async def test_parallel_path_disabled_by_default(self):
@@ -1124,3 +1128,81 @@ async def test_allocate_blocked_error_does_not_crash():
     assert delivered == 0, "Blocked allocator must yield 0 delivered, not crash"
     allocator.release.assert_not_called()
     allocator.invalidate.assert_not_called()
+    # H1: in-flight must be cleaned up even when allocate() raises
+    assert FAST1_ID not in dm._in_flight, (
+        "Record must be removed from _in_flight when allocate() raises (H1 in-flight leak fix)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# H4: prep before allocate — no orphaned nonce slots on _prepare_onchain failure
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prep_failure_does_not_allocate_nonce():
+    """H4: If _prepare_onchain fails, allocate() is never called for that worker.
+
+    This prevents an orphaned nonce slot (gap in the Safe TX queue) that would
+    cause GS026 for subsequent workers.  The failed record is also removed from
+    _in_flight (H1 combined).
+    """
+    fail_record = _make_record(STALL_ID)
+    ok_record = _make_record(FAST1_ID)
+    q = _make_queue([fail_record, ok_record])
+    bridge = _make_bridge_with_safe()
+
+    allocator = _make_allocator_mock([10])
+    bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+    prep_call_order: list[str] = []
+
+    async def _prep_fail_for_stall(rec):
+        prep_call_order.append(rec.request.request_id)
+        if rec.request.request_id == STALL_ID:
+            raise RuntimeError("IPFS upload failed")
+        return await _instant_prepare(rec)
+
+    with patch(
+        "micromech.core.bridge.get_service_info",
+        return_value={"multisig_address": MULTISIG},
+    ):
+        dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_prep_fail_for_stall),
+            patch.object(dm, "_submit_batch_delivery", return_value=("0x" + "ab" * 32, [True])),
+        ):
+            delivered = await dm._deliver_concurrent()
+
+    assert delivered == 1, "Only ok_record must be delivered when fail_record prep fails"
+    # allocate() called exactly once — only for the ok_record (not for fail_record)
+    assert allocator.allocate.call_count == 1, (
+        f"allocate() must only be called for workers that passed prep; "
+        f"got {allocator.allocate.call_count}"
+    )
+    assert allocator.release.call_count == 1, "release() called once for the allocated nonce"
+    # H1: failed record removed from _in_flight
+    assert STALL_ID not in dm._in_flight, (
+        "Record with prep failure must be removed from _in_flight (H1+H4 combined)"
+    )
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_error: __context__ traversal (MEDIUM fix)
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_error_traverses_context_chain():
+    """__context__ (implicit chaining) is also traversed and redacted."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    inner_key = "0x" + "ee" * 32
+    inner = ConnectionError(f"RPC error key={inner_key}")
+    outer = RuntimeError("execution failed")
+    outer.__context__ = inner  # implicit chain, no explicit 'raise ... from ...'
+
+    result = _sanitize_error(outer)
+    assert "execution failed" in result
+    assert "context:" in result
+    assert "RPC error" in result
+    assert inner_key not in result, "Inner key in __context__ must be redacted"

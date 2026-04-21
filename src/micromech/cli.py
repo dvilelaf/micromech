@@ -27,7 +27,7 @@ def _configure_logging() -> None:
     log_format = (
         "<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> - <level>{level: <8}</level> - {message}"
     )
-    logger.add(sys.stderr, format=log_format, level="INFO", colorize=True)
+    logger.add(sys.stderr, format=log_format, level="INFO", colorize=True, diagnose=False)
 
     # File logging (persists across container restarts via mounted data/ volume)
     from micromech.core.constants import DEFAULT_CONFIG_DIR
@@ -41,6 +41,7 @@ def _configure_logging() -> None:
         rotation="1 day",
         retention="30 days",
         compression="gz",
+        diagnose=False,
     )
 
     class _InterceptHandler(logging.Handler):

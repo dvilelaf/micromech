@@ -661,6 +661,15 @@
         return new EventSource(url);
     }
 
+    function escHtml(s) {
+        return String(s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     /**
      * Show a transient notification in the bottom-right corner.
      *
@@ -2205,7 +2214,7 @@
 
     function renderProfitsSummary(s) {
         if (s.error) {
-            document.getElementById('profits-summary').innerHTML = `<p style="color:var(--text-muted)">${s.error}</p>`;
+            document.getElementById('profits-summary').innerHTML = `<p style="color:var(--text-muted)">${escHtml(s.error)}</p>`;
             return;
         }
         const preTax = (s.total_eur || 0) - (s.total_gas_eur || 0);
@@ -2346,13 +2355,15 @@
         }
         tbody.innerHTML = withdrawals.map(w => {
             const date = new Date(w.date).toLocaleString();
-            const short = w.tx_hash ? w.tx_hash.slice(0, 10) + '...' : '?';
-            const link = w.explorer_url
-                ? `<a href="${w.explorer_url}" target="_blank" rel="noopener" class="tx-link">${short}</a>`
+            const short = w.tx_hash ? escHtml(w.tx_hash.slice(0, 10) + '...') : '?';
+            const safeUrl = w.explorer_url && /^https?:\/\//.test(w.explorer_url)
+                ? w.explorer_url : null;
+            const link = safeUrl
+                ? `<a href="${escHtml(safeUrl)}" target="_blank" rel="noopener" class="tx-link">${short}</a>`
                 : short;
             return `<tr>
-                <td>${date}</td>
-                <td style="text-transform:capitalize">${w.chain || '?'}</td>
+                <td>${escHtml(date)}</td>
+                <td style="text-transform:capitalize">${escHtml(w.chain || '?')}</td>
                 <td class="val">${(w.xdai||0).toFixed(4)}</td>
                 <td class="val">€${(w.eur||0).toFixed(2)}</td>
                 <td>${link}</td>

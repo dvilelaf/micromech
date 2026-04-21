@@ -12,7 +12,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI, Query, Request
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
@@ -1354,7 +1354,13 @@ def create_web_app(
                 if not multisig:
                     return {"success": False, "error": "No multisig_address found"}
 
-                async with get_safe_lock(multisig):
+                _WITHDRAW_LOCK_TIMEOUT = 30  # seconds to wait for the Safe lock
+                try:
+                    lock = get_safe_lock(multisig)
+                    await asyncio.wait_for(lock.acquire(), timeout=_WITHDRAW_LOCK_TIMEOUT)
+                except asyncio.TimeoutError:
+                    return {"success": False, "error": "Safe lock busy — delivery in progress, try again shortly"}
+                try:
                     await asyncio.to_thread(_withdraw, bridge, chain, bt_address, chain_cfg.mech_address, multisig)
                     web3 = bridge.web3
                     mech_wei = await asyncio.to_thread(
@@ -1363,6 +1369,8 @@ def create_web_app(
                     )
                     await asyncio.to_thread(_drain_mech_to_safe, bridge, chain, chain_cfg.mech_address, multisig, mech_wei)
                     await asyncio.to_thread(_transfer_to_master, bridge, chain, multisig, mech_wei)
+                finally:
+                    lock.release()
 
                 amount_xdai = round(mech_wei / 1e18, 6)
                 return {"success": True, "action": "withdraw", "data": {"amount_xdai": amount_xdai}}
@@ -1485,9 +1493,9 @@ def create_web_app(
 
     @protected_router.get("/profits/summary")
     async def profits_summary(
-        year: int = 0,
-        month: Optional[int] = None,
-        chain: Optional[str] = None,
+        year: int = Query(default=0, ge=0, le=9999),
+        month: Optional[int] = Query(default=None, ge=1, le=12),
+        chain: Optional[str] = Query(default=None, max_length=64),
     ) -> dict:
         def _run() -> dict:
             import datetime as dt
@@ -1586,9 +1594,9 @@ def create_web_app(
 
     @protected_router.get("/profits/withdrawals")
     async def profits_withdrawals(
-        year: int = 0,
-        month: Optional[int] = None,
-        chain: Optional[str] = None,
+        year: int = Query(default=0, ge=0, le=9999),
+        month: Optional[int] = Query(default=None, ge=1, le=12),
+        chain: Optional[str] = Query(default=None, max_length=64),
     ) -> list:
         def _run() -> list:
             import datetime as dt

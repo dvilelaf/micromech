@@ -50,7 +50,7 @@ _HEX_BLOB_RE = re.compile(r"0x[0-9a-fA-F]{64,}", re.ASCII)
 
 
 def _sanitize_error(exc: BaseException, _depth: int = 0) -> str:
-    """Return a redacted string of an exception, traversing __cause__ up to depth 5.
+    """Return a redacted string of an exception, traversing __cause__ and __context__ up to depth 5.
 
     Replaces 0x[64+ hex chars] with 0x[REDACTED] to prevent accidental key
     or signature leakage in log lines and error messages.
@@ -58,9 +58,11 @@ def _sanitize_error(exc: BaseException, _depth: int = 0) -> str:
     if _depth > 5:
         return "..."
     msg = _HEX_BLOB_RE.sub("0x[REDACTED]", str(exc))
-    if exc.__cause__ is not None:
-        cause_msg = _sanitize_error(exc.__cause__, _depth + 1)
-        msg = f"{msg} (caused by: {cause_msg})"
+    chained = exc.__cause__ if exc.__cause__ is not None else exc.__context__
+    if chained is not None:
+        chain_msg = _sanitize_error(chained, _depth + 1)
+        label = "caused by" if exc.__cause__ is not None else "context"
+        msg = f"{msg} ({label}: {chain_msg})"
     return msg
 
 
@@ -878,13 +880,11 @@ class DeliveryManager:
         for r in selected:
             self._in_flight.add(r.request.request_id)
 
-        # Pre-assign sequential nonces then dispatch workers in parallel.
-        # Each worker gets its own nonce slot so concurrent Safe TXs don't
-        # collide on GS026.  Off-chain (HTTP) deliveries have no nonce
-        # constraint and always run concurrently.
-        # safe_lock coordinates with payment_withdraw_task so only one
-        # consumer submits Safe TXs at a time.
-        if onchain and self._has_safe and self.config.parallel_nonce_enabled:
+        # safe_lock ensures only one consumer (delivery or payment_withdraw) submits
+        # Safe TXs at a time, for both parallel and serial paths.
+        # Parallel path also pre-assigns sequential nonces to prevent GS026 collisions.
+        onchain_results: list[bool | BaseException] = []
+        if onchain and self._has_safe:
             from micromech.core.bridge import get_service_info
 
             svc_info = get_service_info(self._chain_name)
@@ -892,44 +892,67 @@ class DeliveryManager:
             if not multisig:
                 raise ValueError(
                     f"[{self._chain_name}] multisig_address not configured"
-                    " — cannot dispatch in parallel"
+                    " — cannot dispatch on-chain"
                 )
-
-            allocator = self._get_nonce_allocator(multisig)
-            allocator.check_stuck(len(onchain))
-
-            async def _dispatch(r: RequestRecord) -> bool:
-                nonce = None
-                try:
-                    nonce = await asyncio.to_thread(allocator.allocate)
-                except Exception:
-                    logger.warning(
-                        "[{}] Nonce allocator blocked/failed for {}, skipping",
-                        self._chain_name,
-                        r.request.request_id,
-                    )
-                    return False
-                try:
-                    result = await self._deliver_single_onchain(r, safe_nonce=nonce)
-                    if not result:
-                        # Invalidate before release so _in_flight_nonces still
-                        # reflects this nonce at invalidation time (for drain).
-                        allocator.invalidate("delivery_failed")
-                    return result
-                except Exception:
-                    allocator.invalidate("delivery_exception")
-                    return False
-                finally:
-                    allocator.release(nonce)
 
             async with get_safe_lock(multisig):
-                onchain_results: list[bool | BaseException] = list(
-                    await asyncio.gather(
-                        *[_dispatch(r) for r in onchain], return_exceptions=True
+                if self.config.parallel_nonce_enabled:
+                    allocator = self._get_nonce_allocator(multisig)
+                    allocator.check_stuck(len(onchain))
+
+                    async def _dispatch(r: RequestRecord) -> bool:
+                        # H4: prepare before allocating so a prep failure doesn't
+                        # orphan a nonce slot and leave a gap in the Safe TX queue.
+                        try:
+                            prep_data = await self._prepare_onchain(r)
+                        except Exception as e:
+                            logger.warning(
+                                "[{}] Pre-allocation prep failed for {}: {}",
+                                self._chain_name,
+                                r.request.request_id,
+                                _sanitize_error(e),
+                            )
+                            # H1: discard here — _deliver_single_onchain never called
+                            self._in_flight.discard(r.request.request_id)
+                            return False
+
+                        nonce = None
+                        try:
+                            nonce = await asyncio.to_thread(allocator.allocate)
+                        except Exception:
+                            logger.warning(
+                                "[{}] Nonce allocator blocked/failed for {}, skipping",
+                                self._chain_name,
+                                r.request.request_id,
+                            )
+                            # H1: discard here — _deliver_single_onchain never called
+                            self._in_flight.discard(r.request.request_id)
+                            return False
+                        try:
+                            result = await self._deliver_single_onchain(
+                                r, safe_nonce=nonce, _prep_data=prep_data
+                            )
+                            if not result:
+                                # Invalidate before release so _in_flight_nonces still
+                                # reflects this nonce at invalidation time (for drain).
+                                allocator.invalidate("delivery_failed")
+                            return result
+                        except Exception:
+                            allocator.invalidate("delivery_exception")
+                            return False
+                        finally:
+                            allocator.release(nonce)
+
+                    onchain_results = list(
+                        await asyncio.gather(
+                            *[_dispatch(r) for r in onchain], return_exceptions=True
+                        )
                     )
-                )
-        else:
-            onchain_results = []
+                else:
+                    for r in onchain:
+                        onchain_results.append(await self._deliver_single_onchain(r))
+        elif onchain:
+            # No Safe configured — submit directly without lock
             for r in onchain:
                 onchain_results.append(await self._deliver_single_onchain(r))
 
@@ -951,17 +974,26 @@ class DeliveryManager:
         return n_delivered
 
     async def _deliver_single_onchain(
-        self, record: RequestRecord, safe_nonce: Optional[int] = None
+        self,
+        record: RequestRecord,
+        safe_nonce: Optional[int] = None,
+        _prep_data: Optional[tuple] = None,
     ) -> bool:
         """Prepare and submit one on-chain request as a single Safe TX.
 
         One delivery = one Safe TX nonce, preserving staking liveness.
         Always removes the record from in-flight in the finally block.
+        _prep_data: pre-computed (req_id_bytes, delivery_data, ipfs_cid_hex) tuple;
+        when provided, skips the _prepare_onchain call (used by parallel _dispatch
+        to run prep before nonce allocation — prevents orphaned nonce slots on prep failure).
         """
         try:
-            req_id_bytes, delivery_data, ipfs_cid_hex = (
-                await self._prepare_onchain(record)
-            )
+            if _prep_data is not None:
+                req_id_bytes, delivery_data, ipfs_cid_hex = _prep_data
+            else:
+                req_id_bytes, delivery_data, ipfs_cid_hex = (
+                    await self._prepare_onchain(record)
+                )
             tx_hash, delivered_flags = await asyncio.to_thread(
                 self._submit_batch_delivery,
                 [req_id_bytes],
