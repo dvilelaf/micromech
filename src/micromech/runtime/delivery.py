@@ -356,13 +356,12 @@ class DeliveryManager:
                         self._metrics.record_delivery(
                             record.request.request_id, chain=self._chain_name
                         )
-                    prompt_short = record.request.prompt[:60] if record.request.prompt else ""
-                    logger.info(
-                        "Delivered (offchain) {} tool={} tx={} prompt={}",
+                    logger.opt(colors=True).info(
+                        "<green>[{}] Delivered (offchain) {} tool={} tx={}</green>",
+                        self._chain_name,
                         record.request.request_id[:16] + "...",
                         record.request.tool,
                         tx_hash[:18] + "...",
-                        prompt_short,
                     )
             except Exception as e:
                 err_str = _sanitize_error(e)
@@ -437,6 +436,13 @@ class DeliveryManager:
                         self._metrics.record_delivery(
                             req_id, chain=self._chain_name
                         )
+                    logger.opt(colors=True).info(
+                        "<green>[{}] Delivered {} tool={} tx={}</green>",
+                        self._chain_name,
+                        req_id[:16] + "...",
+                        record.request.tool,
+                        tx_hash[:18] + "...",
+                    )
                 else:
                     # The TX was mined but the contract rejected this request as
                     # a late delivery (arrived after responseTimeout). Mark as
@@ -1030,8 +1036,9 @@ class DeliveryManager:
                     self._metrics.record_delivery(
                         req_id, chain=self._chain_name
                     )
-                logger.info(
-                    "Delivered {} tool={} tx={}",
+                logger.opt(colors=True).info(
+                    "<green>[{}] Delivered {} tool={} tx={}</green>",
+                    self._chain_name,
                     req_id[:16] + "...",
                     record.request.tool,
                     tx_hash[:18] + "...",
@@ -1091,17 +1098,12 @@ class DeliveryManager:
                     self._metrics.record_delivery(
                         record.request.request_id, chain=self._chain_name
                     )
-                prompt_short = (
-                    record.request.prompt[:60]
-                    if record.request.prompt
-                    else ""
-                )
-                logger.info(
-                    "Delivered (offchain) {} tool={} tx={} prompt={}",
+                logger.opt(colors=True).info(
+                    "<green>[{}] Delivered (offchain) {} tool={} tx={}</green>",
+                    self._chain_name,
                     record.request.request_id[:16] + "...",
                     record.request.tool,
                     tx_hash[:18] + "...",
-                    prompt_short,
                 )
                 return True
             return False
