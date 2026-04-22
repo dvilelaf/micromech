@@ -6,10 +6,15 @@ Two layers:
 
 The loguru patcher replaces every known address in every log message
 automatically, without touching individual log call sites.
+
+Design note: _DYNAMIC is populated once at startup before any log handlers
+or background tasks run. Do not call register_address() after startup.
 """
 
 import re
 from typing import Optional
+
+from loguru import logger
 
 # Well-known external contracts on Gnosis chain.
 # Keys are lowercase (no checksum) for case-insensitive lookup.
@@ -25,8 +30,9 @@ _STATIC: dict[str, str] = {
 # Wallet tags and other runtime-registered addresses (populated at startup).
 _DYNAMIC: dict[str, str] = {}
 
-# Matches any 0x-prefixed 40-hex-char Ethereum address.
-_ADDR_RE = re.compile(r"0x[0-9a-fA-F]{40}")
+# Matches a standalone Ethereum address: 0x + exactly 40 hex chars, NOT
+# followed by more hex chars (prevents matching prefixes of 64-char tx hashes).
+_ADDR_RE = re.compile(r"0x[0-9a-fA-F]{40}(?![0-9a-fA-F])")
 
 
 def register_address(address: str, name: str) -> None:
@@ -68,5 +74,5 @@ def load_wallet_tags(wallet: Optional[object]) -> None:
             tag = getattr(account, "tag", None)
             if tag:
                 register_address(str(addr), tag)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"address_book: could not load wallet tags ({e})")

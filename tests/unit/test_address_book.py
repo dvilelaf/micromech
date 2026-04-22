@@ -79,6 +79,32 @@ class TestPatcher:
         assert "MASTER" in record["message"]
         assert addr not in record["message"]
 
+    def test_tx_hash_not_truncated(self):
+        """64-char tx hash must not be partially matched as an address."""
+        tx = "0x" + "ab" * 32  # 66 chars total — longer than an address
+        record: dict = {"message": f"Tx Hash: {tx}"}
+        ab.address_book_patcher(record)
+        assert tx in record["message"]
+
+    def test_known_address_prefix_in_tx_hash_not_substituted(self):
+        """A tx hash whose first 40 hex chars match a known address must survive intact."""
+        marketplace_hex = "735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
+        tx = "0x" + marketplace_hex + "deadbeefdeadbeefdeadbeef"  # 40 + 24 = 64 hex chars
+        record: dict = {"message": f"sent tx {tx}"}
+        ab.address_book_patcher(record)
+        assert tx in record["message"]
+        assert "MECH_MARKETPLACE" not in record["message"]
+
+    def test_empty_tag_not_registered(self):
+        """Accounts with empty tag should not be registered."""
+        addr = "0x" + "22" * 20
+        wallet = MagicMock()
+        account = MagicMock()
+        account.tag = ""
+        wallet.account_service.get_account_data.return_value = {addr: account}
+        ab.load_wallet_tags(wallet)
+        assert ab.fmt_addr(addr) == addr
+
 
 class TestLoadWalletTags:
     def test_loads_tags_from_wallet(self):

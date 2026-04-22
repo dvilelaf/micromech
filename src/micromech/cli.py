@@ -25,8 +25,8 @@ def _configure_logging() -> None:
         return
     from micromech.core.address_book import address_book_patcher
 
-    logger.configure(patcher=address_book_patcher)  # type: ignore[arg-type]
     logger.remove()
+    logger.configure(patcher=address_book_patcher)  # type: ignore[arg-type]
     log_format = (
         "<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> - <level>{level: <8}</level> - {message}"
     )
