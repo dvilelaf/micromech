@@ -1551,7 +1551,7 @@ wheels = [
 
 [[package]]
 name = "iwa"
-version = "0.8.0"
+version = "0.8.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1588,9 +1588,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "web3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/69/57/e7080acb4df26231f82db74cfbd3930f7ae84f4b2298e3a3b8e963512296/iwa-0.8.0.tar.gz", hash = "sha256:f8d67be9b47820eae4e92e2d69400df8691ffe75bc649386da939c11ede9686d", size = 643635 }
+sdist = { url = "https://files.pythonhosted.org/packages/3f/ec/a120d5537bcd497b0f4bd22c852946335b3ba06e904a4dd7b482d3b1ac7f/iwa-0.8.1.tar.gz", hash = "sha256:8314be4515e7f08c7ce516cd4a6ebdec5bcd4602ac471ad27094c69280d502eb", size = 650599 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4b/cd/47e9bf0838e516ae76d0edeea47404d0ce39e8db050324d13eb808aa06ed/iwa-0.8.0-py3-none-any.whl", hash = "sha256:bf26e4d01c698ae58eafcf4094bf931f1437d01d6e91a2d30ca06cd9a0bf86e8", size = 773482 },
+    { url = "https://files.pythonhosted.org/packages/69/a7/177c9e2a815ed5ca6daff02b4442109b7ed5c3dd0fb7ee5744feba8e2829/iwa-0.8.1-py3-none-any.whl", hash = "sha256:207683d4cfdc4ceaee0b5c61e6b2f53862e60278938e5a907b139287d7a8b014", size = 781161 },
 ]
 
 [[package]]
@@ -2093,7 +2093,7 @@ wheels = [
 
 [[package]]
 name = "micromech"
-version = "0.0.33"
+version = "0.0.34"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -2152,7 +2152,7 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'genai'", specifier = ">=1.0.0" },
     { name = "httpx", marker = "extra == 'tasks'", specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'llm'", specifier = ">=0.19.0" },
-    { name = "iwa", specifier = ">=0.8.0" },
+    { name = "iwa", specifier = "==0.8.1" },
     { name = "iwa", marker = "extra == 'chain'", specifier = ">=0.8.0" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.0" },
     { name = "llama-cpp-python", marker = "extra == 'llm'", specifier = ">=0.2.0" },
