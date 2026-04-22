@@ -23,7 +23,10 @@ def _configure_logging() -> None:
     """Configure loguru with green timestamps, matching triton's format."""
     if hasattr(_configure_logging, "configured"):
         return
+    from micromech.core.address_book import address_book_patcher
+
     logger.remove()
+    logger.configure(patcher=address_book_patcher)  # type: ignore[arg-type]
     log_format = (
         "<green>{time:YYYY-MM-DD HH:mm:ss,SSS}</green> - <level>{level: <8}</level> - {message}"
     )
@@ -364,6 +367,14 @@ def run(
     from micromech.runtime.server import MechServer
 
     bridges = create_bridges(cfg)
+
+    from micromech.core.address_book import load_wallet_tags
+    from micromech.core.bridge import get_wallet
+
+    try:
+        load_wallet_tags(get_wallet())
+    except Exception:
+        pass
 
     server = MechServer(cfg, bridges=bridges, host=host)
 
