@@ -1,5 +1,6 @@
 """Tests for tasks/xdai_sweep.py."""
 
+from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,9 +14,10 @@ DEST_ADDR = "0x" + "a" * 40
 
 
 def _make_wallet(balance=35.0, dest_addr=DEST_ADDR):
+    # web3.from_wei() returns Decimal — mock with Decimal to match production
     wallet = MagicMock()
     wallet.master_account.address = MASTER_ADDR
-    wallet.get_native_balance_eth.return_value = balance
+    wallet.get_native_balance_eth.return_value = Decimal(str(balance))
     wallet.account_service.get_address_by_tag.return_value = dest_addr
     wallet.send.return_value = "0xtxhash"
     return wallet

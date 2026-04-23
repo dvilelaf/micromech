@@ -62,7 +62,7 @@ async def xdai_sweep_task(
         return
 
     try:
-        balance = await asyncio.to_thread(wallet.get_native_balance_eth, master_address, "gnosis")
+        balance = float(await asyncio.to_thread(wallet.get_native_balance_eth, master_address, "gnosis"))
         logger.debug("xDAI sweep: master balance = {:.6f} xDAI", balance)
 
         if balance <= config.xdai_sweep_threshold_xdai:
