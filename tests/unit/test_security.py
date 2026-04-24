@@ -412,6 +412,32 @@ class TestToolExtraParamsInjection:
         # counter_callback is stripped as reserved
         assert "counter_callback" not in captured_kwargs
 
+    @pytest.mark.parametrize("reserved_key", [
+        "request_id", "chain", "sender", "data", "extra_params",
+        "created_at", "timeout", "delivery_method", "is_offchain",
+        "signature", "status", "error",
+    ])
+    def test_mech_request_field_names_are_stripped(self, reserved_key):
+        """All MechRequest field names are stripped from tool kwargs (injection hardening)."""
+        from micromech.tools.base import Tool, ToolMetadata
+
+        captured_kwargs = {}
+
+        def fake_run(**kwargs):
+            captured_kwargs.update(kwargs)
+            return ("ok",)
+
+        tool = Tool(
+            metadata=ToolMetadata(id="test", name="test", version="0.1.0"),
+            run_fn=fake_run,
+        )
+
+        import asyncio
+
+        asyncio.run(tool.execute("prompt", **{reserved_key: "injected_value"}))
+
+        assert reserved_key not in captured_kwargs
+
     def test_safe_kwargs_passed_through(self):
         """Non-reserved kwargs pass through to the tool function."""
         from micromech.tools.base import Tool, ToolMetadata

@@ -168,15 +168,14 @@ class EventListener:
         if multihash is not None:
             try:
                 cid = multihash_to_cid(multihash)
+                # payload comes from IPFS and is untrusted user input — only extract
+                # known keys explicitly; never splat into MechRequest(**payload).
                 payload = await fetch_json_from_ipfs(cid, gateway=IPFS_GATEWAY)
-                return MechRequest(
-                    request_id=req.request_id,
-                    chain=req.chain,
-                    data=req.data,
-                    prompt=payload.get("prompt", ""),
-                    tool=payload.get("tool", ""),
-                    extra_params={k: v for k, v in payload.items() if k not in ("prompt", "tool")},
-                )
+                return req.model_copy(update={
+                    "prompt": payload.get("prompt", ""),
+                    "tool": payload.get("tool", ""),
+                    "extra_params": {k: v for k, v in payload.items() if k not in ("prompt", "tool")},
+                })
             except Exception as e:
                 logger.warning("Failed to resolve IPFS for {}: {}", req.request_id, e)
 

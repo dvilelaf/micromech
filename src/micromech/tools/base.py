@@ -14,6 +14,8 @@ import functools
 import re
 from typing import Any
 
+from loguru import logger
+
 from pydantic import BaseModel, Field, field_validator
 
 from micromech.core.errors import ToolExecutionError
@@ -75,8 +77,16 @@ class Tool:
         self._run_fn = run_fn
         self.ALLOWED_TOOLS = allowed_tools or [metadata.id]
 
-    # Reserved kwargs that must not be overridden by user-supplied extra_params
-    _RESERVED_KWARGS = frozenset({"prompt", "tool", "counter_callback"})
+    # Reserved kwargs that must not be overridden by user-supplied extra_params.
+    # Includes all MechRequest field names so a hostile IPFS payload cannot shadow
+    # them when extra_params is splatted into the tool call. "extra_params" itself
+    # is included to block meta-injection (a payload key literally named "extra_params").
+    _RESERVED_KWARGS = frozenset({
+        "prompt", "tool", "counter_callback",
+        "request_id", "chain", "sender", "data", "extra_params",
+        "created_at", "timeout", "delivery_method", "is_offchain", "signature",
+        "status", "error",
+    })
 
     async def execute(self, prompt: str, **kwargs: Any) -> str:
         """Execute the tool asynchronously (offloaded to thread pool).
@@ -85,6 +95,9 @@ class Tool:
         """
         # Strip reserved keys to prevent parameter injection
         safe_kwargs = {k: v for k, v in kwargs.items() if k not in self._RESERVED_KWARGS}
+        filtered = kwargs.keys() - safe_kwargs.keys() - {"prompt", "tool", "counter_callback"}
+        if filtered:
+            logger.debug("Stripped reserved kwargs from tool call: {}", filtered)
         try:
             if self.metadata.serialized:
                 loop = asyncio.get_running_loop()

@@ -454,6 +454,109 @@ class TestResolveRequest:
         assert resolved is req  # Returns original
 
     @pytest.mark.asyncio
+    async def test_resolve_preserves_sender_and_metadata(self):
+        """sender, timeout, delivery_method and is_offchain are preserved after IPFS resolution."""
+        config = MicromechConfig(ipfs={"enabled": True})
+        listener = EventListener(config, CHAIN_CFG)
+
+        digest = hashlib.sha256(b"test payload").digest()
+        multihash_data = bytes([0x12, 0x20]) + digest
+
+        req = MechRequest(
+            request_id="r99",
+            sender="0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF",
+            data=multihash_data,
+            prompt="",
+            tool="",
+            timeout=600,
+            delivery_method="legacy",
+            is_offchain=True,
+        )
+
+        ipfs_payload = {"prompt": "test prompt", "tool": "llm"}
+        with patch(
+            "micromech.ipfs.client.fetch_json_from_ipfs",
+            new_callable=AsyncMock,
+        ) as mock_fetch:
+            mock_fetch.return_value = ipfs_payload
+            resolved = await listener._resolve_request(req)
+
+        assert resolved.sender == "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"
+        assert resolved.timeout == 600
+        assert resolved.delivery_method == "legacy"
+        assert resolved.is_offchain is True
+        assert resolved.prompt == "test prompt"
+        assert resolved.tool == "llm"
+
+    @pytest.mark.asyncio
+    async def test_resolve_only_changes_payload_fields(self):
+        """_resolve_request must not modify any field except prompt, tool, extra_params."""
+        config = MicromechConfig(ipfs={"enabled": True})
+        listener = EventListener(config, CHAIN_CFG)
+
+        digest = hashlib.sha256(b"invariant").digest()
+        multihash_data = bytes([0x12, 0x20]) + digest
+
+        req = MechRequest(
+            request_id="r-inv",
+            sender="0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF",
+            data=multihash_data,
+            prompt="",
+            tool="",
+            timeout=600,
+            delivery_method="legacy",
+            is_offchain=True,
+            signature="0xdeadbeef",
+        )
+
+        ipfs_payload = {"prompt": "resolved", "tool": "llm"}
+        with patch(
+            "micromech.ipfs.client.fetch_json_from_ipfs",
+            new_callable=AsyncMock,
+        ) as mock_fetch:
+            mock_fetch.return_value = ipfs_payload
+            resolved = await listener._resolve_request(req)
+
+        payload_fields = {"prompt", "tool", "extra_params"}
+        original = req.model_dump(exclude=payload_fields)
+        after = resolved.model_dump(exclude=payload_fields)
+        assert original == after, "_resolve_request must only modify prompt/tool/extra_params"
+
+    @pytest.mark.asyncio
+    async def test_resolve_ipfs_sender_in_payload_does_not_override_req_sender(self):
+        """A malicious IPFS payload with 'sender' must not override req.sender."""
+        config = MicromechConfig(ipfs={"enabled": True})
+        listener = EventListener(config, CHAIN_CFG)
+
+        digest = hashlib.sha256(b"malicious").digest()
+        multihash_data = bytes([0x12, 0x20]) + digest
+
+        real_sender = "0xDeaDbeefdEAdbeefdEadbEEFdeadbeEFdEaDbeeF"
+        req = MechRequest(
+            request_id="r-sec",
+            sender=real_sender,
+            data=multihash_data,
+            prompt="",
+            tool="",
+        )
+
+        malicious_payload = {
+            "prompt": "legit prompt",
+            "tool": "llm",
+            "sender": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+        }
+        with patch(
+            "micromech.ipfs.client.fetch_json_from_ipfs",
+            new_callable=AsyncMock,
+        ) as mock_fetch:
+            mock_fetch.return_value = malicious_payload
+            resolved = await listener._resolve_request(req)
+
+        assert resolved.sender == real_sender
+        assert "sender" in resolved.extra_params
+        assert resolved.extra_params["sender"] == "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+
+    @pytest.mark.asyncio
     async def test_resolve_non_multihash_data(self):
         """Non-multihash binary data is returned as-is."""
         config = MicromechConfig(ipfs={"enabled": True})
