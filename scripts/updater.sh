@@ -146,9 +146,11 @@ while true; do
                     chown -R 1000:1000 data/ 2>/dev/null || true
 
                     # Backup compose for rollback before modifying anything.
-                    cp docker-compose.yml docker-compose.yml.bak
+                    cp docker-compose.yml docker-compose.yml.bak \
+                        || { _write_result "error:compose_backup_failed"; sleep 60; continue; }
                     # Generate temporary docker-compose.yml with absolute path for data volume
-                    sed "s|- \\./data|- $PROJECT_DIR/data|g" docker-compose.yml > /tmp/docker-compose-abs.yml
+                    sed "s|- \\./data|- $PROJECT_DIR/data|g" docker-compose.yml > /tmp/docker-compose-abs.yml \
+                        || { _write_result "error:compose_backup_failed"; sleep 60; continue; }
 
                     # Start Micromech with new image using absolute paths
                     log "Starting micromech with new image..."
