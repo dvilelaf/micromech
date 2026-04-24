@@ -17,6 +17,7 @@ from micromech.secrets import secrets
 from micromech.tasks.checkpoint import checkpoint_task
 from micromech.tasks.fund import fund_task
 from micromech.tasks.health import health_task
+from micromech.tasks.failed_deliveries_alert import failed_deliveries_alert_task
 from micromech.tasks.low_balance_alert import low_balance_alert_task
 from micromech.tasks.metadata_check import metadata_check_task
 from micromech.tasks.notifications import NotificationService
@@ -163,6 +164,22 @@ class TaskScheduler:
                 hours=cfg.low_balance_alert_interval_hours,
                 args=[self.lifecycles, self.bridges, self.notification_service, cfg],
                 id="low_balance_alert_task",
+                replace_existing=True,
+                misfire_grace_time=misfire_grace_time,
+                max_instances=1,
+                coalesce=True,
+                next_run_time=datetime.now(tz=timezone.utc) + timedelta(seconds=startup_delay),
+            )
+            startup_delay += 20
+
+        # Failed Deliveries Alert Task
+        if cfg.failed_deliveries_alert_enabled:
+            self.scheduler.add_job(
+                failed_deliveries_alert_task,
+                "interval",
+                hours=cfg.failed_deliveries_alert_interval_hours,
+                args=[self.queue, self.notification_service, cfg],
+                id="failed_deliveries_alert_task",
                 replace_existing=True,
                 misfire_grace_time=misfire_grace_time,
                 max_instances=1,
