@@ -336,3 +336,81 @@ class TestRollbackC1MtimeSort:
         result = subprocess.run([str(runner)], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
         assert (sandbox / "data" / "config.yaml").read_text() == "new-snapshot\n"
+
+
+class TestWaitHealthyStructural:
+    """wait_healthy() must use the conditional Go template to avoid the \\nnone bug."""
+
+    def test_uses_conditional_go_template(self):
+        src = UPDATER_SH.read_text()
+        assert "{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}" in src
+
+    def test_bare_health_status_format_absent(self):
+        src = UPDATER_SH.read_text()
+        for line in src.splitlines():
+            stripped = line.strip()
+            if "format=" in stripped and "State.Health.Status" in stripped:
+                assert "{{if .State.Health}}" in stripped, (
+                    f"bare {{{{.State.Health.Status}}}} found without conditional: {line!r}"
+                )
+
+    def test_accepts_healthy_and_none_conditions(self):
+        src = UPDATER_SH.read_text()
+        assert '[ "$health" = "healthy" ]' in src
+        assert '[ "$health" = "none" ]' in src
+
+
+class TestWaitHealthyBehavior:
+    """Behavioral tests: run wait_healthy() in a subprocess with a mocked docker."""
+
+    def _make_runner(self, tmp_path: Path, health_val: str) -> Path:
+        src = UPDATER_SH.read_text()
+        fn_start = src.find("wait_healthy()")
+        fn_end = src.find("\n}", fn_start) + 2
+        fn_src = src[fn_start:fn_end].replace("max=120", "max=3")
+
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        docker = bin_dir / "docker"
+        docker.write_text(textwrap.dedent(f"""\
+            #!/bin/sh
+            case "$*" in
+                *State.Health*) printf '%s\\n' "{health_val}" ;;
+                *State.Status*) printf 'running\\n' ;;
+                *) exit 0 ;;
+            esac
+            exit 0
+        """))
+        docker.chmod(0o755)
+
+        runner = tmp_path / "run_wh.sh"
+        header = (
+            f"#!/bin/sh\n"
+            f"export PATH=\"{bin_dir}:$PATH\"\n"
+            "log() { :; }\n"
+            "sleep() { :; }\n\n"
+        )
+        runner.write_text(header + fn_src + "\nwait_healthy\n")
+        runner.chmod(0o755)
+        return runner
+
+    def test_healthy_returns_zero(self, tmp_path):
+        result = subprocess.run([str(self._make_runner(tmp_path, "healthy"))],
+                                capture_output=True, text=True)
+        assert result.returncode == 0
+
+    def test_none_returns_zero_backward_compat(self, tmp_path):
+        """health=none means no HEALTHCHECK on image — must pass for old images."""
+        result = subprocess.run([str(self._make_runner(tmp_path, "none"))],
+                                capture_output=True, text=True)
+        assert result.returncode == 0
+
+    def test_starting_times_out(self, tmp_path):
+        result = subprocess.run([str(self._make_runner(tmp_path, "starting"))],
+                                capture_output=True, text=True)
+        assert result.returncode == 1
+
+    def test_unhealthy_times_out(self, tmp_path):
+        result = subprocess.run([str(self._make_runner(tmp_path, "unhealthy"))],
+                                capture_output=True, text=True)
+        assert result.returncode == 1
