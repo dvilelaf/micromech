@@ -15,7 +15,6 @@ import re
 from typing import Any
 
 from loguru import logger
-
 from pydantic import BaseModel, Field, field_validator
 
 from micromech.core.errors import ToolExecutionError

@@ -19,6 +19,7 @@ _MAX_RESULTS = 5
 ALLOWED_TOOLS = [
     "prediction-online",
     "prediction-offline",  # alias for Valory compatibility
+    "claude-prediction-online",  # alias: served by local LLM
 ]
 
 # Prediction prompt template (matches Valory's format)
