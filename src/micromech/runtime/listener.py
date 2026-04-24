@@ -139,7 +139,7 @@ class EventListener:
                     to_block,
                 )
                 for req in resolved:
-                    logger.info(
+                    logger.opt(colors=True).info(
                         "  Event {} <cyan>tool={}</cyan> prompt={}",
                         req.request_id[:16] + "...",
                         req.tool or "(ipfs)",
