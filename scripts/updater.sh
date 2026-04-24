@@ -31,20 +31,21 @@ _write_result() {
 }
 
 # Wait for micromech container to become healthy after restart.
-# Returns 0 if running within max seconds, 1 if timeout.
+# Returns 0 if healthy within max seconds, 1 if timeout.
 wait_healthy() {
     max=120
     i=0
     while [ "$i" -lt "$max" ]; do
         status=$(docker inspect --format='{{.State.Status}}' micromech 2>/dev/null || echo "gone")
-        if [ "$status" = "running" ]; then
-            log "Micromech is up (status=$status)"
+        health=$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' micromech 2>/dev/null || echo "none")
+        if [ "$status" = "running" ] && { [ "$health" = "healthy" ] || [ "$health" = "none" ]; }; then
+            log "Micromech is up (status=$status health=$health)"
             return 0
         fi
         sleep 1
         i=$((i+1))
     done
-    log "ERROR: Micromech failed to reach 'running' within ${max}s (status=${status:-unknown})"
+    log "ERROR: Micromech failed to reach healthy within ${max}s (status=${status:-unknown} health=${health:-unknown})"
     return 1
 }
 
