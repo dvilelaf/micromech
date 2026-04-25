@@ -48,7 +48,7 @@ class TestFailedDeliveriesAlertTask:
         notif.send.assert_awaited_once()
         call_args = notif.send.call_args
         assert "10" in call_args.args[1]
-        assert call_args.kwargs.get("level") == "warning" or call_args.args[2] == "warning"
+        assert call_args.kwargs["level"] == "warning"
 
     @pytest.mark.asyncio
     async def test_sends_alert_when_above_threshold(self):

@@ -42,8 +42,8 @@ async def failed_deliveries_alert_task(
             )
             await notification_service.send(
                 "Failed Deliveries Alert",
-                f"{failed} failed deliveries in the last "
-                f"{config.failed_deliveries_alert_interval_hours}h "
+                f"{failed} requests created in the last "
+                f"{config.failed_deliveries_alert_interval_hours}h ended as failed "
                 f"(threshold: {config.failed_deliveries_alert_threshold}).\n\n"
                 "Check the dashboard for details.",
                 level="warning",
