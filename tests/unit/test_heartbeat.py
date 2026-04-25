@@ -1,6 +1,5 @@
 """Tests for the heartbeat loop in micromech cli._run_all."""
 
-import inspect
 from pathlib import Path
 
 CLI_PY = Path(__file__).parent.parent.parent / "src" / "micromech" / "cli.py"
