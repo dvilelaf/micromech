@@ -113,6 +113,7 @@
         .badge-executed { background: rgba(46,204,113,0.15); color: var(--success); }
         .badge-delivered { background: rgba(0,210,255,0.15); color: var(--accent-color); }
         .badge-failed { background: rgba(231,76,60,0.15); color: var(--error); }
+        .badge-skipped { background: rgba(230,126,34,0.15); color: #e67e22; }
 
         /* Event badges */
         .event-request_received { color: var(--accent-color); }
@@ -120,6 +121,7 @@
         .event-execution_done { color: var(--success); }
         .event-delivered { color: #64ffda; }
         .event-failed, .event-delivery_failed { color: var(--error); }
+        .event-skipped { color: #e67e22; }
 
         /* Tool tags */
         .tool-tag { background: rgba(0,210,255,0.1); color: var(--accent-color); padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-family: var(--font-mono); }
@@ -362,6 +364,10 @@
                     <div class="glass metric-card">
                         <div class="metric-value error" id="m-failed">0</div>
                         <div class="metric-label">Failed <span class="metric-period">24h</span></div>
+                    </div>
+                    <div class="glass metric-card">
+                        <div class="metric-value" id="m-skipped" style="color:#e67e22">0</div>
+                        <div class="metric-label">Skipped <span class="metric-period">24h</span></div>
                     </div>
                     <div class="glass metric-card">
                         <div class="metric-value" id="m-avg-time">0s</div>
@@ -811,6 +817,7 @@
         setText('m-executing', queue.executing ?? 0);
         setText('m-delivered', s24.delivered ?? (data.delivered_total ?? live.deliveries_completed) ?? 0);
         setText('m-failed', s24.failed ?? live.executions_failed ?? 0);
+        setText('m-skipped', queue.skipped ?? live.executions_skipped ?? 0);
         // Avg time / Success rate: 7d from DB (enough volume for stable stats)
         const avgTime = s7d.avg_time ?? live.avg_execution_time ?? 0;
         setText('m-avg-time', avgTime.toFixed(2) + 's');
@@ -929,15 +936,16 @@
         state.queueChart = new Chart(ctx, {
             type: 'doughnut',
             data: {
-                labels: ['Pending', 'Executing', 'Executed', 'Delivered', 'Failed'],
+                labels: ['Pending', 'Executing', 'Executed', 'Delivered', 'Failed', 'Skipped'],
                 datasets: [{
-                    data: [0, 0, 0, 0, 0],
+                    data: [0, 0, 0, 0, 0, 0],
                     backgroundColor: [
                         'rgba(241,196,15,0.7)',
                         'rgba(88,101,242,0.7)',
                         'rgba(46,204,113,0.5)',
                         'rgba(0,210,255,0.7)',
                         'rgba(231,76,60,0.7)',
+                        'rgba(230,126,34,0.7)',
                     ],
                     borderColor: 'rgba(255,255,255,0.1)',
                     borderWidth: 1,
@@ -956,7 +964,7 @@
         if (!state.queueChart) return;
         state.queueChart.data.datasets[0].data = [
             queue.pending || 0, queue.executing || 0, queue.executed || 0,
-            queue.delivered || 0, queue.failed || 0,
+            queue.delivered || 0, queue.failed || 0, queue.skipped || 0,
         ];
         state.queueChart.update('none');
     }
