@@ -1551,7 +1551,7 @@ wheels = [
 
 [[package]]
 name = "iwa"
-version = "0.8.1"
+version = "0.8.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiohttp" },
@@ -1588,9 +1588,9 @@ dependencies = [
     { name = "uvicorn" },
     { name = "web3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3f/ec/a120d5537bcd497b0f4bd22c852946335b3ba06e904a4dd7b482d3b1ac7f/iwa-0.8.1.tar.gz", hash = "sha256:8314be4515e7f08c7ce516cd4a6ebdec5bcd4602ac471ad27094c69280d502eb", size = 650599 }
+sdist = { url = "https://files.pythonhosted.org/packages/29/17/5c9e0af67b5d5909645e416891f21f8a34faaf2c7f83c41db5bfa77f1f72/iwa-0.8.3.tar.gz", hash = "sha256:be23dcdb749aa18e38cf9963e1012cd78a4f37825c4e90f916b8cbd69fdc1bef", size = 652249 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/a7/177c9e2a815ed5ca6daff02b4442109b7ed5c3dd0fb7ee5744feba8e2829/iwa-0.8.1-py3-none-any.whl", hash = "sha256:207683d4cfdc4ceaee0b5c61e6b2f53862e60278938e5a907b139287d7a8b014", size = 781161 },
+    { url = "https://files.pythonhosted.org/packages/13/94/85f5257e9bad56f32f6b87f28eeabd5fdc0e1490b067a348ad584a64bd7c/iwa-0.8.3-py3-none-any.whl", hash = "sha256:91318471d39a14b318fb76c4cff63e7c690bb89ac6a5292f26b7a9bf71cb7387", size = 782867 },
 ]
 
 [[package]]
@@ -2152,7 +2152,7 @@ requires-dist = [
     { name = "google-genai", marker = "extra == 'genai'", specifier = ">=1.0.0" },
     { name = "httpx", marker = "extra == 'tasks'", specifier = ">=0.27" },
     { name = "huggingface-hub", marker = "extra == 'llm'", specifier = ">=0.19.0" },
-    { name = "iwa", specifier = "==0.8.1" },
+    { name = "iwa", specifier = "==0.8.3" },
     { name = "iwa", marker = "extra == 'chain'", specifier = ">=0.8.0" },
     { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.1.0" },
     { name = "llama-cpp-python", marker = "extra == 'llm'", specifier = ">=0.2.0" },

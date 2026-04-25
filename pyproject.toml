@@ -25,7 +25,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "aiohttp>=3.9.0",
     "ddgs>=9.12.1",
-    "iwa==0.8.1",
+    "iwa==0.8.3",
 ]
 
 [project.urls]
