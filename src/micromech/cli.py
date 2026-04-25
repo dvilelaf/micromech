@@ -361,6 +361,11 @@ def run(
 ) -> None:
     """Run the mech server (listener + executor + delivery + HTTP)."""
     cfg = _load_config(config_path)
+
+    from iwa.core.utils import get_version, print_banner
+
+    print_banner("micromech", get_version("micromech"), {"iwa": get_version("iwa")})
+
     logger.info("Starting micromech server...")
 
     from micromech.core.bridge import create_bridges
