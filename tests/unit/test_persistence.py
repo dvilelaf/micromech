@@ -10,6 +10,7 @@ from micromech.core.constants import (
     STATUS_EXECUTING,
     STATUS_FAILED,
     STATUS_PENDING,
+    STATUS_SKIPPED,
 )
 from micromech.core.errors import PersistenceError
 from micromech.core.models import MechRequest, ToolResult
@@ -341,6 +342,88 @@ class TestCleanup:
         deleted = queue.cleanup(days=30)
         assert deleted == 0
         assert queue.get_by_id("old-pending") is not None
+
+
+class TestMarkSkipped:
+    def test_pending_to_skipped(self, queue: PersistentQueue):
+        queue.add_request(MechRequest(request_id="r1", tool="unknown-tool"))
+        queue.mark_skipped("r1", "tool not registered: unknown-tool")
+
+        record = queue.get_by_id("r1")
+        assert record.request.status == STATUS_SKIPPED
+        assert record.request.error == "tool not registered: unknown-tool"
+
+    def test_skipped_nonexistent_raises(self, queue: PersistentQueue):
+        with pytest.raises(PersistenceError, match="not found or not in pending"):
+            queue.mark_skipped("nonexistent", "whatever")
+
+    def test_skipped_from_executing_raises(self, queue: PersistentQueue):
+        queue.add_request(MechRequest(request_id="r1"))
+        queue.mark_executing("r1")
+        with pytest.raises(PersistenceError, match="not found or not in pending"):
+            queue.mark_skipped("r1", "late discovery")
+
+    def test_skipped_in_count_by_status(self, queue: PersistentQueue):
+        queue.add_request(MechRequest(request_id="r1", tool="bad-tool"))
+        queue.mark_skipped("r1", "tool not registered: bad-tool")
+
+        counts = queue.count_by_status()
+        assert counts[STATUS_SKIPPED] == 1
+        assert counts[STATUS_FAILED] == 0
+
+    def test_skipped_key_always_in_count_by_status(self, queue: PersistentQueue):
+        counts = queue.count_by_status()
+        assert STATUS_SKIPPED in counts
+        assert counts[STATUS_SKIPPED] == 0
+
+    def test_skipped_cleaned_up_after_retention(self, queue: PersistentQueue):
+        from micromech.core.persistence import RequestRow
+
+        queue.add_request(MechRequest(request_id="old-skip", tool="bad-tool"))
+        queue.mark_skipped("old-skip", "not registered")
+        RequestRow.update(updated_at=datetime.now(timezone.utc) - timedelta(days=60)).where(
+            RequestRow.request_id == "old-skip"
+        ).execute()
+
+        deleted = queue.cleanup(days=30)
+        assert deleted == 1
+        assert queue.get_by_id("old-skip") is None
+
+    def test_double_skip_raises(self, queue: PersistentQueue):
+        queue.add_request(MechRequest(request_id="r1", tool="bad-tool"))
+        queue.mark_skipped("r1", "not registered")
+        with pytest.raises(PersistenceError, match="not found or not in pending"):
+            queue.mark_skipped("r1", "again")
+
+    def test_skipped_included_in_count_by_status_hours_window(self, queue: PersistentQueue):
+        queue.add_request(MechRequest(request_id="r1", tool="bad-tool"))
+        queue.mark_skipped("r1", "not registered")
+
+        counts = queue.count_by_status(hours=1)
+        assert counts[STATUS_SKIPPED] == 1
+
+    def test_old_skipped_excluded_by_hours_window(self, queue: PersistentQueue):
+        old_time = datetime.now(timezone.utc) - timedelta(hours=2)
+        queue.add_request(MechRequest(request_id="r1", tool="bad-tool", created_at=old_time))
+        queue.mark_skipped("r1", "not registered")
+
+        counts = queue.count_by_status(hours=1)
+        assert counts[STATUS_SKIPPED] == 0
+
+    def test_skipped_not_returned_by_get_pending(self, queue: PersistentQueue):
+        queue.add_request(MechRequest(request_id="r1", tool="bad-tool"))
+        queue.mark_skipped("r1", "not registered")
+
+        pending = queue.get_pending()
+        assert all(r.request.request_id != "r1" for r in pending)
+
+    def test_cleanup_does_not_touch_recent_skipped(self, queue: PersistentQueue):
+        queue.add_request(MechRequest(request_id="r1", tool="bad-tool"))
+        queue.mark_skipped("r1", "not registered")
+
+        deleted = queue.cleanup(days=30)
+        assert deleted == 0
+        assert queue.get_by_id("r1") is not None
 
 
 class TestRecovery:

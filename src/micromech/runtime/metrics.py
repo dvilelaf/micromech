@@ -54,6 +54,7 @@ class MetricsCollector:
     executions_started: int = 0
     executions_completed: int = 0
     executions_failed: int = 0
+    executions_skipped: int = 0
     deliveries_completed: int = 0
     deliveries_failed: int = 0
     # Deliveries that were accepted by the Safe TX but rejected on-chain by the
@@ -194,6 +195,19 @@ class MetricsCollector:
             )
         )
 
+    def record_skipped(self, request_id: str, tool: str, reason: str, chain: str = "") -> None:
+        self.executions_skipped += 1
+        self._events.append(
+            MetricsEvent(
+                timestamp=time.time(),
+                event_type="skipped",
+                request_id=request_id,
+                chain=chain,
+                tool=tool,
+                error=reason,
+            )
+        )
+
     def get_live_snapshot(self) -> dict[str, Any]:
         """Lightweight snapshot for SSE streaming (no DB hit)."""
         return {
@@ -202,6 +216,7 @@ class MetricsCollector:
             "executions_started": self.executions_started,
             "executions_completed": self.executions_completed,
             "executions_failed": self.executions_failed,
+            "executions_skipped": self.executions_skipped,
             "deliveries_completed": self.deliveries_completed,
             "deliveries_failed": self.deliveries_failed,
             "mech_late_delivery_count": self.mech_late_delivery_count,

@@ -19,6 +19,7 @@ from micromech.core.constants import (
     STATUS_EXECUTING,
     STATUS_FAILED,
     STATUS_PENDING,
+    STATUS_SKIPPED,
 )
 from micromech.core.errors import PersistenceError
 from micromech.core.models import MechRequest, MechResponse, RequestRecord, ToolResult
@@ -241,6 +242,25 @@ class PersistentQueue:
         if rows == 0:
             raise PersistenceError(f"Cannot mark {request_id} as failed: not found")
 
+    def mark_skipped(self, request_id: str, reason: str) -> None:
+        """Mark request as skipped (tool not registered). Transitions from PENDING."""
+        rows = (
+            RequestRow.update(
+                status=STATUS_SKIPPED,
+                error=reason,
+                updated_at=datetime.now(timezone.utc),
+            )
+            .where(
+                RequestRow.request_id == request_id,
+                RequestRow.status == STATUS_PENDING,
+            )
+            .execute()
+        )
+        if rows == 0:
+            raise PersistenceError(
+                f"Cannot mark {request_id} as skipped: not found or not in pending state"
+            )
+
     def get_pending(self) -> list[RequestRecord]:
         """Get all pending requests (for recovery on restart)."""
         return self._query_by_status(STATUS_PENDING)
@@ -289,6 +309,7 @@ class PersistentQueue:
             STATUS_EXECUTED: 0,
             STATUS_DELIVERED: 0,
             STATUS_FAILED: 0,
+            STATUS_SKIPPED: 0,
         }
 
         # Active states: always show current queue regardless of age
@@ -302,7 +323,7 @@ class PersistentQueue:
         # Terminal states: filter by time window when requested
         terminal_q = RequestRow.select(
             RequestRow.status, pw.fn.COUNT(RequestRow.request_id).alias("cnt")
-        ).where(RequestRow.status.in_([STATUS_EXECUTED, STATUS_DELIVERED, STATUS_FAILED])).group_by(RequestRow.status)
+        ).where(RequestRow.status.in_([STATUS_EXECUTED, STATUS_DELIVERED, STATUS_FAILED, STATUS_SKIPPED])).group_by(RequestRow.status)
         terminal_q = _chain_filter(terminal_q, chain)
         if hours is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
@@ -336,7 +357,7 @@ class PersistentQueue:
                 pw.fn.SUM(
                     pw.Case(
                         None,
-                        [(RequestRow.error == "on_chain_timeout", 1)],
+                        [((RequestRow.error == "on_chain_timeout") & (RequestRow.status == STATUS_FAILED), 1)],
                         0,
                     )
                 ).alias("timed_out"),
@@ -455,7 +476,7 @@ class PersistentQueue:
             pw.fn.SUM(
                 pw.Case(
                     None,
-                    [(RequestRow.error == "on_chain_timeout", 1)],
+                    [((RequestRow.error == "on_chain_timeout") & (RequestRow.status == STATUS_FAILED), 1)],
                     0,
                 )
             ).alias("timed_out"),
@@ -494,7 +515,7 @@ class PersistentQueue:
         deleted = (
             RequestRow.delete()
             .where(
-                RequestRow.status.in_([STATUS_DELIVERED, STATUS_FAILED]),
+                RequestRow.status.in_([STATUS_DELIVERED, STATUS_FAILED, STATUS_SKIPPED]),
                 RequestRow.updated_at < cutoff,
             )
             .execute()

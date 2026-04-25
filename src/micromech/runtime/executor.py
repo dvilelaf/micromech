@@ -55,6 +55,28 @@ class ToolExecutor:
         self._active.add(req_id)
         start = time.monotonic()
 
+        # Resolve tool before marking executing so unknown tools stay in PENDING
+        # and can be marked skipped (not failed).
+        try:
+            tool = self._resolve_tool(request)
+        except ToolNotFoundError as e:
+            reason = str(e)
+            try:
+                self.queue.mark_skipped(req_id, reason)
+            except Exception as pe:
+                logger.error("Failed to persist skipped status for {}: {}", req_id, pe)
+                try:
+                    self.queue.mark_failed(req_id, reason)
+                except Exception as fe:
+                    logger.error("Fallback mark_failed also failed for {}: {}", req_id, fe)
+            if self._metrics:
+                self._metrics.record_skipped(
+                    req_id, request.tool or "<unknown>", reason, chain=request.chain
+                )
+            logger.warning("Skipped {} — tool not registered: {}", req_id, (request.tool or "")[:64])
+            self._active.discard(req_id)
+            return ToolResult(error=reason)
+
         try:
             self.queue.mark_executing(req_id)
         except Exception as e:
@@ -67,7 +89,6 @@ class ToolExecutor:
             self._metrics.record_execution_started(req_id, tool_id, chain=request.chain)
 
         try:
-            tool = self._resolve_tool(request)
             result_str = await tool.execute_with_timeout(request.prompt, **request.extra_params)
             elapsed = time.monotonic() - start
 
@@ -111,14 +132,6 @@ class ToolExecutor:
                     req_id, tool_id, str(e), elapsed, chain=request.chain
                 )
             logger.warning("Tool timeout for {}: {}", req_id, e)
-            return result
-
-        except ToolNotFoundError as e:
-            result = ToolResult(error=str(e))
-            self.queue.mark_executed(req_id, result)
-            if self._metrics:
-                self._metrics.record_execution_failed(req_id, tool_id, str(e), chain=request.chain)
-            logger.error("Tool not found for {}: {}", req_id, e)
             return result
 
         except Exception as e:

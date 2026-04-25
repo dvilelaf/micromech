@@ -7,10 +7,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from micromech.core.constants import STATUS_EXECUTED, STATUS_FAILED
+from micromech.core.constants import STATUS_EXECUTED, STATUS_FAILED, STATUS_SKIPPED
 from micromech.core.models import MechRequest
 from micromech.core.persistence import PersistentQueue
 from micromech.runtime.executor import ToolExecutor
+from micromech.runtime.metrics import MetricsCollector
 from micromech.tools.base import Tool, ToolMetadata
 from micromech.tools.registry import ToolRegistry
 
@@ -84,13 +85,52 @@ class TestToolExecutor:
         assert record.request.status == STATUS_FAILED
 
     @pytest.mark.asyncio
-    async def test_execute_unknown_tool(self, executor: ToolExecutor, queue: PersistentQueue):
+    async def test_execute_unknown_tool_is_skipped(
+        self, executor: ToolExecutor, queue: PersistentQueue
+    ):
         req = MechRequest(request_id="r1", prompt="test", tool="nonexistent")
         queue.add_request(req)
         result = await executor.execute(req)
 
         assert not result.success
         assert "not found" in result.error
+
+        record = queue.get_by_id("r1")
+        assert record.request.status == STATUS_SKIPPED
+        assert executor.active_count == 0
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_skipped_persist_failure_still_returns(
+        self, executor: ToolExecutor, queue: PersistentQueue
+    ):
+        req = MechRequest(request_id="r1", prompt="test", tool="nonexistent")
+        queue.add_request(req)
+
+        original = queue.mark_skipped
+        queue.mark_skipped = MagicMock(side_effect=RuntimeError("db locked"))
+        result = await executor.execute(req)
+        assert not result.success
+        assert "not found" in result.error
+        assert executor.active_count == 0
+        queue.mark_skipped = original
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_persist_failure_falls_back_to_mark_failed(
+        self, executor: ToolExecutor, queue: PersistentQueue
+    ):
+        """When mark_skipped fails, executor falls back to mark_failed so request is terminal."""
+        req = MechRequest(request_id="r1", prompt="test", tool="nonexistent")
+        queue.add_request(req)
+
+        original = queue.mark_skipped
+        queue.mark_skipped = MagicMock(side_effect=RuntimeError("db locked"))
+        result = await executor.execute(req)
+        queue.mark_skipped = original
+
+        assert not result.success
+        assert executor.active_count == 0
+        record = queue.get_by_id("r1")
+        assert record.request.status == STATUS_FAILED
 
     @pytest.mark.asyncio
     async def test_execute_empty_tool_defaults_to_echo(
@@ -195,3 +235,18 @@ class TestToolExecutor:
 
         tool.execute_with_timeout = original_exec
         queue.mark_executed = original_mark
+
+    @pytest.mark.asyncio
+    async def test_skip_increments_metrics(self, queue: PersistentQueue, registry: ToolRegistry):
+        """record_skipped is called on metrics when tool is not found."""
+        metrics = MetricsCollector()
+        executor = ToolExecutor(registry=registry, queue=queue, max_concurrent=5, metrics=metrics)
+
+        req = MechRequest(request_id="r1", prompt="test", tool="nonexistent")
+        queue.add_request(req)
+        result = await executor.execute(req)
+
+        assert not result.success
+        assert metrics.executions_skipped == 1
+        assert metrics.executions_started == 0
+        assert metrics.executions_failed == 0

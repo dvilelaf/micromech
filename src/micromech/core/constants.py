@@ -93,6 +93,7 @@ STATUS_EXECUTING: Final = "executing"
 STATUS_EXECUTED: Final = "executed"
 STATUS_DELIVERED: Final = "delivered"
 STATUS_FAILED: Final = "failed"
+STATUS_SKIPPED: Final = "skipped"
 
 # Delivery methods
 DELIVERY_MARKETPLACE: Final = "marketplace"

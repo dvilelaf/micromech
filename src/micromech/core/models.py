@@ -12,7 +12,7 @@ from micromech.core.constants import (
     validate_eth_address,
 )
 
-StatusType = Literal["pending", "executing", "executed", "delivered", "failed"]
+StatusType = Literal["pending", "executing", "executed", "delivered", "failed", "skipped"]
 DeliveryMethodType = Literal["marketplace", "legacy"]
 
 
