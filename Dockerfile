@@ -60,6 +60,11 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 EXPOSE 8090
 
+# Health check: bot touches data/.heartbeat every 30s while running.
+# Stale or missing file means crash loop — updater uses this to trigger rollback.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=120s --retries=3 \
+    CMD python -c "import os,time,sys; sys.exit(0 if time.time()-os.path.getmtime('/app/data/.heartbeat')<60 else 1)"
+
 # Note: docker-compose overrides this with --host 0.0.0.0 so the port is
 # reachable inside the container (the host-side binding stays loopback-only).
 CMD ["python", "-m", "micromech", "run"]

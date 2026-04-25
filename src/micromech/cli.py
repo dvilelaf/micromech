@@ -380,6 +380,20 @@ def run(
 
     async def _run_all():
         """Run server + optionally Telegram bot."""
+        # Start heartbeat immediately — before any initialization — so the
+        # Docker HEALTHCHECK sees a fresh file well within the start-period.
+        async def _heartbeat_loop() -> None:
+            import pathlib
+            hb = pathlib.Path("/app/data/.heartbeat")
+            while True:
+                await asyncio.sleep(30)
+                try:
+                    hb.touch()
+                except OSError as e:
+                    logger.warning("Heartbeat touch failed (%s): %s", hb, e)
+
+        heartbeat_task = asyncio.create_task(_heartbeat_loop())
+
         from micromech.tasks.notifications import NotificationService
 
         bot_app = None
@@ -444,6 +458,11 @@ def run(
         try:
             await server.run(with_http=not no_http, notification=notification)
         finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
             if bot_app:
                 await bot_app.updater.stop()
                 await bot_app.stop()
