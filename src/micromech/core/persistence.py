@@ -361,6 +361,9 @@ class PersistentQueue:
                         0,
                     )
                 ).alias("timed_out"),
+                pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_SKIPPED, 1)], 0)).alias(
+                    "skipped"
+                ),
                 pw.fn.AVG(RequestRow.result_time).alias("avg_time"),
             )
             .where(RequestRow.tool != "")
@@ -375,6 +378,7 @@ class PersistentQueue:
                 "delivered": int(r.delivered or 0),
                 "failed": int(r.failed or 0),
                 "timed_out": int(r.timed_out or 0),
+                "skipped": int(r.skipped or 0),
                 "avg_time": round(float(r.avg_time or 0), 3),
             }
             for r in query
@@ -398,6 +402,9 @@ class PersistentQueue:
                 pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_FAILED, 1)], 0)).alias(
                     "failed"
                 ),
+                pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_SKIPPED, 1)], 0)).alias(
+                    "skipped"
+                ),
             )
             .where(RequestRow.created_at >= cutoff)
             .group_by(group_expr)
@@ -410,6 +417,7 @@ class PersistentQueue:
                 "total": r.total,
                 "delivered": int(r.delivered or 0),
                 "failed": int(r.failed or 0),
+                "skipped": int(r.skipped or 0),
             }
             for r in query
         ]
@@ -480,6 +488,7 @@ class PersistentQueue:
                     0,
                 )
             ).alias("timed_out"),
+            pw.fn.SUM(pw.Case(None, [(RequestRow.status == STATUS_SKIPPED, 1)], 0)).alias("skipped"),
             pw.fn.AVG(RequestRow.result_time).alias("avg_time"),
         ).where(RequestRow.created_at >= cutoff)
         query = _chain_filter(query, chain)
@@ -490,14 +499,16 @@ class PersistentQueue:
                 "delivered": 0,
                 "failed": 0,
                 "timed_out": 0,
+                "skipped": 0,
                 "avg_time": 0.0,
                 "success_rate": 0.0,
             }
-        total, delivered, failed, timed_out, avg_time = row
+        total, delivered, failed, timed_out, skipped, avg_time = row
         total = int(total or 0)
         delivered = int(delivered or 0)
         failed = int(failed or 0)
         timed_out = int(timed_out or 0)
+        skipped = int(skipped or 0)
         avg_time = round(float(avg_time or 0), 3)
         success_rate = round(delivered / total * 100, 1) if total > 0 else 0.0
         return {
@@ -505,6 +516,7 @@ class PersistentQueue:
             "delivered": delivered,
             "failed": failed,
             "timed_out": timed_out,
+            "skipped": skipped,
             "avg_time": avg_time,
             "success_rate": success_rate,
         }

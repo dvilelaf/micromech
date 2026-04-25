@@ -114,6 +114,7 @@
         .badge-delivered { background: rgba(0,210,255,0.15); color: var(--accent-color); }
         .badge-failed { background: rgba(231,76,60,0.15); color: var(--error); }
         .badge-skipped { background: rgba(230,126,34,0.15); color: #e67e22; }
+        .metric-value.skipped { color: #e67e22; }
 
         /* Event badges */
         .event-request_received { color: var(--accent-color); }
@@ -366,7 +367,7 @@
                         <div class="metric-label">Failed <span class="metric-period">24h</span></div>
                     </div>
                     <div class="glass metric-card">
-                        <div class="metric-value" id="m-skipped" style="color:#e67e22">0</div>
+                        <div class="metric-value skipped" id="m-skipped">0</div>
                         <div class="metric-label">Skipped <span class="metric-period">24h</span></div>
                     </div>
                     <div class="glass metric-card">
@@ -422,6 +423,7 @@
                                     <th class="val">Total</th>
                                     <th class="val">Delivered</th>
                                     <th class="val">Failed</th>
+                                    <th class="val">Skipped</th>
                                     <th class="val">Avg Time</th>
                                     <th class="val">Success %</th>
                                 </tr>
@@ -447,6 +449,7 @@
                                 <option value="executed">Executed</option>
                                 <option value="delivered">Delivered</option>
                                 <option value="failed">Failed</option>
+                                <option value="skipped">Skipped</option>
                             </select>
                             <select class="inline-chain-filter" id="filter-activity" onchange="onSectionChainChange('activity')">
                                 <option value="">All chains</option>
@@ -817,7 +820,7 @@
         setText('m-executing', queue.executing ?? 0);
         setText('m-delivered', s24.delivered ?? (data.delivered_total ?? live.deliveries_completed) ?? 0);
         setText('m-failed', s24.failed ?? live.executions_failed ?? 0);
-        setText('m-skipped', queue.skipped ?? live.executions_skipped ?? 0);
+        setText('m-skipped', s24.skipped ?? queue.skipped ?? live.executions_skipped ?? 0);
         // Avg time / Success rate: 7d from DB (enough volume for stable stats)
         const avgTime = s7d.avg_time ?? live.avg_execution_time ?? 0;
         setText('m-avg-time', avgTime.toFixed(2) + 's');
@@ -1030,6 +1033,11 @@
                             borderColor: 'rgba(231,76,60,0.8)', backgroundColor: 'rgba(231,76,60,0.1)',
                             fill: true, tension: 0.4, pointRadius: 2,
                         },
+                        {
+                            label: 'Skipped', data: data.map(d => d.skipped || 0),
+                            borderColor: 'rgba(230,126,34,0.8)', backgroundColor: 'rgba(230,126,34,0.1)',
+                            fill: true, tension: 0.4, pointRadius: 2,
+                        },
                     ],
                 },
                 options: {
@@ -1081,6 +1089,10 @@
                         {
                             label: 'Failed', data: data.map(d => d.failed),
                             backgroundColor: 'rgba(231,76,60,0.6)', borderRadius: 4,
+                        },
+                        {
+                            label: 'Skipped', data: data.map(d => d.skipped || 0),
+                            backgroundColor: 'rgba(230,126,34,0.6)', borderRadius: 4,
                         },
                     ],
                 },
@@ -2159,7 +2171,7 @@
         authFetch(API_BASE + '/api/metrics/tools').then(r => r.json()).then(tools => {
             const tbody = document.getElementById('overview-tool-stats');
             if (!tools.length) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">No data yet</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted)">No data yet</td></tr>';
                 return;
             }
             tbody.innerHTML = tools.map(t => {
@@ -2171,6 +2183,7 @@
                         <td class="val">${t.total}</td>
                         <td class="val" style="color:var(--success)">${t.delivered}</td>
                         <td class="val" style="color:var(--error)">${t.failed}</td>
+                        <td class="val" style="color:#e67e22">${t.skipped || 0}</td>
                         <td class="val">${t.avg_time.toFixed(2)}s</td>
                         <td class="val">${rate}%</td>
                     </tr>
