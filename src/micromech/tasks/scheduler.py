@@ -173,7 +173,7 @@ class TaskScheduler:
             startup_delay += 20
 
         # Failed Deliveries Alert Task
-        if cfg.failed_deliveries_alert_enabled:
+        if cfg.failed_deliveries_alert_enabled and self.queue is not None:
             self.scheduler.add_job(
                 failed_deliveries_alert_task,
                 "interval",
