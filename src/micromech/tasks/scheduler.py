@@ -15,9 +15,9 @@ from micromech.core.persistence import PersistentQueue
 from micromech.management import MechLifecycle
 from micromech.secrets import secrets
 from micromech.tasks.checkpoint import checkpoint_task
+from micromech.tasks.failed_deliveries_alert import failed_deliveries_alert_task
 from micromech.tasks.fund import fund_task
 from micromech.tasks.health import health_task
-from micromech.tasks.failed_deliveries_alert import failed_deliveries_alert_task
 from micromech.tasks.low_balance_alert import low_balance_alert_task
 from micromech.tasks.metadata_check import metadata_check_task
 from micromech.tasks.notifications import NotificationService
