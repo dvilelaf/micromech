@@ -1,0 +1,24 @@
+name: prediction_request_reasoning
+author: micromech
+version: 0.1.0
+type: custom
+description: Multi-query web search + Groq Llama for calibrated probability forecasting.
+  Free-API replacement for Valory's prediction-request-reasoning (OpenAI + Google
+  + FAISS). Generates multiple search query variants and leverages Groq's 128K context
+  window.
+license: Apache-2.0
+aea_version: '>=1.0.0, <2.0.0'
+entry_point: prediction_request_reasoning.py
+serialized: false
+callable: run
+timeout: 180
+params:
+  default_model: llama-3.3-70b-versatile
+dependencies:
+  openai:
+    version: '>=1.0.0'
+  ddgs:
+    version: '>=9.0.0'
+fingerprint:
+  __init__.py: bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku
+  prediction_request_reasoning.py: bafkreiejkrnubnycgczk4rmdl4vlp2csqyope4es5r7ch3wxknbkingake

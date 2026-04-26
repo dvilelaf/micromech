@@ -1,0 +1,22 @@
+name: superforcaster
+author: micromech
+version: 0.1.0
+type: custom
+description: Calibrated probability forecasting using DuckDuckGo web search + Groq
+  Llama. Free-API replacement for Valory's superforcaster (OpenAI gpt-4o + Serper).
+license: Apache-2.0
+aea_version: '>=1.0.0, <2.0.0'
+entry_point: superforcaster.py
+serialized: false
+callable: run
+timeout: 120
+params:
+  default_model: llama-3.3-70b-versatile
+dependencies:
+  openai:
+    version: '>=1.0.0'
+  ddgs:
+    version: '>=9.0.0'
+fingerprint:
+  __init__.py: bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku
+  superforcaster.py: bafkreiey7sz2ltnxkc2tccsdkbbrfbx63yn6nonwqyz7gn3ahwvrbhzyne
