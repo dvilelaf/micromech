@@ -25,8 +25,6 @@ _KNOWN_TIMEOUTS: dict[str, int] = {
     "echo_tool": 5,
     "local_llm": 120,
     "prediction_request": 120,
-    "superforcaster": 120,
-    "prediction_request_reasoning": 180,
 }
 
 

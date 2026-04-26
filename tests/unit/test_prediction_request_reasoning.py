@@ -4,7 +4,9 @@ import json
 import sys
 from unittest.mock import MagicMock, patch
 
+import openai
 import pytest
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -88,14 +90,15 @@ class TestGenerateQueries:
         queries = _generate_queries("Will Bitcoin hit 200k?")
         assert any("forecast" in q.lower() or "probability" in q.lower() for q in queries)
 
-    def test_strips_leading_will(self):
+    def test_variants_strip_trailing_question_mark(self):
+        """Core for variant generation strips trailing '?' via rstrip."""
         from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
             _generate_queries,
         )
 
         queries = _generate_queries("Will Tesla stock rise in 2025?")
-        # variants should be based on stripped core, not start with "will"
-        assert not any(q.lower().startswith("will") for q in queries[1:])
+        # The news/probability variants should not end with '?'
+        assert not any(q.endswith("?") for q in queries[1:])
 
     def test_simple_question_without_modal(self):
         from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
@@ -165,6 +168,26 @@ class TestSearchDdgsMulti:
         # The same content should appear only once despite 3 queries returning it
         assert result.count(dup_title) == 1
 
+    def test_dedup_uses_body_prefix_for_both_news_and_text(self):
+        """News and text with same body[:100] are deduplicated consistently."""
+        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
+            _search_ddgs_multi,
+        )
+
+        body = "Shared body content xyz"
+        mock_inst = MagicMock()
+        mock_inst.news.return_value = [
+            {"title": "Any Title", "body": body, "date": "2025-01-01", "url": "http://a.com"}
+        ]
+        mock_inst.text.return_value = [{"title": "T", "body": body, "href": "http://b.com"}]
+        fake_mod = MagicMock()
+        fake_mod.DDGS = MagicMock(return_value=mock_inst)
+
+        with patch.dict(sys.modules, {"ddgs": fake_mod}):
+            result = _search_ddgs_multi(["q1"])
+
+        assert result.count(body) == 1
+
     def test_search_exception_per_query_skipped(self):
         """If one query fails, remaining queries still run."""
         from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
@@ -205,7 +228,7 @@ class TestSearchDdgsMulti:
         )
 
         many_news = [
-            {"title": f"T{i}", "body": "X" * 400, "date": "2025-01-01", "url": ""}
+            {"title": f"T{i}", "body": f"N{i:03d}" + "X" * 400, "date": "2025-01-01", "url": ""}
             for i in range(40)
         ]
         fake = _fake_ddgs_mod(news=many_news, text=[])
@@ -215,7 +238,6 @@ class TestSearchDdgsMulti:
         assert len(result) <= prr._MAX_CONTEXT_CHARS + 3
 
     def test_collects_text_results(self):
-        """Lines 163-170: text results are collected alongside news results."""
         from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
             _search_ddgs_multi,
         )
@@ -237,7 +259,6 @@ class TestSearchDdgsMulti:
         assert "Web body B" in result
 
     def test_ddgs_init_failure_returns_empty(self):
-        """Lines 175-177: DDGS() itself raises → returns empty string."""
         from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
             _search_ddgs_multi,
         )
@@ -252,119 +273,14 @@ class TestSearchDdgsMulti:
 
 
 # ===========================================================================
-# _extract_json
-# ===========================================================================
-
-
-class TestExtractJson:
-    def test_pure_json(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            _extract_json,
-        )
-
-        raw = '{"p_yes": 0.6, "p_no": 0.4, "confidence": 0.7, "info_utility": 0.5}'
-        assert json.loads(_extract_json(raw))["p_yes"] == pytest.approx(0.6)
-
-    def test_json_after_xml_reasoning(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            _extract_json,
-        )
-
-        raw = "<facts>stuff</facts>\n<thinking>thoughts</thinking>\n" + _GOOD_JSON
-        result = _extract_json(raw)
-        assert json.loads(result)["p_yes"] == pytest.approx(0.65)
-
-    def test_code_fenced_json(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            _extract_json,
-        )
-
-        raw = "```json\n" + _GOOD_JSON + "\n```"
-        assert json.loads(_extract_json(raw))["p_yes"] == pytest.approx(0.65)
-
-    def test_no_json_returns_stripped(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            _extract_json,
-        )
-
-        assert _extract_json("  no json  ") == "no json"
-
-    def test_fallback_finds_p_no_block_when_p_yes_missing(self):
-        """Lines 213-216: regex misses p_no-only block; fallback dict scan finds it."""
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            _extract_json,
-        )
-
-        raw = 'text {"p_no": 0.7, "confidence": 0.5} end'
-        result = _extract_json(raw)
-        assert "p_no" in result
-
-    def test_fallback_except_branch_on_invalid_block(self):
-        """Lines 217-218: bad JSON block triggers except+continue in fallback scan."""
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            _extract_json,
-        )
-
-        # Bad block comes after good in reversed scan → except hit, then good found
-        raw = '{"p_no": 0.7} {not: valid json}'
-        result = _extract_json(raw)
-        assert isinstance(result, str)
-
-
-# ===========================================================================
-# _validate_prediction
-# ===========================================================================
-
-
-class TestValidatePrediction:
-    def test_valid_unchanged(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            _validate_prediction,
-        )
-
-        result = json.loads(_validate_prediction(_GOOD_JSON))
-        assert result["p_yes"] == pytest.approx(0.65)
-
-    def test_missing_confidence_defaults_to_zero(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            _validate_prediction,
-        )
-
-        raw = json.dumps({"p_yes": 0.5, "p_no": 0.5})
-        result = json.loads(_validate_prediction(raw))
-        assert result["confidence"] == 0.0
-        assert result["info_utility"] == 0.0
-
-    def test_unnormalized_probabilities_normalized(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            _validate_prediction,
-        )
-
-        raw = json.dumps({"p_yes": 3.0, "p_no": 1.0, "confidence": 0.5, "info_utility": 0.5})
-        result = json.loads(_validate_prediction(raw))
-        assert abs(result["p_yes"] - 0.75) < 0.01
-        assert abs(result["p_no"] - 0.25) < 0.01
-
-    def test_invalid_json_returns_default(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            DEFAULT_PREDICTION,
-            _validate_prediction,
-        )
-
-        assert _validate_prediction("garbage") == DEFAULT_PREDICTION
-
-
-# ===========================================================================
 # run()
 # ===========================================================================
 
 
 class TestPredictionRequestReasoningRun:
     def test_no_api_key_returns_default(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            DEFAULT_PREDICTION,
-            run,
-        )
+        from micromech.tools._groq_common import DEFAULT_PREDICTION
+        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import run
 
         with _patch_secrets(None):
             result, prompt_used, meta, cb = run(prompt="Will X happen?")
@@ -396,7 +312,6 @@ class TestPredictionRequestReasoningRun:
         assert meta is None
 
     def test_uses_multiple_queries_in_search(self):
-        """_generate_queries is called and its output is passed to _search_ddgs_multi."""
         from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import run
 
         mock_client = MagicMock()
@@ -424,13 +339,35 @@ class TestPredictionRequestReasoningRun:
         assert "Will Bitcoin hit 200k?" in captured_queries
 
     def test_groq_failure_returns_default(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
-            DEFAULT_PREDICTION,
-            run,
-        )
+        from micromech.tools._groq_common import DEFAULT_PREDICTION
+        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import run
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = RuntimeError("API error")
+
+        with (
+            _patch_secrets("fake-key"),
+            patch(
+                "micromech.tools.prediction_request_reasoning.prediction_request_reasoning._search_ddgs_multi",
+                return_value="",
+            ),
+            patch(
+                "micromech.tools.prediction_request_reasoning.prediction_request_reasoning.OpenAI",
+                return_value=mock_client,
+            ),
+        ):
+            result, _, _, _ = run(prompt="Will X happen?")
+
+        assert result == DEFAULT_PREDICTION
+
+    def test_rate_limit_returns_default(self):
+        from micromech.tools._groq_common import DEFAULT_PREDICTION
+        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import run
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = openai.RateLimitError(
+            "rate limit", response=MagicMock(status_code=429), body=None
+        )
 
         with (
             _patch_secrets("fake-key"),
@@ -515,8 +452,10 @@ class TestPredictionRequestReasoningRun:
 
         assert "UNIQUE_MARKER_XYZ" in prompt_used
 
-    def test_groq_base_url_is_correct(self):
-        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import run
+    def test_groq_client_uses_correct_base_url_and_timeout(self):
+        from micromech.tools.prediction_request_reasoning import (
+            prediction_request_reasoning as prr,
+        )
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.return_value = _make_groq_response(_GOOD_JSON)
@@ -537,10 +476,55 @@ class TestPredictionRequestReasoningRun:
                 side_effect=capture,
             ),
         ):
-            run(prompt="Will X happen?")
+            prr.run(prompt="Will X happen?")
 
         assert captured["base_url"] == "https://api.groq.com/openai/v1"
         assert captured["api_key"] == "my-key-123"
+        assert captured["timeout"] == prr._GROQ_TIMEOUT
+
+    def test_max_tokens_is_3000(self):
+        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import run
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = _make_groq_response(_GOOD_JSON)
+
+        with (
+            _patch_secrets("fake-key"),
+            patch(
+                "micromech.tools.prediction_request_reasoning.prediction_request_reasoning._search_ddgs_multi",
+                return_value="",
+            ),
+            patch(
+                "micromech.tools.prediction_request_reasoning.prediction_request_reasoning.OpenAI",
+                return_value=mock_client,
+            ),
+        ):
+            run(prompt="Will X happen?")
+
+        assert mock_client.chat.completions.create.call_args.kwargs["max_tokens"] == 3000
+
+    def test_uses_forecaster_system_prompt(self):
+        from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import run
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.return_value = _make_groq_response(_GOOD_JSON)
+
+        with (
+            _patch_secrets("fake-key"),
+            patch(
+                "micromech.tools.prediction_request_reasoning.prediction_request_reasoning._search_ddgs_multi",
+                return_value="",
+            ),
+            patch(
+                "micromech.tools.prediction_request_reasoning.prediction_request_reasoning.OpenAI",
+                return_value=mock_client,
+            ),
+        ):
+            run(prompt="Will X happen?")
+
+        messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+        system_msg = next(m for m in messages if m["role"] == "system")
+        assert "forecaster" in system_msg["content"].lower()
 
     def test_both_tool_aliases_in_allowed_tools(self):
         from micromech.tools.prediction_request_reasoning.prediction_request_reasoning import (
