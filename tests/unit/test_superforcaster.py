@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 import openai
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -134,8 +133,8 @@ class TestSearchDdgs:
 
 class TestSuperforcasterRun:
     def test_no_api_key_returns_default(self):
-        from micromech.tools.superforcaster.superforcaster import run
         from micromech.tools._groq_common import DEFAULT_PREDICTION
+        from micromech.tools.superforcaster.superforcaster import run
 
         with _patch_secrets(None):
             result, prompt_used, meta, cb = run(prompt="Will X happen?")

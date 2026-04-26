@@ -612,7 +612,7 @@ class TestFallbackMode:
     @pytest.mark.asyncio
     async def test_fallback_checker_queues_when_status_any(self, tmp_path, monkeypatch):
         """Checker moves request to queue when status == 2 (RequestedAny)."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
 
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
@@ -656,7 +656,7 @@ class TestFallbackMode:
     @pytest.mark.asyncio
     async def test_fallback_checker_discards_when_delivered(self, tmp_path, monkeypatch):
         """Checker discards request when status == 3 (already delivered)."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
 
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
@@ -739,7 +739,7 @@ class TestFallbackMode:
     @pytest.mark.asyncio
     async def test_fallback_checker_evicts_expired_entries(self, tmp_path, monkeypatch):
         """Checker drops entries older than fallback_ttl_seconds."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
 
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
@@ -847,7 +847,7 @@ class TestFallbackMode:
     @pytest.mark.asyncio
     async def test_fallback_checker_polls_after_delay(self, tmp_path, monkeypatch):
         """Checker calls getRequestStatus once _FALLBACK_POLL_DELAY seconds have passed."""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
 
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
