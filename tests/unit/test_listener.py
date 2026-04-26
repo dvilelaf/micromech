@@ -794,3 +794,81 @@ class TestAdaptivePolling:
         assert calls[1] > calls[0]
         # calls[2]: after activity → snapped back to default
         assert calls[2] == DEFAULT_EVENT_POLL_INTERVAL
+
+
+# ===========================================================================
+# Fallback mode
+# ===========================================================================
+
+
+class TestFallbackMode:
+    """Tests for fallback_mode_enabled listener behaviour."""
+
+    def _make_fallback_config(self) -> MicromechConfig:
+        return MicromechConfig(
+            chains={"gnosis": CHAIN_CFG_MECH.model_dump()},
+            fallback_mode_enabled=True,
+        )
+
+    def test_fallback_mode_includes_non_matching_priority(self):
+        """With fallback_mode_enabled, events for OTHER_MECH are returned."""
+        cfg = self._make_fallback_config()
+        listener = EventListener(cfg, CHAIN_CFG_MECH)
+        event = _make_event(OTHER_MECH)
+
+        reqs = listener._parse_marketplace_event(event, MECH_ADDR)
+
+        assert len(reqs) == 1
+        assert reqs[0].priority_mech == OTHER_MECH
+
+    def test_normal_mode_still_filters_other_mech(self):
+        """Without fallback mode, events for OTHER_MECH are filtered out."""
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH)
+        event = _make_event(OTHER_MECH)
+
+        reqs = listener._parse_marketplace_event(event, MECH_ADDR)
+
+        assert reqs == []
+
+    def test_priority_mech_set_for_own_requests(self):
+        """priority_mech field is populated even for our own requests."""
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH)
+        event = _make_event(MECH_ADDR)
+
+        reqs = listener._parse_marketplace_event(event, MECH_ADDR)
+
+        assert len(reqs) == 1
+        assert reqs[0].priority_mech == MECH_ADDR
+
+    def test_fallback_fetch_uses_empty_filter(self):
+        """With fallback_mode_enabled, get_logs is called without priorityMech filter."""
+        cfg = self._make_fallback_config()
+        bridge = MagicMock()
+        bridge.with_retry.side_effect = lambda fn, **kw: fn()
+
+        listener = EventListener(cfg, CHAIN_CFG_MECH, bridge=bridge)
+        mock_contract = MagicMock()
+        mock_contract.events.MarketplaceRequest.get_logs.return_value = []
+        listener._marketplace_contract = mock_contract
+
+        listener._fetch_events(100, 200)
+
+        call_kwargs = mock_contract.events.MarketplaceRequest.get_logs.call_args.kwargs
+        assert "argument_filters" in call_kwargs
+        assert call_kwargs["argument_filters"] == {}
+
+    def test_normal_fetch_uses_priority_mech_filter(self):
+        """Without fallback mode, get_logs is called with priorityMech filter."""
+        bridge = MagicMock()
+        bridge.with_retry.side_effect = lambda fn, **kw: fn()
+        bridge.web3.to_checksum_address.return_value = MECH_ADDR
+
+        listener = EventListener(MicromechConfig(), CHAIN_CFG_MECH, bridge=bridge)
+        mock_contract = MagicMock()
+        mock_contract.events.MarketplaceRequest.get_logs.return_value = []
+        listener._marketplace_contract = mock_contract
+
+        listener._fetch_events(100, 200)
+
+        call_kwargs = mock_contract.events.MarketplaceRequest.get_logs.call_args.kwargs
+        assert call_kwargs["argument_filters"] == {"priorityMech": MECH_ADDR}

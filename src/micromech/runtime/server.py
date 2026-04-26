@@ -83,6 +83,10 @@ class MechServer:
         self._executor_tasks: set[asyncio.Task] = set()
         # Dedup set to prevent double execution of the same request
         self._queued_ids: set[str] = set()
+        # Fallback mode: requests where priorityMech != us, waiting for timeout
+        self._fallback_pending: dict[str, MechRequest] = {}
+        # Cached marketplace contracts for _get_request_status (keyed by chain name)
+        self._fallback_contracts: dict[str, Any] = {}
         # Serializes reload_tools() calls — lazy-init on first async use
         # because MechServer() can be constructed outside an event loop.
         self._reload_lock: Optional[asyncio.Lock] = None
@@ -201,15 +205,18 @@ class MechServer:
         """Callback for new requests (from listener or HTTP).
 
         Deduplicates: skips if request is already queued or processed.
+        In fallback mode, requests where priorityMech != us are tracked
+        in _fallback_pending until they become deliverable (any-mech).
         """
         req_id = request.request_id
 
-        # Fast dedup: already in-flight
-        if req_id in self._queued_ids:
-            logger.debug("Skipping in-flight duplicate {}", req_id)
+        # Fast dedup: already in-flight or already tracked as fallback
+        if req_id in self._queued_ids or req_id in self._fallback_pending:
+            logger.debug("Skipping duplicate {}", req_id)
             return
 
-        # DB dedup: already processed
+        # DB dedup first — skip requests already processed in a previous session
+        # (including those already delivered by another mech in fallback scenarios)
         existing = self.queue.get_by_id(req_id)
         if existing and existing.request.status != STATUS_PENDING:
             logger.info(
@@ -219,12 +226,115 @@ class MechServer:
             )
             return
 
+        # Fallback mode: if priority_mech is someone else, track and wait
+        if self.config.fallback_mode_enabled and request.priority_mech:
+            chain_cfg = self.config.enabled_chains.get(request.chain)
+            mech_addr = chain_cfg.mech_address if chain_cfg else ""
+            if mech_addr and request.priority_mech.lower() != mech_addr.lower():
+                # Only track if we actually have the tool
+                if not request.tool or not self.registry.has(request.tool):
+                    logger.debug(
+                        "Fallback: skipping {} — tool '{}' not available",
+                        req_id[:16],
+                        request.tool,
+                    )
+                    return
+                self._fallback_pending[req_id] = request
+                logger.info(
+                    "Fallback: tracking {} (tool={}, priority_mech={})",
+                    req_id[:16],
+                    request.tool,
+                    request.priority_mech[:10],
+                )
+                return
+
+        await self._enqueue_request(request)
+
+    async def _enqueue_request(self, request: MechRequest) -> None:
+        """Add a validated request to the processing queue (internal)."""
+        req_id = request.request_id
         self.queue.add_request(request)
         self._queued_ids.add(req_id)
         self.metrics.record_request_received(
             req_id, request.tool, request.is_offchain, chain=request.chain
         )
         await self._request_queue.put(request)
+
+    # MechMarketplace.RequestStatus enum value for "any mech can deliver"
+    _REQUEST_STATUS_ANY = 2
+
+    def _get_request_status(self, chain: str, request_id_hex: str) -> int:
+        """Query getRequestStatus() on the marketplace contract (sync, runs in thread).
+
+        Returns MechMarketplace.RequestStatus:
+          0 = DoesNotExist, 1 = RequestedPriority, 2 = RequestedAny, 3 = Delivered
+        """
+        bridge = self.bridges.get(chain)
+        chain_cfg = self.config.enabled_chains.get(chain)
+        if not bridge or not chain_cfg:
+            return 0
+
+        if chain not in self._fallback_contracts:
+            from micromech.runtime.contracts import load_marketplace_abi
+
+            self._fallback_contracts[chain] = bridge.web3.eth.contract(
+                address=bridge.web3.to_checksum_address(chain_cfg.marketplace_address),
+                abi=load_marketplace_abi(),
+            )
+        contract = self._fallback_contracts[chain]
+        req_id_bytes = bytes.fromhex(request_id_hex.removeprefix("0x"))
+        return bridge.with_retry(
+            lambda: contract.functions.getRequestStatus(req_id_bytes).call()
+        )
+
+    async def _fallback_checker_loop(self) -> None:
+        """Poll getRequestStatus() for pending fallback requests.
+
+        Interval and TTL are configurable via MicromechConfig. When a request
+        transitions to RequestedAny (status == 2), the priority mech's response
+        window has expired and any mech can deliver. Entries older than
+        fallback_ttl_seconds are evicted to bound memory growth.
+        """
+        from datetime import datetime, timedelta, timezone
+
+        logger.info(
+            "Fallback checker started (interval={}s, ttl={}s)",
+            self.config.fallback_check_interval,
+            self.config.fallback_ttl_seconds,
+        )
+        while self._running:
+            await asyncio.sleep(self.config.fallback_check_interval)
+            if not self._fallback_pending:
+                continue
+
+            now = datetime.now(timezone.utc)
+            ttl = timedelta(seconds=self.config.fallback_ttl_seconds)
+
+            for req_id in list(self._fallback_pending):
+                request = self._fallback_pending[req_id]
+
+                # TTL eviction: drop entries that have been waiting too long
+                if now - request.created_at > ttl:
+                    self._fallback_pending.pop(req_id, None)
+                    logger.debug("Fallback: TTL expired for {}, discarding", req_id[:16])
+                    continue
+
+                try:
+                    status = await asyncio.to_thread(
+                        self._get_request_status, request.chain, req_id
+                    )
+                except Exception as e:
+                    logger.debug("Fallback status check failed for {}: {}", req_id[:16], e)
+                    continue
+
+                if status == self._REQUEST_STATUS_ANY:
+                    self._fallback_pending.pop(req_id, None)
+                    logger.info("Fallback: {} is now deliverable, queuing", req_id[:16])
+                    await self._enqueue_request(request)
+                elif status != 1:
+                    # Delivered (3) or DoesNotExist (0) — discard silently
+                    self._fallback_pending.pop(req_id, None)
+                    logger.debug("Fallback: discarding {} (status={})", req_id[:16], status)
 
     async def _processor_loop(self) -> None:
         """Process requests from the internal queue."""
@@ -307,6 +417,10 @@ class MechServer:
 
         if with_http:
             self._tasks.append(asyncio.create_task(self._run_http()))
+
+        if self.config.fallback_mode_enabled:
+            self._tasks.append(asyncio.create_task(self._fallback_checker_loop()))
+            logger.info("Fallback mode enabled — monitoring all marketplace requests")
 
         # Start task scheduler (checkpoint, rewards, fund, alerts, etc.)
         try:

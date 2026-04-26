@@ -71,6 +71,17 @@ MARKETPLACE_REQUEST_ABI = [
         "type": "function",
     },
     {
+        "inputs": [
+            {"internalType": "bytes32", "name": "requestId", "type": "bytes32"},
+        ],
+        "name": "getRequestStatus",
+        "outputs": [
+            {"internalType": "uint8", "name": "status", "type": "uint8"},
+        ],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
         "anonymous": False,
         "inputs": [
             {"indexed": True, "name": "priorityMech", "type": "address"},

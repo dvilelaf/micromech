@@ -26,6 +26,7 @@ class MechRequest(BaseModel):
     request_id: str
     chain: str = DEFAULT_CHAIN
     sender: str = ""
+    priority_mech: str = ""
     data: bytes = b""
 
     # Parsed metadata

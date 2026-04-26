@@ -1,7 +1,7 @@
 """Tests for the MechServer orchestrator."""
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -493,4 +493,308 @@ class TestLLMPrefetch:
         ):
             # Should not raise
             await server._prefetch_llm_model()
+        server.shutdown()
+
+
+# ===========================================================================
+# Fallback mode
+# ===========================================================================
+
+MECH_ADDR = "0x" + "ab" * 20
+OTHER_MECH = "0x" + "cd" * 20
+
+
+def _make_fallback_config(tmp_path=None, **kwargs) -> MicromechConfig:
+    gnosis = CHAIN_DEFAULTS["gnosis"]
+    cfg = MicromechConfig(
+        chains={
+            "gnosis": ChainConfig(
+                chain="gnosis",
+                marketplace_address=gnosis["marketplace"],
+                factory_address=gnosis["factory"],
+                staking_address=gnosis["staking"],
+                mech_address=MECH_ADDR,
+            )
+        },
+        fallback_mode_enabled=True,
+        **kwargs,
+    )
+    return cfg
+
+
+class TestFallbackMode:
+    @pytest.mark.asyncio
+    async def test_fallback_request_goes_to_pending(self, tmp_path, monkeypatch):
+        """A request from another priority mech is tracked in _fallback_pending."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)
+        server._load_tools()
+        # Ensure registry reports the tool as available
+        server.registry._tools = {"superforcaster": object()}
+
+        req = MechRequest(
+            request_id="aa" * 32,
+            chain="gnosis",
+            tool="superforcaster",
+            prompt="Will ETH hit 10k?",
+            priority_mech=OTHER_MECH,
+        )
+
+        await server._on_new_request(req)
+
+        assert "aa" * 32 in server._fallback_pending
+        assert "aa" * 32 not in server._queued_ids
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_fallback_own_request_processed_normally(self, tmp_path, monkeypatch):
+        """Our own requests (priorityMech == us) are queued normally in fallback mode."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)
+
+        req = MechRequest(
+            request_id="bb" * 32,
+            chain="gnosis",
+            tool="echo",
+            prompt="hello",
+            priority_mech=MECH_ADDR,
+        )
+
+        await server._on_new_request(req)
+
+        assert "bb" * 32 in server._queued_ids
+        assert "bb" * 32 not in server._fallback_pending
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_fallback_skipped_if_tool_not_available(self, tmp_path, monkeypatch):
+        """Fallback request is silently dropped when we don't have the tool."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)
+        # Don't load tools — registry is empty
+
+        req = MechRequest(
+            request_id="cc" * 32,
+            chain="gnosis",
+            tool="unknown_tool",
+            prompt="question?",
+            priority_mech=OTHER_MECH,
+        )
+
+        await server._on_new_request(req)
+
+        assert "cc" * 32 not in server._fallback_pending
+        assert "cc" * 32 not in server._queued_ids
+        server.shutdown()
+
+    def test_get_request_status_returns_0_without_bridge(self, tmp_path, monkeypatch):
+        """_get_request_status returns 0 (DoesNotExist) when no bridge configured."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)  # No bridges injected
+
+        result = server._get_request_status("gnosis", "aa" * 32)
+
+        assert result == 0
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_fallback_checker_queues_when_status_any(self, tmp_path, monkeypatch):
+        """Checker moves request to queue when status == 2 (RequestedAny)."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)
+        server._running = True
+        req_id = "dd" * 32
+        req = MechRequest(
+            request_id=req_id,
+            chain="gnosis",
+            tool="echo",
+            priority_mech=OTHER_MECH,
+        )
+        server._fallback_pending[req_id] = req
+
+        # Simulate: status check returns 2 (RequestedAny) then stop
+        call_count = 0
+
+        async def mock_sleep(_t):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                server._running = False
+
+        with (
+            patch("asyncio.sleep", mock_sleep),
+            patch.object(
+                server,
+                "_get_request_status",
+                return_value=MechServer._REQUEST_STATUS_ANY,
+            ),
+        ):
+            await server._fallback_checker_loop()
+
+        assert req_id not in server._fallback_pending
+        assert req_id in server._queued_ids
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_fallback_checker_discards_when_delivered(self, tmp_path, monkeypatch):
+        """Checker discards request when status == 3 (already delivered)."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)
+        server._running = True
+        req_id = "ee" * 32
+        req = MechRequest(
+            request_id=req_id,
+            chain="gnosis",
+            tool="echo",
+            priority_mech=OTHER_MECH,
+        )
+        server._fallback_pending[req_id] = req
+
+        call_count = 0
+
+        async def mock_sleep(_t):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                server._running = False
+
+        with (
+            patch("asyncio.sleep", mock_sleep),
+            patch.object(server, "_get_request_status", return_value=3),
+        ):
+            await server._fallback_checker_loop()
+
+        assert req_id not in server._fallback_pending
+        assert req_id not in server._queued_ids
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_get_request_status_handles_0x_prefix(self, tmp_path, monkeypatch):
+        """_get_request_status accepts request_id with '0x' prefix without crashing."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        mock_bridge = MagicMock()
+        mock_bridge.with_retry.side_effect = lambda fn: fn()
+        mock_contract = MagicMock()
+        mock_contract.functions.getRequestStatus.return_value.call.return_value = 2
+        mock_bridge.web3.eth.contract.return_value = mock_contract
+        mock_bridge.web3.to_checksum_address.return_value = "0xDEAD"
+
+        server = MechServer(cfg, bridges={"gnosis": mock_bridge})
+
+        # Should not raise ValueError — removeprefix("0x") handles the prefix
+        result = server._get_request_status("gnosis", "0x" + "aa" * 32)
+        assert result == 2
+        # Contract is cached after first call
+        assert "gnosis" in server._fallback_contracts
+        server.shutdown()
+
+    def test_get_request_status_caches_contract(self, tmp_path, monkeypatch):
+        """Contract is created once and reused on subsequent calls."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        mock_bridge = MagicMock()
+        mock_bridge.with_retry.side_effect = lambda fn: fn()
+        mock_contract = MagicMock()
+        mock_contract.functions.getRequestStatus.return_value.call.return_value = 1
+        mock_bridge.web3.eth.contract.return_value = mock_contract
+        mock_bridge.web3.to_checksum_address.return_value = "0xDEAD"
+
+        server = MechServer(cfg, bridges={"gnosis": mock_bridge})
+        server._get_request_status("gnosis", "aa" * 32)
+        server._get_request_status("gnosis", "bb" * 32)
+
+        # eth.contract() called exactly once (cached after first call)
+        assert mock_bridge.web3.eth.contract.call_count == 1
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_fallback_checker_evicts_expired_entries(self, tmp_path, monkeypatch):
+        """Checker drops entries older than fallback_ttl_seconds."""
+        from datetime import datetime, timezone, timedelta
+
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config(fallback_ttl_seconds=60)
+        server = MechServer(cfg)
+        server._running = True
+        req_id = "ff" * 32
+        # Request created 2 hours ago — well past TTL
+        old_time = datetime.now(timezone.utc) - timedelta(hours=2)
+        req = MechRequest(
+            request_id=req_id,
+            chain="gnosis",
+            tool="echo",
+            priority_mech=OTHER_MECH,
+            created_at=old_time,
+        )
+        server._fallback_pending[req_id] = req
+
+        call_count = 0
+
+        async def mock_sleep(_t):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                server._running = False
+
+        with (
+            patch("asyncio.sleep", mock_sleep),
+            patch.object(server, "_get_request_status", return_value=1),
+        ):
+            await server._fallback_checker_loop()
+
+        assert req_id not in server._fallback_pending
+        assert req_id not in server._queued_ids
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_db_dedup_before_fallback_tracking(self, tmp_path, monkeypatch):
+        """Already-executed requests are skipped before entering _fallback_pending."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)
+        server.registry._tools = {"echo": object()}
+
+        req_id = "ab" * 32
+        req = MechRequest(
+            request_id=req_id,
+            chain="gnosis",
+            tool="echo",
+            priority_mech=OTHER_MECH,
+        )
+        # Persist as already executed (non-pending) in the DB
+        server.queue.add_request(req)
+        server.queue.mark_executing(req_id)
+        server.queue.mark_executed(req_id, ToolResult(output="done"))
+
+        await server._on_new_request(req)
+
+        assert req_id not in server._fallback_pending
+        assert req_id not in server._queued_ids
         server.shutdown()

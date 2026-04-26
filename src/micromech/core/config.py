@@ -94,6 +94,9 @@ class MicromechConfig(BaseModel):
 
     # Tools
     disabled_tools: list[str] = Field(default_factory=list)
+    fallback_mode_enabled: bool = False
+    fallback_check_interval: int = Field(default=30, ge=5, le=300)
+    fallback_ttl_seconds: int = Field(default=3600, ge=60)
 
     # Metadata state (set by MetadataManager after publish)
     metadata_ipfs_cid: Optional[str] = None
