@@ -612,6 +612,8 @@ class TestFallbackMode:
     @pytest.mark.asyncio
     async def test_fallback_checker_queues_when_status_any(self, tmp_path, monkeypatch):
         """Checker moves request to queue when status == 2 (RequestedAny)."""
+        from datetime import datetime, timezone, timedelta
+
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
 
@@ -624,6 +626,7 @@ class TestFallbackMode:
             chain="gnosis",
             tool="echo",
             priority_mech=OTHER_MECH,
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=260),
         )
         server._fallback_pending[req_id] = req
 
@@ -653,6 +656,8 @@ class TestFallbackMode:
     @pytest.mark.asyncio
     async def test_fallback_checker_discards_when_delivered(self, tmp_path, monkeypatch):
         """Checker discards request when status == 3 (already delivered)."""
+        from datetime import datetime, timezone, timedelta
+
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
 
@@ -665,6 +670,7 @@ class TestFallbackMode:
             chain="gnosis",
             tool="echo",
             priority_mech=OTHER_MECH,
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=260),
         )
         server._fallback_pending[req_id] = req
 
@@ -797,4 +803,83 @@ class TestFallbackMode:
 
         assert req_id not in server._fallback_pending
         assert req_id not in server._queued_ids
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_fallback_checker_skips_before_poll_delay(self, tmp_path, monkeypatch):
+        """Checker does not call getRequestStatus until _FALLBACK_POLL_DELAY seconds pass."""
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)
+        server._running = True
+        req_id = "a1" * 32
+        req = MechRequest(
+            request_id=req_id,
+            chain="gnosis",
+            tool="echo",
+            priority_mech=OTHER_MECH,
+            # created just now — well within the 250s poll delay
+        )
+        server._fallback_pending[req_id] = req
+
+        call_count = 0
+
+        async def mock_sleep(_t):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                server._running = False
+
+        mock_status = MagicMock(return_value=1)
+        with (
+            patch("asyncio.sleep", mock_sleep),
+            patch.object(server, "_get_request_status", mock_status),
+        ):
+            await server._fallback_checker_loop()
+
+        # getRequestStatus should NOT have been called — request is too fresh
+        mock_status.assert_not_called()
+        assert req_id in server._fallback_pending
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_fallback_checker_polls_after_delay(self, tmp_path, monkeypatch):
+        """Checker calls getRequestStatus once _FALLBACK_POLL_DELAY seconds have passed."""
+        from datetime import datetime, timezone, timedelta
+
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)
+        server._running = True
+        req_id = "a2" * 32
+        old_enough = datetime.now(timezone.utc) - timedelta(seconds=260)
+        req = MechRequest(
+            request_id=req_id,
+            chain="gnosis",
+            tool="echo",
+            priority_mech=OTHER_MECH,
+            created_at=old_enough,
+        )
+        server._fallback_pending[req_id] = req
+
+        call_count = 0
+
+        async def mock_sleep(_t):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                server._running = False
+
+        with (
+            patch("asyncio.sleep", mock_sleep),
+            patch.object(server, "_get_request_status", return_value=1),
+        ):
+            await server._fallback_checker_loop()
+
+        # Request old enough — getRequestStatus should have been called
+        assert req_id in server._fallback_pending  # status=1, stays pending
         server.shutdown()
