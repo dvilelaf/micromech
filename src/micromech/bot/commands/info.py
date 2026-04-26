@@ -11,7 +11,6 @@ from telegram.ext import ContextTypes
 from micromech.bot.formatting import bold_md, code_md, escape_md
 from micromech.bot.security import authorized_only, rate_limited
 from micromech.core.config import MicromechConfig
-from micromech.core.persistence import PersistentQueue
 from micromech.runtime.metrics import MetricsCollector
 
 
@@ -61,7 +60,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     config: MicromechConfig = context.bot_data["config"]
     metrics: Optional[MetricsCollector] = context.bot_data.get("metrics")
-    queue: Optional[PersistentQueue] = context.bot_data.get("queue")
 
     lines = [bold_md("Micromech Info"), ""]
     lines.append(f"Version: {code_md(mm_version)}")
@@ -80,13 +78,6 @@ async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     tool_names = _get_tool_names(context)
     if tool_names:
         lines.append(f"Tools: {code_md(', '.join(tool_names))}")
-
-    if queue:
-        counts = queue.count_by_status()
-        total = sum(counts.values())
-        delivered = counts.get("delivered", 0)
-        failed = counts.get("failed", 0)
-        lines.append(f"Queue: {code_md(f'{total} total, {delivered} delivered, {failed} failed')}")
 
     text = "\n".join(lines)
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN_V2)

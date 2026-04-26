@@ -227,6 +227,71 @@ class TestStatusCommand:
         assert "NOT_STAKED" in result
         assert "❌" in result  # 0 requests → idle emoji
 
+    def test_format_chain_status_deliveries_24h(self):
+        from micromech.bot.commands.status import _format_chain_status
+
+        result = _format_chain_status(
+            "gnosis",
+            {
+                "staking_state": "STAKED",
+                "is_staked": True,
+                "requests_this_epoch": 5,
+                "required_requests": 10,
+                "rewards": 0.0,
+            },
+            olas_price=None,
+            deliveries_24h={"delivered": 1600, "failed": 34},
+        )
+        assert "Deliveries 24h" in result
+        assert "1600" in result
+        assert "34" in result
+
+    def test_format_chain_status_no_deliveries_24h(self):
+        from micromech.bot.commands.status import _format_chain_status
+
+        result = _format_chain_status(
+            "gnosis",
+            {
+                "staking_state": "STAKED",
+                "is_staked": True,
+                "requests_this_epoch": 5,
+                "required_requests": 10,
+                "rewards": 0.0,
+            },
+            olas_price=None,
+        )
+        assert "Deliveries 24h" not in result
+
+    @pytest.mark.asyncio
+    async def test_with_queue_shows_deliveries_24h(self):
+        from micromech.bot.commands.status import status_command
+
+        lifecycle = MagicMock()
+        lifecycle.get_status.return_value = {
+            "staking_state": "STAKED",
+            "is_staked": True,
+            "requests_this_epoch": 5,
+            "required_requests": 10,
+            "rewards": 1.5,
+        }
+        queue = MagicMock()
+        queue.period_stats.return_value = {"delivered": 100, "failed": 5, "received": 110}
+        update = _make_update()
+        ctx = _make_context(lifecycles={"gnosis": lifecycle}, queue=queue)
+        svc_info = {"service_key": "0xkey"}
+
+        with (
+            patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID),
+            patch("micromech.bot.security._rate_limit_cache", {}),
+            patch("micromech.core.bridge.get_service_info", return_value=svc_info),
+        ):
+            await status_command(update, ctx)
+
+        # The edit_text call carries the formatted status block
+        edited = update.message.reply_text.return_value.edit_text.call_args[0][0]
+        assert "Deliveries 24h" in edited
+        assert "100" in edited
+
 
 # ---------------------------------------------------------------------------
 # /info

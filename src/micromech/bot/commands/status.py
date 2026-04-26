@@ -39,6 +39,7 @@ def _format_chain_status(
     pending_payment: Optional[float] = None,
     master_balances: Optional[tuple[float, float]] = None,
     mech_balance: Optional[tuple[float, float]] = None,
+    deliveries_24h: Optional[dict] = None,
 ) -> str:
     """Format status for a single chain in MarkdownV2 (triton style)."""
     requests = status.get("requests_this_epoch", 0)
@@ -61,6 +62,13 @@ def _format_chain_status(
         lines.append(f"Rewards: {code_md(reward_str)} \\({escape_md(format_currency(eur))}\\)")
     else:
         lines.append(f"Rewards: {code_md(reward_str)}")
+
+    if deliveries_24h is not None:
+        ok = deliveries_24h.get("delivered", 0)
+        failed_count = deliveries_24h.get("failed", 0)
+        lines.append(
+            f"Deliveries 24h: {code_md(f'{ok} ok')} \\| {code_md(f'{failed_count} failed')}"
+        )
 
     lines.append(f"Epoch deliveries: {code_md(f'{requests}/{required}')}")
 
@@ -205,6 +213,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     config: MicromechConfig = context.bot_data["config"]
     lifecycles = context.bot_data.get("lifecycles", {})
+    queue = context.bot_data.get("queue")
     enabled = config.enabled_chains
 
     if not enabled:
@@ -226,9 +235,15 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             mech_tasks.append(asyncio.to_thread(_fetch_mech_balance, _c, _mech_addr))
         else:
             mech_tasks.append(asyncio.sleep(0, result=None))
+    delivery_tasks = []
+    for _c in chain_names:
+        if queue is not None:
+            delivery_tasks.append(asyncio.to_thread(queue.period_stats, 24, _c))
+        else:
+            delivery_tasks.append(asyncio.sleep(0, result=None))
 
-    # Layout: [olas_price, pending, *chain_status(N), *master_balance(N), *mech_balance(N)]
-    all_tasks = [olas_price_task, pending_task, *chain_tasks, *master_tasks, *mech_tasks]
+    # Layout: [olas_price, pending, *chain_status(N), *master_balance(N), *mech_balance(N), *delivery_stats(N)]
+    all_tasks = [olas_price_task, pending_task, *chain_tasks, *master_tasks, *mech_tasks, *delivery_tasks]
     results = await asyncio.gather(*all_tasks, return_exceptions=True)
 
     n = len(chain_names)
@@ -236,7 +251,8 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     pending_payments = results[1] if not isinstance(results[1], Exception) else {}
     chain_results = results[2 : 2 + n]
     master_results = results[2 + n : 2 + 2 * n]
-    mech_results = results[2 + 2 * n :]
+    mech_results = results[2 + 2 * n : 2 + 3 * n]
+    delivery_results = results[2 + 3 * n :]
     master_by_chain = {}
     for name, master_result in zip(chain_names, master_results):
         if not isinstance(master_result, Exception):
@@ -249,6 +265,10 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             and isinstance(mech_result[0], float)
         ):
             mech_by_chain[name] = mech_result  # type: ignore[assignment]
+    delivery_by_chain: dict[str, dict] = {}
+    for name, delivery_result in zip(chain_names, delivery_results):
+        if isinstance(delivery_result, dict):
+            delivery_by_chain[name] = delivery_result
 
     blocks = []
     for result in chain_results:
@@ -267,6 +287,7 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     pending_payment=pending_payments.get(chain_name),
                     master_balances=master_by_chain.get(chain_name),  # type: ignore[arg-type]
                     mech_balance=mech_by_chain.get(chain_name),
+                    deliveries_24h=delivery_by_chain.get(chain_name),
                 )
             )
 

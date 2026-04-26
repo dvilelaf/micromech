@@ -946,22 +946,6 @@ class TestInfoCommand:
         assert "1h" in text
 
     @pytest.mark.asyncio
-    async def test_with_queue(self):
-        from micromech.bot.commands.info import info_command
-
-        queue = MagicMock()
-        queue.count_by_status.return_value = {"delivered": 50, "failed": 2, "pending": 1}
-        update = _make_update()
-        ctx = _make_context(queue=queue)
-
-        with patch("micromech.bot.security.secrets", telegram_chat_id=AUTHORIZED_CHAT_ID):
-            await info_command(update, ctx)
-
-        text = update.message.reply_text.call_args[0][0]
-        assert "Queue" in text
-        assert "53 total" in text
-
-    @pytest.mark.asyncio
     async def test_package_not_found(self):
         from micromech.bot.commands.info import info_command
 
