@@ -262,10 +262,6 @@ class MechServer:
 
     # MechMarketplace.RequestStatus enum value for "any mech can deliver"
     _REQUEST_STATUS_ANY = 2
-    # Seconds to wait before polling getRequestStatus — the priority mech has 300s
-    # to respond; created_at lags the block by 0-60s, so 250s avoids polling before
-    # the window expires while keeping the lag small (0-2 early calls worst case).
-    _FALLBACK_POLL_DELAY = 250
 
     def _get_request_status(self, chain: str, request_id_hex: str) -> int:
         """Query getRequestStatus() on the marketplace contract (sync, runs in thread).
@@ -324,7 +320,7 @@ class MechServer:
                     continue
 
                 # Don't poll until the priority mech's 300s window has likely expired
-                if (now - request.created_at).total_seconds() < self._FALLBACK_POLL_DELAY:
+                if (now - request.created_at).total_seconds() < self.config.fallback_poll_delay:
                     continue
 
                 try:
