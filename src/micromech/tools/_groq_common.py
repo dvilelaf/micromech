@@ -2,8 +2,30 @@
 
 import json
 import re
+from typing import Any, Final, Optional
 
 from loguru import logger
+
+# Valory-compatible return type: (result, prompt_used, meta, counter_callback)
+MechResponse = tuple[Optional[str], Optional[str], Optional[dict[str, Any]], Any]
+
+# HTTP timeout (seconds) for Groq API calls — shared by all Groq-based tools.
+# The executor-level timeout (component.yaml) is the outer bound.
+GROQ_HTTP_TIMEOUT: Final[int] = 60
+
+# Models available on Groq's free tier that we trust for forecasting.
+# Rejects unknown values to prevent model-downgrade attacks via untrusted IPFS payloads.
+GROQ_ALLOWED_MODELS: Final[frozenset[str]] = frozenset(
+    {
+        "llama-3.3-70b-versatile",
+        "llama-3.1-70b-versatile",
+        "llama-3.1-8b-instant",
+        "llama3-70b-8192",
+        "llama3-8b-8192",
+        "gemma2-9b-it",
+        "mixtral-8x7b-32768",
+    }
+)
 
 # Valory's superforecasting prompt (Apache 2.0, Valory AG 2023-2024)
 PREDICTION_PROMPT = """
@@ -82,19 +104,27 @@ OUTPUT_FORMAT
 * This is correct:"{{\\"p_yes\\": 0.2, \\"p_no\\": 0.8, \\"confidence\\": 0.7, \\"info_utility\\": 0.5}}"
 """
 
-GROQ_SYSTEM_PROMPT = "You are an expert forecaster. Respond only with a valid JSON object."
+GROQ_SYSTEM_PROMPT: Final[str] = (
+    "You are an expert forecaster. Respond only with a valid JSON object."
+)
 
-DEFAULT_PREDICTION = json.dumps(
+DEFAULT_PREDICTION: Final[str] = json.dumps(
     {"p_yes": 0.5, "p_no": 0.5, "confidence": 0.0, "info_utility": 0.0}
 )
 
 _JSON_RE = re.compile(r'\{[^{}]*"p_yes"[^{}]*\}', re.DOTALL)
 
 
+def _sanitize_sources(text: str) -> str:
+    """Escape closing background tag to prevent prompt injection via DDG results."""
+    return text.replace("</background>", "&lt;/background&gt;")
+
+
 def _extract_json(text: str) -> str:
     """Extract JSON prediction object from LLM response.
 
     Handles: pure JSON, JSON with surrounding text/XML tags, code-fenced JSON.
+    Note: always chain with _validate_prediction — this function may return non-JSON.
     """
     text = re.sub(r"```(?:json)?\s*", "", text).strip()
 
@@ -121,17 +151,31 @@ def _extract_json(text: str) -> str:
 
 
 def _validate_prediction(raw: str) -> str:
-    """Validate and normalize prediction JSON, returning defaults on failure."""
+    """Validate and normalize prediction JSON, returning defaults on failure.
+
+    Ensures: values are floats clamped to [0, 1], missing fields default to 0,
+    and p_yes + p_no sum to 1.0.
+    """
     try:
         data = json.loads(raw)
+        if not isinstance(data, dict):
+            raise ValueError("prediction must be a JSON object, got %s" % type(data).__name__)
+
+        # Cast and clamp all numeric fields to [0, 1] to guard against LLM returning
+        # out-of-range values (e.g. -0.5, 1.5) or string numbers (e.g. "0.7").
         for field in ("p_yes", "p_no", "confidence", "info_utility"):
-            if field not in data:
-                data[field] = 0.5 if field.startswith("p_") else 0.0
+            raw_val = data.get(field, 0.5 if field.startswith("p_") else 0.0)
+            data[field] = max(0.0, min(1.0, float(raw_val)))
+
         total = data["p_yes"] + data["p_no"]
-        if total > 0 and abs(total - 1.0) > 0.01:
+        if total <= 0:
+            # Both zero after clamping — not a valid prediction
+            return DEFAULT_PREDICTION
+        if abs(total - 1.0) > 0.01:
             data["p_yes"] /= total
             data["p_no"] /= total
+
         return json.dumps(data)
-    except (json.JSONDecodeError, KeyError, TypeError):
-        logger.warning("Failed to parse Groq prediction JSON")
+    except Exception as e:
+        logger.warning("Failed to parse Groq prediction JSON: {}", e)
         return DEFAULT_PREDICTION

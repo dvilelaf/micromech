@@ -8,9 +8,8 @@ Key differentiator from superforcaster: generates multiple search query variants
 and collects more context snippets, leveraging Groq's 128K token context window.
 """
 
-import re
 from datetime import date
-from typing import Any, Optional
+from typing import Any
 
 import openai
 from loguru import logger
@@ -19,20 +18,23 @@ from openai import OpenAI
 from micromech.secrets import secrets
 from micromech.tools._groq_common import (
     DEFAULT_PREDICTION,
+    GROQ_ALLOWED_MODELS,
+    GROQ_HTTP_TIMEOUT,
     GROQ_SYSTEM_PROMPT,
     PREDICTION_PROMPT,
+    MechResponse,
     _extract_json,
+    _sanitize_sources,
     _validate_prediction,
 )
 
 ALLOWED_TOOLS = [
     "prediction-request-reasoning",
-    "prediction-request-reasoning-claude",
+    "prediction-request-reasoning-claude",  # TODO: differentiate when Claude backend available
 ]
 DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
 _MAX_SEARCH_RESULTS = 8
 _MAX_CONTEXT_CHARS = 16000
-_GROQ_TIMEOUT = 60
 
 
 def _generate_queries(question: str) -> list[str]:
@@ -63,7 +65,7 @@ def _search_ddgs_multi(queries: list[str]) -> str:
     seen_prefixes: set[str] = set()
 
     try:
-        ddgs = DDGS()
+        ddgs = DDGS(timeout=10)
         for query in queries:
             try:
                 for r in ddgs.news(query, max_results=_MAX_SEARCH_RESULTS):
@@ -109,14 +111,18 @@ def _search_ddgs_multi(queries: list[str]) -> str:
     return context
 
 
-def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str, Any]], Any]:
+def run(**kwargs: Any) -> MechResponse:
     """Valory-compatible entry point.
 
     kwargs:
         prompt: The prediction market question.
         tool: Tool name (prediction-request-reasoning or prediction-request-reasoning-claude).
-        model: Optional Groq model override.
+        model: Optional Groq model override (must be in GROQ_ALLOWED_MODELS).
         counter_callback: Optional token counter.
+
+    Returns:
+        (result_json, prompt_used, meta, counter_callback).
+        prompt_used is "" (not None) when groq_api_key is unset.
     """
     counter_callback = kwargs.get("counter_callback")
     prompt = kwargs.get("prompt", "")
@@ -124,7 +130,7 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
     groq_key = secrets.groq_api_key
     if groq_key is None:
         logger.warning("groq_api_key not set, returning default prediction")
-        return DEFAULT_PREDICTION, None, None, counter_callback
+        return DEFAULT_PREDICTION, "", None, counter_callback
 
     queries = _generate_queries(prompt)
     sources = _search_ddgs_multi(queries)
@@ -132,16 +138,20 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
     prediction_prompt = PREDICTION_PROMPT.format(
         question=prompt,
         today=today,
-        sources=sources or "No additional information found.",
+        sources=_sanitize_sources(sources) or "No additional information found.",
     )
+
+    model_req = kwargs.get("model", DEFAULT_GROQ_MODEL)
+    model = model_req if model_req in GROQ_ALLOWED_MODELS else DEFAULT_GROQ_MODEL
+    if model != model_req:
+        logger.warning("Requested model '{}' not in allow-list, using default", model_req)
 
     try:
         client = OpenAI(
             base_url="https://api.groq.com/openai/v1",
             api_key=groq_key.get_secret_value(),
-            timeout=_GROQ_TIMEOUT,
+            timeout=GROQ_HTTP_TIMEOUT,
         )
-        model = kwargs.get("model", DEFAULT_GROQ_MODEL)
         response = client.chat.completions.create(
             model=model,
             messages=[
@@ -151,12 +161,15 @@ def run(**kwargs: Any) -> tuple[Optional[str], Optional[str], Optional[dict[str,
             temperature=0,
             max_tokens=3000,
         )
+        if not response.choices:
+            logger.warning("Groq returned empty choices in prediction-request-reasoning")
+            return DEFAULT_PREDICTION, prediction_prompt, None, counter_callback
         raw_text = response.choices[0].message.content or ""
     except openai.RateLimitError:
         logger.warning("Groq rate limit hit in prediction-request-reasoning — free tier may be exhausted")
         return DEFAULT_PREDICTION, prediction_prompt, None, counter_callback
     except Exception as e:
-        logger.error("Groq API call failed in prediction-request-reasoning: {}", e)
+        logger.error("Groq API call failed in prediction-request-reasoning: {} {}", type(e).__name__, e)
         return DEFAULT_PREDICTION, prediction_prompt, None, counter_callback
 
     prediction_json = _extract_json(raw_text)
