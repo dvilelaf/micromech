@@ -31,6 +31,9 @@ class MicromechSecrets(BaseSettings):
     # Health monitor URL (e.g. Uptime Kuma, Healthchecks.io)
     health_url: Optional[str] = None
 
+    # Groq API key (optional, for superforcaster + prediction-request-reasoning tools)
+    groq_api_key: Optional[SecretStr] = None
+
     @field_validator("health_url")
     @classmethod
     def validate_health_url(cls, v: Optional[str]) -> Optional[str]:
