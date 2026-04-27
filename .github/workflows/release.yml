@@ -22,7 +22,7 @@ jobs:
           enable-cache: true
 
       - name: Install just
-        uses: extractions/setup-just@v2
+        run: curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
       - name: Install dependencies
         run: just install
@@ -58,7 +58,7 @@ jobs:
           enable-cache: true
 
       - name: Install just
-        uses: extractions/setup-just@v2
+        run: curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
       - name: Install dependencies
         run: just install

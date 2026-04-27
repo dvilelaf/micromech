@@ -432,7 +432,7 @@ class TestResolveRequest:
 
     @pytest.mark.asyncio
     async def test_resolve_handles_ipfs_error(self):
-        """IPFS fetch failure returns original request."""
+        """IPFS fetch failure marks request with decode_error tool."""
         config = MicromechConfig(ipfs={"enabled": True})
         listener = EventListener(config, CHAIN_CFG)
 
@@ -451,7 +451,8 @@ class TestResolveRequest:
         ):
             resolved = await listener._resolve_request(req)
 
-        assert resolved is req  # Returns original
+        assert resolved.tool == "(decode_error)"
+        assert resolved.request_id == req.request_id
 
     @pytest.mark.asyncio
     async def test_resolve_preserves_sender_and_metadata(self):
