@@ -92,7 +92,7 @@ def _fork_is_stale(port: int, rpc_url: str, max_lag: int = 3) -> bool:
         return False  # can't connect locally — not our problem here
 
     try:
-        live_w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 5}))
+        live_w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 3}))
         live_block = live_w3.eth.block_number
     except Exception:
         return False  # can't reach live RPC — leave the existing fork alone
@@ -107,9 +107,10 @@ def _fork_is_stale(port: int, rpc_url: str, max_lag: int = 3) -> bool:
 
 
 def _wait_ready(port: int, proc: subprocess.Popen, timeout: int = 30) -> None:
-    """Block until Anvil fork responds on the given port."""
+    """Block until Anvil fork responds on the given port (exponential backoff)."""
     deadline = time.monotonic() + timeout
     url = f"http://localhost:{port}"
+    delay = 0.25
     while time.monotonic() < deadline:
         if proc.poll() is not None:
             raise RuntimeError(f"Anvil exited early on port {port} (code {proc.returncode})")
@@ -119,7 +120,8 @@ def _wait_ready(port: int, proc: subprocess.Popen, timeout: int = 30) -> None:
                 return
         except Exception:
             pass
-        time.sleep(0.5)
+        time.sleep(min(delay, deadline - time.monotonic()))
+        delay = min(delay * 2, 4.0)  # cap at 4s between retries
     raise RuntimeError(f"Anvil not ready on port {port} after {timeout}s")
 
 
@@ -129,13 +131,18 @@ def _wait_ready(port: int, proc: subprocess.Popen, timeout: int = 30) -> None:
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _anvil_forks():
+def _anvil_forks(request):
     """Start Anvil forks for every chain that has an RPC in secrets.env.
 
     - Reuses forks that are already running (manual ``just anvil-fork``).
     - Sets ANVIL_<CHAIN> and ANVIL_URL env vars so test fixtures find them.
     - Kills only the processes it started on teardown.
+    - Set env var SKIP_ANVIL=1 to skip Anvil startup (for mocked-only tests).
     """
+    if os.environ.get("SKIP_ANVIL") == "1":
+        yield
+        return
+
     if not os.path.isfile(_ANVIL_BIN):
         pytest.skip(f"Anvil not installed at {_ANVIL_BIN}")
 
