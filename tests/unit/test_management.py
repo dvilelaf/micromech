@@ -548,11 +548,13 @@ class TestFullDeploy:
     @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
     def test_full_deploy_already_complete(self, mock_get_mgr, mock_svc_info):
-        mock_mgr = MagicMock()
-        mock_mgr.stake.return_value = True
-        mock_get_mgr.return_value = mock_mgr
-
         from micromech.core.config import ChainConfig
+
+        mock_status = MagicMock()
+        mock_status.is_staked = True
+        mock_mgr = MagicMock()
+        mock_mgr.get_staking_status.return_value = mock_status
+        mock_get_mgr.return_value = mock_mgr
 
         cfg = MicromechConfig(
             chains={
@@ -569,6 +571,65 @@ class TestFullDeploy:
         result = lc.full_deploy()
 
         assert result["staked"] is True
+        mock_mgr.create.assert_not_called()
+        mock_mgr.get_staking_status.assert_called_once()
+
+    @patch("micromech.core.bridge.get_service_info", return_value={})
+    @patch("micromech.management._get_service_manager")
+    def test_full_deploy_already_complete_not_staked(self, mock_get_mgr, mock_svc_info):
+        """Short-circuit reads real on-chain staking state (not hardcoded True)."""
+        from micromech.core.config import ChainConfig
+
+        mock_status = MagicMock()
+        mock_status.is_staked = False
+        mock_mgr = MagicMock()
+        mock_mgr.get_staking_status.return_value = mock_status
+        mock_get_mgr.return_value = mock_mgr
+
+        cfg = MicromechConfig(
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    mech_address="0x" + "dd" * 20,
+                    marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+                    factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+                    staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+                )
+            }
+        )
+        lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
+        result = lc.full_deploy()
+
+        assert result["staked"] is False
+        mock_mgr.create.assert_not_called()
+
+    @patch("micromech.core.bridge.get_service_info", return_value={})
+    @patch("micromech.management._get_service_manager")
+    def test_full_deploy_already_complete_staking_status_error_defaults_false(
+        self, mock_get_mgr, mock_svc_info
+    ):
+        """If get_staking_status raises, short-circuit defaults staked=False (safe)."""
+        from micromech.core.config import ChainConfig
+
+        mock_mgr = MagicMock()
+        mock_mgr.get_staking_status.side_effect = RuntimeError("rpc down")
+        mock_get_mgr.return_value = mock_mgr
+
+        cfg = MicromechConfig(
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    mech_address="0x" + "dd" * 20,
+                    marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+                    factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+                    staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+                )
+            }
+        )
+        lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
+        result = lc.full_deploy()
+
+        assert result["staked"] is False
         mock_mgr.create.assert_not_called()
 
     @patch("micromech.core.bridge.get_service_info", return_value={})

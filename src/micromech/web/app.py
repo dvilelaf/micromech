@@ -561,11 +561,14 @@ def create_web_app(
             return JSONResponse({"error": "Could not write secrets file"}, 500)
 
     @setup_router.get("/balance")
-    async def setup_balance(chain: str = "gnosis", staking: bool = True) -> dict:
+    async def setup_balance(chain: str = "gnosis", staking: str = "true") -> dict:
         """Check wallet balances for setup funding.
 
-        When staking=false, OLAS is not required and olas_sufficient is always True.
+        staking=false → OLAS not required, olas_sufficient always True.
+        Unknown values (e.g. staking=garbage) fail-safe to staking=true,
+        consistent with the POST /deploy coercion policy.
         """
+        staking_bool = staking.lower() not in ("false", "0", "no", "off")
         if not _valid_chain(chain):
             return {"error": "Unknown chain", "sufficient": False}
         try:
@@ -581,8 +584,8 @@ def create_web_app(
             native, olas = result
             min_native = MIN_NATIVE_WEI.get(chain, 0.1) / 1e18
             native_sufficient = native >= min_native
-            olas_required = MIN_OLAS_WHOLE if staking else 0
-            olas_sufficient = (olas >= MIN_OLAS_WHOLE) if staking else True
+            olas_required = MIN_OLAS_WHOLE if staking_bool else 0
+            olas_sufficient = (olas >= MIN_OLAS_WHOLE) if staking_bool else True
             return {
                 "native_balance": native,
                 "olas_balance": olas,
@@ -591,7 +594,7 @@ def create_web_app(
                 "native_sufficient": native_sufficient,
                 "olas_sufficient": olas_sufficient,
                 "sufficient": native_sufficient and olas_sufficient,
-                "staking": staking,
+                "staking": staking_bool,
             }
         except Exception:
             logger.exception("Balance check failed for {}", chain)
@@ -606,6 +609,10 @@ def create_web_app(
 
         CSRF header enforced by dependency. Only one deploy at a time
         (concurrency guard).
+
+        The staking preference is read from the request body on each call;
+        it is NOT persisted in config. If the user refreshes mid-deploy and
+        retries, the frontend must re-send the original staking choice.
         """
         try:
             body = await request.json() if request.headers.get("content-type") else {}

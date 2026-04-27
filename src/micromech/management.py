@@ -667,8 +667,13 @@ class MechLifecycle:
 
         state = self.chain_config.detect_setup_state()
         if state == "complete":
+            try:
+                mgr = _get_service_manager(self.config, svc_info.get("service_key"))
+                status = mgr.get_staking_status()
+                result["staked"] = bool(status and status.is_staked)
+            except Exception:
+                result["staked"] = False
             _progress(6, "Already fully deployed", True)
-            result["staked"] = True
             return result
 
         # Resume logic: check what iwa already has for this chain

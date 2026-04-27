@@ -205,37 +205,87 @@ class TestSetupBalanceEndpoint:
         assert data["sufficient"] is False
         assert data["native_sufficient"] is False
 
+    @patch("micromech.web.app._needs_setup", return_value=True)
+    def test_balance_garbage_staking_fails_safe_to_true(self, _mock):
+        """Unknown staking values return 200 (not 422) and fail-safe to staking=True."""
+        c = _client()
+        with patch("micromech.core.bridge.check_balances", return_value=(10.0, 11000.0)):
+            resp = c.get("/api/setup/balance?chain=gnosis&staking=garbage")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["staking"] is True  # fail-safe: unknown → staking enabled
+
+    @patch("micromech.web.app._needs_setup", return_value=True)
+    def test_balance_staking_response_field_reflects_resolved_value(self, _mock):
+        """Response 'staking' field echoes resolved bool, not raw string."""
+        c = _client()
+        with patch("micromech.core.bridge.check_balances", return_value=(10.0, 0.0)):
+            resp = c.get("/api/setup/balance?chain=gnosis&staking=false")
+        assert resp.json()["staking"] is False
+
 
 # ---------------------------------------------------------------------------
-# /api/setup/deploy — staking body coercion (unit, no SSE)
+# /api/setup/deploy — staking body coercion (via TestClient + mocked full_deploy)
 # ---------------------------------------------------------------------------
 
 
 class TestSetupDeployStakingCoercion:
-    """Verify that non-bool staking values in the deploy body fail-safe to staking=True.
+    """Verify that the staking field in the deploy body maps to the correct skip_staking arg.
 
-    The coercion logic is: only Python True/False accepted; anything else → True (fail-safe).
+    Tests use TestClient + mocked full_deploy to assert on the actual production code path,
+    not a duplicate of the coercion logic.
     """
 
-    @staticmethod
-    def _coerce(raw) -> bool:
-        """Mirror the coercion logic in setup_deploy."""
-        return raw if isinstance(raw, bool) else True
+    CSRF = {"X-Micromech-Action": "deploy", "Content-Type": "application/json"}
 
-    def test_none_coerces_to_true(self):
-        assert self._coerce(None) is True
+    def _deploy_skip_staking(self, body: dict) -> bool | None:
+        """POST /api/setup/deploy and return the skip_staking value passed to full_deploy."""
+        import json as _json
 
-    def test_string_false_coerces_to_true(self):
-        assert self._coerce("false") is True
+        captured: dict = {}
 
-    def test_zero_coerces_to_true(self):
-        assert self._coerce(0) is True
+        def fake_full_deploy(on_progress=None, skip_staking=False, **kwargs):
+            captured["skip_staking"] = skip_staking
+            return {"service_id": 1}
 
-    def test_bool_false_stays_false(self):
-        assert self._coerce(False) is False
+        mock_lc = MagicMock()
+        mock_lc.full_deploy.side_effect = fake_full_deploy
 
-    def test_bool_true_stays_true(self):
-        assert self._coerce(True) is True
+        mock_cfg = MagicMock()
+        mock_cfg.chains = {}
+        mock_fresh = MagicMock()
+        mock_fresh.chains = {"gnosis": MagicMock()}
+
+        c = _client()
+        with (
+            patch("micromech.core.config.MicromechConfig.load", side_effect=[mock_cfg, mock_fresh]),
+            patch("micromech.management.MechLifecycle", return_value=mock_lc),
+            patch("micromech.web.app._clear_setup_cache"),
+        ):
+            c.post(
+                "/api/setup/deploy",
+                content=_json.dumps({**{"chain": "gnosis"}, **body}),
+                headers=self.CSRF,
+            )
+        return captured.get("skip_staking")
+
+    def test_bool_false_skips_staking(self):
+        assert self._deploy_skip_staking({"staking": False}) is True
+
+    def test_bool_true_enables_staking(self):
+        assert self._deploy_skip_staking({"staking": True}) is False
+
+    def test_none_fails_safe_to_staking(self):
+        assert self._deploy_skip_staking({"staking": None}) is False
+
+    def test_string_false_fails_safe_to_staking(self):
+        assert self._deploy_skip_staking({"staking": "false"}) is False
+
+    def test_zero_fails_safe_to_staking(self):
+        assert self._deploy_skip_staking({"staking": 0}) is False
+
+    def test_missing_staking_key_defaults_to_staking(self):
+        assert self._deploy_skip_staking({}) is False
 
 
 # ---------------------------------------------------------------------------
