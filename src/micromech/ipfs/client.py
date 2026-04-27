@@ -113,14 +113,129 @@ async def fetch_from_ipfs(
             return data
 
 
+def _parse_varint(data: bytes, pos: int) -> tuple[int, int]:
+    result, shift = 0, 0
+    while pos < len(data):
+        b = data[pos]
+        pos += 1
+        result |= (b & 0x7F) << shift
+        if not (b & 0x80):
+            break
+        shift += 7
+    return result, pos
+
+
+def _extract_dagpb_link_hash(data: bytes) -> Optional[bytes]:
+    """Extract the first link's multihash from a DAG-PB encoded IPFS node.
+
+    DAG-PB (protobuf) structure:
+      PBNode { repeated PBLink Links = 2; optional bytes Data = 1; }
+      PBLink { optional bytes Hash = 1; optional string Name = 2; ... }
+    Returns the raw multihash bytes (0x12 0x20 + sha256) or None.
+    """
+    pos = 0
+    try:
+        while pos < len(data):
+            tag, pos = _parse_varint(data, pos)
+            field, wire = tag >> 3, tag & 0x7
+            if wire == 2:
+                length, pos = _parse_varint(data, pos)
+                val = data[pos:pos + length]
+                pos += length
+                if field == 2:  # Links
+                    ipos = 0
+                    while ipos < len(val):
+                        itag, ipos = _parse_varint(val, ipos)
+                        ifield, iwire = itag >> 3, itag & 0x7
+                        if iwire == 2:
+                            ilen, ipos = _parse_varint(val, ipos)
+                            ival = val[ipos:ipos + ilen]
+                            ipos += ilen
+                            if ifield == 1:  # Hash
+                                return ival
+                        elif iwire == 0:
+                            _, ipos = _parse_varint(val, ipos)
+                        else:
+                            break
+            elif wire == 0:
+                _, pos = _parse_varint(data, pos)
+    except Exception:
+        pass
+    return None
+
+
+def _extract_unixfs_data(data: bytes) -> Optional[bytes]:
+    """Extract raw file content from a UnixFS-wrapped PBNode.
+
+    UnixFS structure (inside PBNode.Data):
+      message Data { DataType Type = 1; optional bytes Data = 2; ... }
+    Returns the file content bytes, or None.
+    """
+    pos = 0
+    try:
+        while pos < len(data):
+            tag, pos = _parse_varint(data, pos)
+            field, wire = tag >> 3, tag & 0x7
+            if wire == 2:
+                length, pos = _parse_varint(data, pos)
+                val = data[pos:pos + length]
+                pos += length
+                if field == 1:  # PBNode.Data = UnixFS message
+                    ipos = 0
+                    while ipos < len(val):
+                        itag, ipos = _parse_varint(val, ipos)
+                        ifield, iwire = itag >> 3, itag & 0x7
+                        if iwire == 2:
+                            ilen, ipos = _parse_varint(val, ipos)
+                            ival = val[ipos:ipos + ilen]
+                            ipos += ilen
+                            if ifield == 2:  # UnixFS.Data = file content
+                                return ival
+                        elif iwire == 0:
+                            _, ipos = _parse_varint(val, ipos)
+                        else:
+                            break
+            elif wire == 0:
+                _, pos = _parse_varint(data, pos)
+    except Exception:
+        pass
+    return None
+
+
 async def fetch_json_from_ipfs(
     cid: str,
     gateway: str = _DEFAULT_GATEWAY,
     timeout: int = 30,
 ) -> dict:
-    """Fetch and parse JSON from IPFS."""
+    """Fetch and parse JSON from IPFS.
+
+    Handles multiple encodings:
+    - Raw JSON (our format and most mechs)
+    - DAG-PB + UnixFS (Valory/open-autonomy agents format)
+    """
     data = await fetch_from_ipfs(cid, gateway, timeout)
-    return json.loads(data)
+
+    # 1. Try direct JSON
+    try:
+        return json.loads(data)
+    except (ValueError, UnicodeDecodeError):
+        pass
+
+    # 2. Try DAG-PB: parse outer node → follow link → parse inner UnixFS → JSON
+    link_hash = _extract_dagpb_link_hash(data)
+    if link_hash is not None and len(link_hash) == 34 and link_hash[:2] == _SHA256_MULTIHASH_PREFIX:
+        try:
+            inner_cid = multihash_to_cid(link_hash)
+            inner_data = await fetch_from_ipfs(inner_cid, gateway, timeout)
+            content = _extract_unixfs_data(inner_data)
+            if content is not None:
+                return json.loads(content)
+        except Exception:
+            pass
+
+    raise ValueError(
+        f"Unrecognised IPFS format (tried JSON, DAG-PB+UnixFS); first bytes: {data[:8].hex()}"
+    )
 
 
 async def push_to_ipfs(

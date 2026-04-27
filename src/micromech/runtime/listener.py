@@ -138,15 +138,24 @@ class EventListener:
                     from_block,
                     to_block,
                 )
+                mech_addr = (self.chain_config.mech_address or "").lower()
                 for req in resolved:
-                    logger.opt(colors=True).info(
-                        "  Event {} <cyan>tool={}</cyan> prompt={}",
-                        req.request_id[:16] + "...",
-                        req.tool or "(ipfs)",
-                        (req.prompt[:60] + "...")
-                        if len(req.prompt) > 60
-                        else req.prompt or "(pending)",
-                    )
+                    is_ours = req.priority_mech.lower() == mech_addr
+                    target = "<green>→ us</green>" if is_ours else f"<yellow>→ {req.priority_mech[:10]}...</yellow>"
+                    if req.tool:
+                        logger.opt(colors=True).info(
+                            "  Event {} <cyan>tool={}</cyan> {} prompt={}",
+                            req.request_id[:16] + "...",
+                            req.tool,
+                            target,
+                            (req.prompt[:60] + "...") if len(req.prompt) > 60 else req.prompt or "(empty)",
+                        )
+                    else:
+                        logger.opt(colors=True).warning(
+                            "  Event {} <red>DECODE_ERROR</red> {} — IPFS content unreadable",
+                            req.request_id[:16] + "...",
+                            target,
+                        )
             return resolved
 
         except Exception as e:
@@ -178,6 +187,7 @@ class EventListener:
                 })
             except Exception as e:
                 logger.warning("Failed to resolve IPFS for {}: {}", req.request_id, e)
+                return req.model_copy(update={"tool": "(decode_error)"})
 
         return req
 

@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from micromech.ipfs.client import (
+    _extract_dagpb_link_hash,
+    _extract_unixfs_data,
+    _parse_varint,
     cid_hex_to_multihash_bytes,
     compute_cid,
     compute_cid_hex,
@@ -262,6 +265,231 @@ class TestIsIpfsMultihashEdgeCases:
     def test_33_bytes_not_multihash(self):
         data = bytes([0x12, 0x20]) + b"\x00" * 31
         assert is_ipfs_multihash(data) is False
+
+
+def _encode_varint(n: int) -> bytes:
+    """Encode a non-negative integer as a protobuf varint."""
+    parts = []
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            parts.append(b | 0x80)
+        else:
+            parts.append(b)
+            break
+    return bytes(parts)
+
+
+def _make_dagpb_node(link_hash: bytes, link_name: bytes = b"metadata.json") -> bytes:
+    """Build a minimal DAG-PB PBNode with one link."""
+    # PBLink: field 1 (Hash), field 2 (Name)
+    link = b"\x0a" + _encode_varint(len(link_hash)) + link_hash
+    link += b"\x12" + _encode_varint(len(link_name)) + link_name
+    # PBNode: field 2 (Links)
+    return b"\x12" + _encode_varint(len(link)) + link
+
+
+def _make_unixfs_file(content: bytes) -> bytes:
+    """Build a minimal UnixFS file PBNode wrapping content."""
+    # UnixFS Data message: field 1 (Type=2), field 2 (Data)
+    unixfs = b"\x08\x02"
+    unixfs += b"\x12" + _encode_varint(len(content)) + content
+    # PBNode: field 1 (Data)
+    return b"\x0a" + _encode_varint(len(unixfs)) + unixfs
+
+
+class TestParseVarint:
+    def test_single_byte(self):
+        assert _parse_varint(b"\x00", 0) == (0, 1)
+        assert _parse_varint(b"\x01", 0) == (1, 1)
+        assert _parse_varint(b"\x7f", 0) == (127, 1)
+
+    def test_multi_byte(self):
+        # 300 = 0x12C → encoded as 0xAC 0x02
+        data = bytes([0xAC, 0x02])
+        val, pos = _parse_varint(data, 0)
+        assert val == 300
+        assert pos == 2
+
+    def test_offset(self):
+        data = b"\xff\x7f\x00"
+        val, pos = _parse_varint(data, 0)
+        assert val == 16383
+        assert pos == 2
+
+    def test_roundtrip(self):
+        for n in [0, 1, 127, 128, 300, 16383, 16384, 2**21 - 1]:
+            encoded = _encode_varint(n)
+            decoded, _ = _parse_varint(encoded, 0)
+            assert decoded == n
+
+
+class TestExtractDagpbLinkHash:
+    def test_extracts_link_hash(self):
+        sha256 = b"\x42" * 32
+        multihash = bytes([0x12, 0x20]) + sha256
+        node = _make_dagpb_node(multihash)
+        result = _extract_dagpb_link_hash(node)
+        assert result == multihash
+
+    def test_returns_none_for_raw_json(self):
+        data = b'{"tool": "echo", "prompt": "hello"}'
+        assert _extract_dagpb_link_hash(data) is None
+
+    def test_returns_none_for_empty(self):
+        assert _extract_dagpb_link_hash(b"") is None
+
+    def test_returns_none_for_garbage(self):
+        assert _extract_dagpb_link_hash(b"\xff\xff\xff") is None
+
+    def test_real_dagpb_bytes(self):
+        # Actual bytes captured from on-chain Valory mech event
+        raw = bytes.fromhex(
+            "12360a221220b882afb862f1b7f7e6a8a48aaa4f4a1534f49c1e47130533238e"
+            "fe7fa9ea0007120d6d657461646174612e6a736f6e18ba060a020801"
+        )
+        result = _extract_dagpb_link_hash(raw)
+        assert result is not None
+        assert result[:2] == bytes([0x12, 0x20])
+        assert len(result) == 34
+
+
+class TestExtractUnixfsData:
+    def test_extracts_file_content(self):
+        content = b'{"tool": "prediction-online", "prompt": "Will X happen?"}'
+        node = _make_unixfs_file(content)
+        result = _extract_unixfs_data(node)
+        assert result == content
+
+    def test_returns_none_for_raw_json(self):
+        data = b'{"prompt": "test"}'
+        assert _extract_unixfs_data(data) is None
+
+    def test_returns_none_for_empty(self):
+        assert _extract_unixfs_data(b"") is None
+
+    def test_returns_none_for_garbage(self):
+        assert _extract_unixfs_data(b"\xff\xff") is None
+
+    def test_large_content(self):
+        content = b'{"tool":"echo","prompt":"' + b"x" * 1000 + b'"}'
+        node = _make_unixfs_file(content)
+        assert _extract_unixfs_data(node) == content
+
+
+class TestFetchJsonFromIpfsDagPb:
+    @pytest.mark.asyncio
+    async def test_direct_json(self):
+        """Directly encoded JSON is returned without DAG-PB fallback."""
+        payload = {"tool": "echo", "prompt": "hello"}
+        with patch("micromech.ipfs.client.fetch_from_ipfs", new_callable=AsyncMock) as m:
+            m.return_value = json.dumps(payload).encode()
+            result = await fetch_json_from_ipfs("bafkrei_test")
+        assert result == payload
+        assert m.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_dagpb_unixfs_fallback(self):
+        """DAG-PB outer + UnixFS inner is resolved via 2-fetch chain."""
+        payload = {"tool": "prediction-online", "prompt": "Will X?"}
+        inner_sha256 = b"\xab" * 32
+        inner_multihash = bytes([0x12, 0x20]) + inner_sha256
+        outer_node = _make_dagpb_node(inner_multihash)
+        inner_node = _make_unixfs_file(json.dumps(payload).encode())
+
+        inner_cid = multihash_to_cid(inner_multihash)
+        calls = {"outer": outer_node, inner_cid: inner_node}
+
+        async def fake_fetch(cid, gateway=None, timeout=None):
+            if cid == "bafkrei_outer":
+                return outer_node
+            return calls.get(cid, b"")
+
+        with patch("micromech.ipfs.client.fetch_from_ipfs", side_effect=fake_fetch):
+            result = await fetch_json_from_ipfs("bafkrei_outer")
+
+        assert result == payload
+
+    @pytest.mark.asyncio
+    async def test_raises_on_unrecognised_format(self):
+        """Raises ValueError when neither JSON nor DAG-PB decoding works."""
+        with patch("micromech.ipfs.client.fetch_from_ipfs", new_callable=AsyncMock) as m:
+            m.return_value = b"\x00\x01\x02\x03\x04\x05\x06\x07"
+            with pytest.raises(ValueError, match="Unrecognised IPFS format"):
+                await fetch_json_from_ipfs("bafkrei_garbage")
+
+
+class TestNormalizeToMultihash:
+    def test_34_bytes_with_prefix(self):
+        from micromech.ipfs.client import normalize_to_multihash
+        mh = bytes([0x12, 0x20]) + b"\x00" * 32
+        assert normalize_to_multihash(mh) == mh
+
+    def test_32_bytes_prepends_prefix(self):
+        from micromech.ipfs.client import normalize_to_multihash
+        digest = b"\xab" * 32
+        result = normalize_to_multihash(digest)
+        assert result == bytes([0x12, 0x20]) + digest
+
+    def test_other_length_returns_none(self):
+        from micromech.ipfs.client import normalize_to_multihash
+        assert normalize_to_multihash(b"\x12\x20" + b"\x00" * 10) is None
+        assert normalize_to_multihash(b"") is None
+
+
+class TestExtractUnixfsDataEdgeCases:
+    def test_unknown_wire_type_in_inner_loop(self):
+        """Wire type other than 0 or 2 inside UnixFS message stops inner parse."""
+        # Build a PBNode.Data field with a UnixFS message that has an unknown wire type
+        bad_unixfs = b"\x08\x02" + b"\x1f"  # 0x1f = field 3, wire type 7 (unknown)
+        node = b"\x0a" + _encode_varint(len(bad_unixfs)) + bad_unixfs
+        # Should not crash, just return None
+        assert _extract_unixfs_data(node) is None
+
+    def test_wire_type_0_in_outer(self):
+        """Wire type 0 in outer PBNode is skipped gracefully."""
+        # varint field at field 3, wire 0, value 5, followed by valid content
+        content = b"hello"
+        inner_node = _make_unixfs_file(content)
+        # Prepend a wire-type-0 field
+        extra = b"\x18\x05"  # field 3, wire 0, value 5
+        data = extra + inner_node
+        assert _extract_unixfs_data(data) == content
+
+
+class TestFetchJsonFromIpfsEdgeCases:
+    @pytest.mark.asyncio
+    async def test_dagpb_inner_fetch_fails(self):
+        """If inner CID fetch fails, raises ValueError."""
+        inner_sha256 = b"\xcd" * 32
+        inner_multihash = bytes([0x12, 0x20]) + inner_sha256
+        outer_node = _make_dagpb_node(inner_multihash)
+
+        async def fake_fetch(cid, gateway=None, timeout=None):
+            if cid == "bafkrei_outer":
+                return outer_node
+            raise RuntimeError("network error")
+
+        with patch("micromech.ipfs.client.fetch_from_ipfs", side_effect=fake_fetch):
+            with pytest.raises(ValueError, match="Unrecognised IPFS format"):
+                await fetch_json_from_ipfs("bafkrei_outer")
+
+    @pytest.mark.asyncio
+    async def test_dagpb_inner_not_unixfs(self):
+        """If inner content is not UnixFS, raises ValueError."""
+        inner_sha256 = b"\xef" * 32
+        inner_multihash = bytes([0x12, 0x20]) + inner_sha256
+        outer_node = _make_dagpb_node(inner_multihash)
+
+        async def fake_fetch(cid, gateway=None, timeout=None):
+            if cid == "bafkrei_outer":
+                return outer_node
+            return b"\x00\x01\x02"  # garbage, not UnixFS
+
+        with patch("micromech.ipfs.client.fetch_from_ipfs", side_effect=fake_fetch):
+            with pytest.raises(ValueError, match="Unrecognised IPFS format"):
+                await fetch_json_from_ipfs("bafkrei_outer")
 
 
 class TestCidCompatibilityWithIwa:
