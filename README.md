@@ -113,7 +113,7 @@ After the quickstart, your `micromech/` folder contains:
 | `data/config.yaml` | Mech settings: chains, mech addresses, staking contracts | You can edit it, but the web dashboard is easier. |
 | `data/wallet.json` | Your encrypted wallet (private key + recovery phrase) | **Never share. Back this up.** |
 | `data/micromech.db` | SQLite database of all requests — pending, delivered, failed | Grows over time. Safe to delete if disk space is tight (history only, no funds). |
-| `data/backups/` | Pre-update snapshots of `wallet.json` and `config.yaml` | Created automatically before each update. Safe to delete old ones manually. |
+| `data/backup/` | Pre-update snapshots of `wallet.json` and `config.yaml` | Created automatically before each update. Safe to delete old ones manually. |
 | `data/.hf_cache/` | Cached AI model files (downloaded on first use) | Large (~300 MB). Safe to delete — re-downloads automatically. |
 | `updater.sh` | Auto-update script (called by the container on startup) | Don't touch. |
 | `Justfile` | Command shortcuts (requires `just`) | Optional convenience, safe to ignore. |
