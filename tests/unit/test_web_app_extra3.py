@@ -427,7 +427,7 @@ class TestSetupDeployStream:
 
         deploy_result = {"service_id": 42, "service_key": "0xabc"}
 
-        def fake_full_deploy(on_progress=None):
+        def fake_full_deploy(on_progress=None, skip_staking=False, **kwargs):
             # Call on_progress to cover lines 649-656
             if on_progress:
                 on_progress(1, 3, "step 1 done", success=True)

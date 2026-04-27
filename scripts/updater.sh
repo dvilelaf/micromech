@@ -121,7 +121,7 @@ while true; do
                     # Pre-update snapshot of config + wallet (cp -p preserves mode/owner).
                     # SECURITY: never log size/hash/content of wallet.json — side channel.
                     _pre_ts=$(date -u '+%Y%m%dT%H%M%SZ')
-                    _pre_dir="data/backups/pre-update"
+                    _pre_dir="data/backup/pre-update"
                     mkdir -p "$_pre_dir" 2>/dev/null || true
                     # H2 fix: tighten perms even if dir was created with looser umask
                     chmod 700 "$_pre_dir" 2>/dev/null || true
@@ -168,12 +168,12 @@ while true; do
                         docker compose stop micromech 2>/dev/null || true
                         # C1 fix: sort by filename (ISO timestamp embedded), NOT mtime.
                         # `cp -p` preserves source mtime so mtime order may diverge from chronological.
-                        snap_cfg=$(ls -1 data/backups/pre-update/config.yaml.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.bak 2>/dev/null | sort -r | head -1 || true)
+                        snap_cfg=$(ls -1 data/backup/pre-update/config.yaml.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.bak 2>/dev/null | sort -r | head -1 || true)
                         if [ -n "$snap_cfg" ] && [ -f "$snap_cfg" ]; then
                             cp -p "$snap_cfg" data/config.yaml.tmp && mv data/config.yaml.tmp data/config.yaml \
                                 && log "Restored config.yaml from snapshot"
                         fi
-                        snap_wal=$(ls -1 data/backups/pre-update/wallet.json.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.bak 2>/dev/null | sort -r | head -1 || true)
+                        snap_wal=$(ls -1 data/backup/pre-update/wallet.json.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.bak 2>/dev/null | sort -r | head -1 || true)
                         if [ -n "$snap_wal" ] && [ -f "$snap_wal" ]; then
                             cp -p "$snap_wal" data/wallet.json.tmp && mv data/wallet.json.tmp data/wallet.json \
                                 && log "Restored wallet.json from snapshot"

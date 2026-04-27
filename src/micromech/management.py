@@ -625,6 +625,7 @@ class MechLifecycle:
         agent_id: int = 40,
         bond_olas: int = 5000,
         on_progress: Optional[Callable[[int | str, int, str, bool], None]] = None,
+        skip_staking: bool = False,
     ) -> dict[str, Any]:
         """Run the complete lifecycle, resuming from where a previous attempt left off.
 
@@ -633,6 +634,8 @@ class MechLifecycle:
         Args:
             on_progress: Optional callback(step: int | str, total: int, message: str, success: bool).
                          step is an int for normal steps, "rollback" during automatic rollback.
+            skip_staking: When True, step 6 (stake) is skipped. The caller is responsible
+                          for passing this flag consistently across retries.
 
         Returns dict with keys: service_id, service_key, multisig_address, mech_address, staked.
         Raises RuntimeError on any step failure.
@@ -742,13 +745,17 @@ class MechLifecycle:
         self.chain_config.mech_address = result.get("mech_address")
 
         # Step 6: Stake
-        _progress(6, "Staking service...")
-        staked = self.stake(service_key)
-        result["staked"] = staked
-        if staked:
-            _progress(6, "Service staked successfully")
+        if skip_staking:
+            _progress(6, "Staking skipped (opted out)")
+            result["staked"] = False
         else:
-            _progress(6, "Staking failed (non-fatal)", False)
+            _progress(6, "Staking service...")
+            staked = self.stake(service_key)
+            result["staked"] = staked
+            if staked:
+                _progress(6, "Service staked successfully")
+            else:
+                _progress(6, "Staking failed (non-fatal)", False)
 
         # Step 7: Publish tool metadata
         _progress(7, "Publishing tool metadata...")

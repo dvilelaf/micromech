@@ -115,4 +115,6 @@ MIN_NATIVE_WEI: dict[str, int] = {
     "arbitrum": 1_000_000_000_000_000,  # 0.001 ETH
     "celo": 1_000_000_000_000_000_000,  # 1 CELO
 }
-MIN_OLAS_WHOLE: int = 5_000  # OLAS for staking bond (Supply Alpha minStakingDeposit)
+BOND_OLAS_WHOLE: int = 5_000   # OLAS bond deposited at service registration
+STAKE_DEPOSIT_OLAS_WHOLE: int = 5_000  # OLAS locked in staking contract (Supply Alpha minStakingDeposit)
+MIN_OLAS_WHOLE: int = BOND_OLAS_WHOLE + STAKE_DEPOSIT_OLAS_WHOLE  # total required when staking

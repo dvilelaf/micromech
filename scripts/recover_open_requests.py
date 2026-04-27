@@ -59,6 +59,11 @@ GNOSIS_BLOCK_TIME = 5.2
 BLOCKS_24H = int(24 * 3600 / GNOSIS_BLOCK_TIME)
 BLOCKS_3D = int(3 * 24 * 3600 / GNOSIS_BLOCK_TIME)
 
+# Marketplace contract deployment block (2025-02-20). Used as the default scan
+# start so --mode discover covers the full contract history without needing
+# --lookback-days. Verified via binary search on Gnosis mainnet.
+MARKETPLACE_DEPLOY_BLOCK = 38_661_963
+
 DELAY_LOGS = 2.0  # seconds between get_logs calls
 DELAY_STATUS = 1.0  # seconds between getRequestStatus calls
 DELAY_TX = 10.0  # seconds between Safe TX submissions
@@ -66,7 +71,6 @@ BATCH_SIZE = 20  # requestIds per deliverToMarketplace call
 LOG_WINDOW = 1000  # blocks per get_logs window (Gnosis public RPCs accept 1000-2000)
 
 DEFAULT_CHECKPOINT = Path.home() / ".local" / "share" / "micromech" / "recover.json"
-DEFAULT_LOOKBACK_DAYS = 30
 
 _HEX32_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 _PRIVKEY_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
@@ -652,9 +656,12 @@ def cmd_discover(args: argparse.Namespace) -> None:
     current = w3.eth.block_number
     scan_to = current - BLOCKS_24H
 
-    # BLK-3: sticky scan_from_block — reuse stored value on resume to avoid gaps
-    lookback = int(args.lookback_days * 24 * 3600 / GNOSIS_BLOCK_TIME)
-    computed_scan_from = current - lookback
+    # BLK-3: sticky scan_from_block — reuse stored value on resume to avoid gaps.
+    # Default: scan from contract deployment (full history). Override with --lookback-days.
+    if args.lookback_days is not None:
+        computed_scan_from = current - int(args.lookback_days * 24 * 3600 / GNOSIS_BLOCK_TIME)
+    else:
+        computed_scan_from = MARKETPLACE_DEPLOY_BLOCK
     stored_scan_from = cp.get("scan_from_block")
     if stored_scan_from is not None:
         scan_from = stored_scan_from
@@ -662,7 +669,7 @@ def cmd_discover(args: argparse.Namespace) -> None:
         diff_days = abs(scan_from - computed_scan_from) * GNOSIS_BLOCK_TIME / 86400
         if diff_days >= 1:
             print(
-                f"  [warn] --lookback-days would scan from {computed_scan_from} "
+                f"  [warn] computed scan_from would be {computed_scan_from} "
                 f"but stored is {scan_from} ({diff_days:.1f} day diff) — stored takes precedence"
             )
     else:
@@ -686,7 +693,8 @@ def cmd_discover(args: argparse.Namespace) -> None:
             return
         print(f"Resuming from block {resume_from}")
 
-    print(f"\nDiscovery: blocks {scan_from}–{scan_to} ({args.lookback_days} days minus 24h)")
+    origin = f"block {scan_from} (contract deployment)" if args.lookback_days is None else f"{args.lookback_days} days"
+    print(f"\nDiscovery: blocks {scan_from}–{scan_to} (from {origin}, excluding last 24h)")
     open_requests = discover_open_requests(
         rpc_list,
         scan_from=scan_from,
@@ -763,8 +771,8 @@ def main() -> None:
     parser.add_argument(
         "--lookback-days",
         type=float,
-        default=DEFAULT_LOOKBACK_DAYS,
-        help=f"Days to look back (default: {DEFAULT_LOOKBACK_DAYS})",
+        default=None,
+        help="Days to look back (default: from contract deployment block 38661963 / 2025-02-20)",
     )
     args = parser.parse_args()
 

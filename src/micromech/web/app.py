@@ -561,8 +561,11 @@ def create_web_app(
             return JSONResponse({"error": "Could not write secrets file"}, 500)
 
     @setup_router.get("/balance")
-    async def setup_balance(chain: str = "gnosis") -> dict:
-        """Check wallet balances for setup funding."""
+    async def setup_balance(chain: str = "gnosis", staking: bool = True) -> dict:
+        """Check wallet balances for setup funding.
+
+        When staking=false, OLAS is not required and olas_sufficient is always True.
+        """
         if not _valid_chain(chain):
             return {"error": "Unknown chain", "sufficient": False}
         try:
@@ -577,14 +580,18 @@ def create_web_app(
                 }
             native, olas = result
             min_native = MIN_NATIVE_WEI.get(chain, 0.1) / 1e18
+            native_sufficient = native >= min_native
+            olas_required = MIN_OLAS_WHOLE if staking else 0
+            olas_sufficient = (olas >= MIN_OLAS_WHOLE) if staking else True
             return {
                 "native_balance": native,
                 "olas_balance": olas,
                 "native_required": min_native,
-                "olas_required": MIN_OLAS_WHOLE,
-                "native_sufficient": native >= min_native,
-                "olas_sufficient": olas >= MIN_OLAS_WHOLE,
-                "sufficient": native >= min_native and olas >= MIN_OLAS_WHOLE,
+                "olas_required": olas_required,
+                "native_sufficient": native_sufficient,
+                "olas_sufficient": olas_sufficient,
+                "sufficient": native_sufficient and olas_sufficient,
+                "staking": staking,
             }
         except Exception:
             logger.exception("Balance check failed for {}", chain)
@@ -600,8 +607,14 @@ def create_web_app(
         CSRF header enforced by dependency. Only one deploy at a time
         (concurrency guard).
         """
-        body = await request.json() if request.headers.get("content-type") else {}
+        try:
+            body = await request.json() if request.headers.get("content-type") else {}
+        except Exception:
+            body = {}
         chain_name = body.get("chain", "gnosis")
+        # Explicit bool coercion: only Python True/False accepted; anything else defaults to True (fail-safe)
+        raw_staking = body.get("staking")
+        staking_enabled = raw_staking if isinstance(raw_staking, bool) else True
 
         if not _valid_chain(chain_name):
             return JSONResponse({"error": f"Unknown chain: {chain_name}"}, 400)
@@ -643,7 +656,7 @@ def create_web_app(
                 )
 
             lc = MechLifecycle(cfg, chain_name=chain_name)
-            result = lc.full_deploy(on_progress=on_progress)
+            result = lc.full_deploy(on_progress=on_progress, skip_staking=not staking_enabled)
 
             # Save results with lock (re-read to merge with other deploys)
             with _config_lock:

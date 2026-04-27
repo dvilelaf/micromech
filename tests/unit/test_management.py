@@ -526,6 +526,27 @@ class TestFullDeploy:
 
     @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
+    def test_full_deploy_skip_staking(self, mock_get_mgr, mock_svc_info):
+        mock_mgr = MagicMock()
+        mock_mgr.create.return_value = 42
+        mock_mgr.spin_up.return_value = True
+        mock_mgr.service.multisig_address = "0x" + "cc" * 20
+        mock_get_mgr.return_value = mock_mgr
+
+        cfg = make_test_config()
+        lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
+
+        progress = []
+        with patch.object(lc, "create_mech", return_value="0x" + "dd" * 20):
+            result = lc.full_deploy(skip_staking=True, on_progress=lambda s, t, m, ok=True: progress.append((s, m)))
+
+        assert result["staked"] is False
+        mock_mgr.stake.assert_not_called()
+        step6_msgs = [m for s, m in progress if s == 6]
+        assert any("skipped" in m.lower() for m in step6_msgs)
+
+    @patch("micromech.core.bridge.get_service_info", return_value={})
+    @patch("micromech.management._get_service_manager")
     def test_full_deploy_already_complete(self, mock_get_mgr, mock_svc_info):
         mock_mgr = MagicMock()
         mock_mgr.stake.return_value = True

@@ -87,7 +87,7 @@ def _write_runner(tmp_path: Path, rollback_block: str, vars_setup: str) -> Path:
 def sandbox(tmp_path):
     (tmp_path / "bin").mkdir()
     (tmp_path / "data").mkdir()
-    (tmp_path / "data" / "backups" / "pre-update").mkdir(parents=True)
+    (tmp_path / "data" / "backup" / "pre-update").mkdir(parents=True)
     return tmp_path
 
 
@@ -99,7 +99,7 @@ class TestRollbackBehavior:
         runner = _write_runner(
             sandbox, rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backups/pre-update"'
+            '_pre_dir="data/backup/pre-update"'
         )
         result = subprocess.run([str(runner)], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
@@ -111,7 +111,7 @@ class TestRollbackBehavior:
         runner = _write_runner(
             sandbox, rollback,
             'OLD=""; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backups/pre-update"'
+            '_pre_dir="data/backup/pre-update"'
         )
         result = subprocess.run([str(runner)], capture_output=True, text=True)
         assert "MARKER:error:rolled_back_to_vunknown" in result.stdout
@@ -122,7 +122,7 @@ class TestRollbackBehavior:
         runner = _write_runner(
             sandbox, rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backups/pre-update"'
+            '_pre_dir="data/backup/pre-update"'
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         log = (sandbox / "docker-calls.log").read_text()
@@ -138,7 +138,7 @@ class TestRollbackBehavior:
         runner = _write_runner(
             sandbox, rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backups/pre-update"'
+            '_pre_dir="data/backup/pre-update"'
         )
         result = subprocess.run([str(runner)], capture_output=True, text=True)
         log = (sandbox / "docker-calls.log").read_text()
@@ -147,7 +147,7 @@ class TestRollbackBehavior:
 
     def test_restores_config_from_snapshot(self, sandbox):
         ts = "20260424T120000Z"
-        snap = sandbox / "data" / "backups" / "pre-update" / f"config.yaml.{ts}.bak"
+        snap = sandbox / "data" / "backup" / "pre-update" / f"config.yaml.{ts}.bak"
         snap.write_text("snapshot-cfg\n")
         (sandbox / "data" / "config.yaml").write_text("broken-new\n")
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
@@ -155,14 +155,14 @@ class TestRollbackBehavior:
         runner = _write_runner(
             sandbox, rollback,
             f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; '
-            f'_pre_dir="data/backups/pre-update"'
+            f'_pre_dir="data/backup/pre-update"'
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert (sandbox / "data" / "config.yaml").read_text() == "snapshot-cfg\n"
 
     def test_restores_wallet_from_snapshot(self, sandbox):
         ts = "20260424T120000Z"
-        snap = sandbox / "data" / "backups" / "pre-update" / f"wallet.json.{ts}.bak"
+        snap = sandbox / "data" / "backup" / "pre-update" / f"wallet.json.{ts}.bak"
         snap.write_text('{"snapshot": true}\n')
         (sandbox / "data" / "wallet.json").write_text('{"broken": true}\n')
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
@@ -170,7 +170,7 @@ class TestRollbackBehavior:
         runner = _write_runner(
             sandbox, rollback,
             f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; '
-            f'_pre_dir="data/backups/pre-update"'
+            f'_pre_dir="data/backup/pre-update"'
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert (sandbox / "data" / "wallet.json").read_text() == '{"snapshot": true}\n'
@@ -178,14 +178,14 @@ class TestRollbackBehavior:
     def test_no_temp_files_left(self, sandbox):
         ts = "20260424T120000Z"
         for name in ("config.yaml", "wallet.json"):
-            (sandbox / "data" / "backups" / "pre-update" / f"{name}.{ts}.bak").write_text("x")
+            (sandbox / "data" / "backup" / "pre-update" / f"{name}.{ts}.bak").write_text("x")
             (sandbox / "data" / name).write_text("orig")
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
             sandbox, rollback,
             f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; '
-            f'_pre_dir="data/backups/pre-update"'
+            f'_pre_dir="data/backup/pre-update"'
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert list((sandbox / "data").glob("*.tmp")) == []
@@ -198,14 +198,14 @@ class TestRollbackBehavior:
         runner = _write_runner(
             sandbox, rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backups/pre-update"'
+            '_pre_dir="data/backup/pre-update"'
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert (sandbox / "data" / "config.yaml").read_text() == "new-broken\n"
         assert (sandbox / "data" / "wallet.json").read_text() == "new-broken\n"
 
     def test_glob_strict_rejects_planted_filename(self, sandbox):
-        (sandbox / "data" / "backups" / "pre-update" / "config.yaml.malicious.bak").write_text(
+        (sandbox / "data" / "backup" / "pre-update" / "config.yaml.malicious.bak").write_text(
             "PLANTED\n"
         )
         (sandbox / "data" / "config.yaml").write_text("real\n")
@@ -214,20 +214,20 @@ class TestRollbackBehavior:
         runner = _write_runner(
             sandbox, rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backups/pre-update"'
+            '_pre_dir="data/backup/pre-update"'
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert (sandbox / "data" / "config.yaml").read_text() != "PLANTED\n"
 
     def test_compose_stop_called_before_up(self, sandbox):
         ts = "20260424T120000Z"
-        (sandbox / "data" / "backups" / "pre-update" / f"config.yaml.{ts}.bak").write_text("x")
+        (sandbox / "data" / "backup" / "pre-update" / f"config.yaml.{ts}.bak").write_text("x")
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
             sandbox, rollback,
             f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; '
-            f'_pre_dir="data/backups/pre-update"'
+            f'_pre_dir="data/backup/pre-update"'
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         log = (sandbox / "docker-calls.log").read_text()
@@ -316,7 +316,7 @@ class TestRollbackC1MtimeSort:
     not the newest mtime — cp -p preserves source mtime so mtime order diverges."""
 
     def test_sort_by_filename_beats_mtime_order(self, sandbox):
-        pre = sandbox / "data" / "backups" / "pre-update"
+        pre = sandbox / "data" / "backup" / "pre-update"
         older_ts, newer_ts = "20260424T100000Z", "20260424T120000Z"
         snap_older = pre / f"config.yaml.{older_ts}.bak"
         snap_newer = pre / f"config.yaml.{newer_ts}.bak"
@@ -331,7 +331,7 @@ class TestRollbackC1MtimeSort:
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
             sandbox, rollback,
-            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{newer_ts}"; _pre_dir="data/backups/pre-update"'
+            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{newer_ts}"; _pre_dir="data/backup/pre-update"'
         )
         result = subprocess.run([str(runner)], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr

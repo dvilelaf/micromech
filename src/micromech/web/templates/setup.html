@@ -408,6 +408,17 @@
                     <span id="fund-address">...</span>
                     <button class="copy-btn" onclick="copyAddress()">Copy</button>
                 </div>
+                <!-- Staking opt-in -->
+                <div class="glass" style="margin-top:1rem; padding:0.75rem 1rem; display:flex; align-items:center; justify-content:space-between; gap:1rem;">
+                    <div>
+                        <div style="font-weight:600; font-size:0.9rem;">Stake my mech (earn OLAS rewards)</div>
+                        <div style="color:var(--text-muted); font-size:0.8rem;">Requires 10,000 OLAS. Earn rewards each epoch by serving requests.</div>
+                    </div>
+                    <label class="toggle" style="flex-shrink:0;">
+                        <input type="checkbox" id="staking-toggle" checked onchange="onStakingToggle()" aria-label="Stake my mech to earn OLAS rewards">
+                        <span class="slider"></span>
+                    </label>
+                </div>
                 <div id="balance-display" style="margin-top:1rem;"></div>
                 <p id="balance-updated" style="color: var(--text-muted); font-size: 0.75rem; margin-top: 0.5rem; text-align: right;"></p>
                 <div class="btn-row">
@@ -526,6 +537,8 @@
     let allChainNames = [];
     let walletAddress = null;
     let balancePollId = null;
+    let stakingEnabled = true;
+    let pollInflight = false;
 
     const NATIVE_SYMBOLS = {
         gnosis: 'xDAI', base: 'ETH', ethereum: 'ETH',
@@ -818,6 +831,15 @@
         if (balancePollId) { clearInterval(balancePollId); balancePollId = null; }
     }
 
+    function onStakingToggle() {
+        stakingEnabled = document.getElementById('staking-toggle').checked;
+        // Restart poll from zero so the interval doesn't fire mid-toggle with stale staking flag
+        stopBalancePoll();
+        pollInflight = false;
+        buildBalanceRows();
+        startBalancePoll();
+    }
+
     function buildBalanceRows() {
         const container = document.getElementById('balance-display');
         container.innerHTML = '';
@@ -825,47 +847,57 @@
             const sym = NATIVE_SYMBOLS[chain] || 'Native';
             const row = document.createElement('div');
             row.style.cssText = 'margin-bottom:0.75rem; padding:0.6rem 0.75rem; background:rgba(255,255,255,0.03); border-radius:8px;';
+            const olasRowHtml = stakingEnabled ? `
+                <div class="balance-row" id="olas-row-${chain}">
+                    <span class="balance-label">OLAS</span>
+                    <span class="balance-value balance-waiting" id="bal-olas-${chain}">checking...</span>
+                </div>` : '';
             row.innerHTML = `
                 <div style="font-size:0.85rem; font-weight:500; margin-bottom:0.3rem;">${chain.charAt(0).toUpperCase() + chain.slice(1)}</div>
                 <div class="balance-row">
                     <span class="balance-label">${sym}</span>
                     <span class="balance-value balance-waiting" id="bal-native-${chain}">checking...</span>
                 </div>
-                <div class="balance-row">
-                    <span class="balance-label">OLAS</span>
-                    <span class="balance-value balance-waiting" id="bal-olas-${chain}">checking...</span>
-                </div>
+                ${olasRowHtml}
             `;
             container.appendChild(row);
         }
     }
 
     async function pollAllBalances() {
+        if (pollInflight) return;
+        pollInflight = true;
         let allOk = true;
-        for (const chain of selectedChains) {
-            try {
-                const res = await fetch(`${API_BASE}/api/setup/balance?chain=${chain}`);
-                const data = await res.json();
-                if (data.error) { allOk = false; continue; }
+        try {
+            for (const chain of selectedChains) {
+                try {
+                    const res = await fetch(`${API_BASE}/api/setup/balance?chain=${chain}&staking=${stakingEnabled}`);
+                    const data = await res.json();
+                    if (data.error) { allOk = false; continue; }
 
-                const sym = NATIVE_SYMBOLS[chain] || 'Native';
-                const nEl = document.getElementById('bal-native-' + chain);
-                const oEl = document.getElementById('bal-olas-' + chain);
-                if (!nEl || !oEl) continue;
+                    const sym = NATIVE_SYMBOLS[chain] || 'Native';
+                    const nEl = document.getElementById('bal-native-' + chain);
+                    if (!nEl) continue;
 
-                nEl.textContent = `${data.native_balance.toFixed(4)} / ${data.native_required} ${sym}`;
-                nEl.className = 'balance-value ' + (data.native_sufficient ? 'balance-ok' : 'balance-waiting');
+                    nEl.textContent = `${data.native_balance.toFixed(4)} / ${data.native_required} ${sym}`;
+                    nEl.className = 'balance-value ' + (data.native_sufficient ? 'balance-ok' : 'balance-waiting');
 
-                oEl.textContent = `${data.olas_balance.toLocaleString('en-US')} / ${data.olas_required.toLocaleString('en-US')} OLAS`;
-                oEl.className = 'balance-value ' + (data.olas_sufficient ? 'balance-ok' : 'balance-waiting');
+                    const oEl = document.getElementById('bal-olas-' + chain);
+                    if (oEl) {
+                        oEl.textContent = `${data.olas_balance.toLocaleString('en-US')} / ${data.olas_required.toLocaleString('en-US')} OLAS`;
+                        oEl.className = 'balance-value ' + (data.olas_sufficient ? 'balance-ok' : 'balance-waiting');
+                    }
 
-                if (!data.sufficient) allOk = false;
-            } catch (e) {
-                allOk = false;
+                    if (!data.sufficient) allOk = false;
+                } catch (e) {
+                    allOk = false;
+                }
             }
+            document.getElementById('btn-fund-next').disabled = !allOk;
+            lastBalanceUpdate = Date.now();
+        } finally {
+            pollInflight = false;
         }
-        document.getElementById('btn-fund-next').disabled = !allOk;
-        lastBalanceUpdate = Date.now();
     }
 
     function copyAddress() {
@@ -1136,11 +1168,17 @@
     }
 
     // --- Step 6: Parallel Deploy ---
-    const DEPLOY_STEPS = [
+    const DEPLOY_STEPS_ALL = [
         'Create service', 'Activate registration', 'Register agent',
         'Deploy Safe multisig', 'Create mech on marketplace', 'Stake service',
         'Publish tool metadata',
     ];
+    // Step labels shown in the panel — step 6 text reflects staking choice
+    function getDeploySteps() {
+        const steps = [...DEPLOY_STEPS_ALL];
+        if (!stakingEnabled) steps[5] = 'Stake service (skipped — opted out)';
+        return steps;
+    }
 
     function buildChainPanel(chain) {
         const panel = document.createElement('div');
@@ -1150,11 +1188,12 @@
         title.style.cssText = 'font-weight:500; margin-bottom:0.5rem; font-size:0.9rem;';
         title.textContent = chain.charAt(0).toUpperCase() + chain.slice(1);
         panel.appendChild(title);
-        for (let i = 0; i < DEPLOY_STEPS.length; i++) {
+        const steps = getDeploySteps();
+        for (let i = 0; i < steps.length; i++) {
             const row = document.createElement('div');
             row.className = 'deploy-step';
             row.id = `ds-${chain}-${i + 1}`;
-            row.innerHTML = `<div class="deploy-icon pending">${i + 1}</div><span class="deploy-msg muted">${DEPLOY_STEPS[i]}</span>`;
+            row.innerHTML = `<div class="deploy-icon pending">${i + 1}</div><span class="deploy-msg muted">${steps[i]}</span>`;
             panel.appendChild(row);
         }
         return panel;
@@ -1166,6 +1205,9 @@
         const container = document.getElementById('deploy-progress');
         container.innerHTML = '';
 
+        // Capture staking choice at deploy time so parallel chain deploys are consistent
+        const useStaking = stakingEnabled;
+
         const chains = [...selectedChains];
         const header = document.getElementById('deploy-header');
         header.textContent = chains.length > 1
@@ -1176,7 +1218,7 @@
         chains.forEach(c => container.appendChild(buildChainPanel(c)));
 
         // Launch all deploys in parallel
-        const results = await Promise.allSettled(chains.map(c => deployOneChain(c)));
+        const results = await Promise.allSettled(chains.map(c => deployOneChain(c, useStaking)));
 
         const allOk = results.every(r => r.status === 'fulfilled' && r.value);
         if (allOk) {
@@ -1209,7 +1251,7 @@
         }
     }
 
-    async function deployOneChain(chain) {
+    async function deployOneChain(chain, useStaking = stakingEnabled) {
         const prefix = `ds-${chain}-`;
         // Reset recovery state from any previous attempt
         const panelEl = document.getElementById('deploy-' + chain);
@@ -1224,7 +1266,7 @@
                     'Content-Type': 'application/json',
                     'X-Micromech-Action': 'deploy',
                 },
-                body: JSON.stringify({ chain })
+                body: JSON.stringify({ chain, staking: useStaking })
             });
 
             const reader = res.body.getReader();
@@ -1244,7 +1286,7 @@
                     try {
                         const evt = JSON.parse(line.slice(6));
                         if (evt.step === 'done') {
-                            for (let i = 1; i <= DEPLOY_STEPS.length; i++) setStepState(prefix, i, 'done');
+                            for (let i = 1; i <= DEPLOY_STEPS_ALL.length; i++) setStepState(prefix, i, 'done');
                             ok = true;
                         } else if (evt.step === 'error') {
                             // Only mark a step if one is still running (avoid marking wrong step
@@ -1269,7 +1311,7 @@
                                 setStepState(prefix, evt.step, 'error', evt.message);
                             } else {
                                 setStepState(prefix, evt.step, 'done', evt.message);
-                                if (evt.step < DEPLOY_STEPS.length) setStepState(prefix, evt.step + 1, 'running');
+                                if (evt.step < DEPLOY_STEPS_ALL.length) setStepState(prefix, evt.step + 1, 'running');
                             }
                         }
                     } catch (e) { /* skip */ }
@@ -1297,7 +1339,7 @@
     }
 
     function findRunning(prefix) {
-        for (let i = 1; i <= DEPLOY_STEPS.length; i++) {
+        for (let i = 1; i <= DEPLOY_STEPS_ALL.length; i++) {
             const el = document.querySelector(`#${prefix}${i} .deploy-icon`);
             if (el && el.classList.contains('running')) return i;
         }

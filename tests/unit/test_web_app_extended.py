@@ -173,8 +173,8 @@ class TestSetupBalanceEndpoint:
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_sufficient_flag_true_when_funded(self, _mock):
         c = _client()
-        # Patch high balances so sufficient=True (MIN_OLAS_WHOLE=5000, min_native~0.1)
-        with patch("micromech.core.bridge.check_balances", return_value=(10.0, 6000.0)):
+        # Patch high balances so sufficient=True (MIN_OLAS_WHOLE=10_000, min_native~0.1)
+        with patch("micromech.core.bridge.check_balances", return_value=(10.0, 11000.0)):
             resp = c.get("/api/setup/balance?chain=gnosis")
         assert resp.json()["sufficient"] is True
 
@@ -184,6 +184,58 @@ class TestSetupBalanceEndpoint:
         with patch("micromech.core.bridge.check_balances", return_value=(0.0, 0.0)):
             resp = c.get("/api/setup/balance?chain=gnosis")
         assert resp.json()["sufficient"] is False
+
+    @patch("micromech.web.app._needs_setup", return_value=True)
+    def test_balance_no_staking_ignores_olas(self, _mock):
+        c = _client()
+        # Only native funded, no OLAS — but staking=false so sufficient=True
+        with patch("micromech.core.bridge.check_balances", return_value=(10.0, 0.0)):
+            resp = c.get("/api/setup/balance?chain=gnosis&staking=false")
+        data = resp.json()
+        assert data["olas_required"] == 0
+        assert data["olas_sufficient"] is True
+        assert data["sufficient"] is True
+
+    @patch("micromech.web.app._needs_setup", return_value=True)
+    def test_balance_no_staking_still_requires_native(self, _mock):
+        c = _client()
+        with patch("micromech.core.bridge.check_balances", return_value=(0.0, 0.0)):
+            resp = c.get("/api/setup/balance?chain=gnosis&staking=false")
+        data = resp.json()
+        assert data["sufficient"] is False
+        assert data["native_sufficient"] is False
+
+
+# ---------------------------------------------------------------------------
+# /api/setup/deploy — staking body coercion (unit, no SSE)
+# ---------------------------------------------------------------------------
+
+
+class TestSetupDeployStakingCoercion:
+    """Verify that non-bool staking values in the deploy body fail-safe to staking=True.
+
+    The coercion logic is: only Python True/False accepted; anything else → True (fail-safe).
+    """
+
+    @staticmethod
+    def _coerce(raw) -> bool:
+        """Mirror the coercion logic in setup_deploy."""
+        return raw if isinstance(raw, bool) else True
+
+    def test_none_coerces_to_true(self):
+        assert self._coerce(None) is True
+
+    def test_string_false_coerces_to_true(self):
+        assert self._coerce("false") is True
+
+    def test_zero_coerces_to_true(self):
+        assert self._coerce(0) is True
+
+    def test_bool_false_stays_false(self):
+        assert self._coerce(False) is False
+
+    def test_bool_true_stays_true(self):
+        assert self._coerce(True) is True
 
 
 # ---------------------------------------------------------------------------

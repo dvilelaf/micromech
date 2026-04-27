@@ -84,17 +84,22 @@ Control your mech from your phone. Configure it from the dashboard, then use the
 
 | Command | What it does |
 |---|---|
-| `/status` | Mech status, deliveries, and rewards |
-| `/wallet` | Wallet address and balances per chain |
+| `/status` | Mech status, deliveries, and rewards per chain |
+| `/wallet` | Wallet addresses and balances per chain |
 | `/queue` | Pending, executing, and failed requests |
-| `/info` | Version and runtime information |
-| `/logs` | Download last 24h logs as a zip file |
 | `/manage` | Stake, unstake, or restake per chain |
-| `/checkpoint` | Call staking checkpoint manually |
 | `/claim` | Claim staking rewards |
-| `/settings` | Toggle features (e.g. auto-checkpoint) |
+| `/checkpoint` | Call staking checkpoint manually |
+| `/contracts` | Staking contract info per chain |
+| `/last_rewards` | Accrued staking rewards for the current epoch |
+| `/withdraw` | Withdraw pending mech payments |
+| `/addresses` | Export all wallet addresses as a CSV file |
+| `/settings` | Toggle features and edit values (e.g. auto-checkpoint) |
+| `/logs` | Download last 24h logs as a zip file |
+| `/info` | Version and runtime information |
 | `/update` | Pull latest image and restart |
 | `/restart` | Restart the mech runtime |
+| `/help` | List all available commands |
 
 ## Your Files
 
@@ -108,7 +113,7 @@ After the quickstart, your `micromech/` folder contains:
 | `data/config.yaml` | Mech settings: chains, mech addresses, staking contracts | You can edit it, but the web dashboard is easier. |
 | `data/wallet.json` | Your encrypted wallet (private key + recovery phrase) | **Never share. Back this up.** |
 | `data/micromech.db` | SQLite database of all requests — pending, delivered, failed | Grows over time. Safe to delete if disk space is tight (history only, no funds). |
-| `data/backup/` | Automatic wallet backups created before any key change | Keep these. Delete old ones manually if needed. |
+| `data/backups/` | Pre-update snapshots of `wallet.json` and `config.yaml` | Created automatically before each update. Safe to delete old ones manually. |
 | `data/.hf_cache/` | Cached AI model files (downloaded on first use) | Large (~300 MB). Safe to delete — re-downloads automatically. |
 | `updater.sh` | Auto-update script (called by the container on startup) | Don't touch. |
 | `Justfile` | Command shortcuts (requires `just`) | Optional convenience, safe to ignore. |
