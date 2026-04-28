@@ -573,11 +573,7 @@ def create_web_app(
             return {"error": "Unknown chain", "sufficient": False}
         try:
             from micromech.core.bridge import check_balances
-            from micromech.core.constants import (
-                BOND_OLAS_WHOLE,
-                MIN_NATIVE_WEI,
-                MIN_OLAS_WHOLE,
-            )
+            from micromech.core.constants import MIN_NATIVE_WEI, MIN_OLAS_WHOLE
 
             result = check_balances(chain)
             if result is None:
@@ -588,10 +584,8 @@ def create_web_app(
             native, olas = result
             min_native = MIN_NATIVE_WEI.get(chain, 0.1) / 1e18
             native_sufficient = native >= min_native
-            # Bond (5k OLAS) is always required by service registry; only staking deposit
-            # (extra 5k) is skipped when staking is disabled.
-            olas_required = MIN_OLAS_WHOLE if staking_bool else BOND_OLAS_WHOLE
-            olas_sufficient = (olas >= MIN_OLAS_WHOLE) if staking_bool else (olas >= BOND_OLAS_WHOLE)
+            olas_required = MIN_OLAS_WHOLE if staking_bool else 0
+            olas_sufficient = (olas >= MIN_OLAS_WHOLE) if staking_bool else True
             return {
                 "native_balance": native,
                 "olas_balance": olas,

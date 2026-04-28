@@ -231,11 +231,11 @@ class TestFailurePaths:
 
     @pytest.mark.asyncio
     async def test_unknown_tool_fails(self, tmp_path):
-        """Submit request with unknown tool, verify STATUS_FAILED in DB."""
+        """Submit request with unknown tool, verify STATUS_SKIPPED in DB."""
         import micromech.runtime.listener as _listener_mod
         import micromech.runtime.server as _server_mod
         from micromech.core.config import MicromechConfig
-        from micromech.core.constants import STATUS_FAILED
+        from micromech.core.constants import STATUS_SKIPPED
         from micromech.runtime.server import MechServer
 
         _server_mod.DB_PATH = tmp_path / "fail.db"
@@ -264,11 +264,11 @@ class TestFailurePaths:
 
             record = server.queue.get_by_id("fail-unknown-tool")
             assert record is not None, "Request not found in DB"
-            assert record.request.status == STATUS_FAILED, (
-                f"Expected 'failed', got '{record.request.status}'"
+            assert record.request.status == STATUS_SKIPPED, (
+                f"Expected 'skipped', got '{record.request.status}'"
             )
-            assert record.result is not None
-            assert "nonexistent" in record.result.error.lower()
+            assert record.request.error is not None
+            assert "nonexistent" in record.request.error.lower()
         finally:
             server.stop()
             try:
@@ -283,7 +283,7 @@ class TestFailurePaths:
         import micromech.runtime.listener as _listener_mod
         import micromech.runtime.server as _server_mod
         from micromech.core.config import MicromechConfig
-        from micromech.core.constants import STATUS_EXECUTED, STATUS_FAILED
+        from micromech.core.constants import STATUS_EXECUTED, STATUS_SKIPPED
         from micromech.runtime.server import MechServer
 
         _server_mod.DB_PATH = tmp_path / "crash.db"
@@ -324,7 +324,7 @@ class TestFailurePaths:
             good_record = server.queue.get_by_id("crash-test-good")
 
             assert bad_record is not None
-            assert bad_record.request.status == STATUS_FAILED
+            assert bad_record.request.status == STATUS_SKIPPED
 
             assert good_record is not None, "Server stopped processing after tool failure"
             assert good_record.request.status == STATUS_EXECUTED, (
@@ -1035,7 +1035,7 @@ class TestMechLifecycleE2E:
                 )
 
                 lc = MechLifecycle(config, "gnosis")
-                result = lc.full_deploy(agent_id=40, bond_olas=bond_olas)
+                result = lc.full_deploy(agent_id=40, bond_amount_wei=bond_olas * 10**18)
 
                 assert result.get("mech_address"), f"full_deploy returned no mech_address: {result}"
                 our_mech_addr = result["mech_address"]
@@ -1214,6 +1214,100 @@ class TestMechLifecycleE2E:
         print(f"  Deliveries:  {len(request_ids)}")
         print(f"  Reward:      +{mech_reward_delta:.4f} OLAS")
         print("=" * 50)
+
+    @pytest.mark.timeout(180)
+    def test_full_lifecycle_without_staking_uses_native_one_wei_bond(self, w3, tmp_path):
+        """Deploy a mech without staking using only native funds and a 1 wei bond."""
+        from micromech.core.config import ChainConfig, MicromechConfig
+        from micromech.management import MechLifecycle
+
+        print("\n--- Step 1: Setup iwa wallet on Anvil (native funds only) ---")
+
+        master_addr, _key_storage, restore = _setup_iwa_for_anvil(tmp_path, w3)
+
+        # Fund only native gas. Do not mint OLAS: this test must fail if the
+        # skip-staking flow accidentally creates an OLAS-bonded service.
+        w3.provider.make_request("anvil_setBalance", [master_addr, hex(5 * 10**18)])
+        olas_contract = w3.eth.contract(
+            address=w3.to_checksum_address(OLAS_TOKEN),
+            abi=[
+                {
+                    "inputs": [{"name": "account", "type": "address"}],
+                    "name": "balanceOf",
+                    "outputs": [{"type": "uint256"}],
+                    "stateMutability": "view",
+                    "type": "function",
+                }
+            ],
+        )
+        assert olas_contract.functions.balanceOf(master_addr).call() == 0
+        print(f"  Master: {master_addr} (5 xDAI + 0 OLAS)")
+
+        config = MicromechConfig(
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    marketplace_address=MARKETPLACE_ADDR,
+                    factory_address=MECH_FACTORY,
+                    staking_address=SUPPLY_STAKING_ADDR,
+                    delivery_rate=MECH_DELIVERY_RATE,
+                )
+            }
+        )
+
+        _iwa_cfg = None
+        _orig_olas = None
+        try:
+            with (
+                patch("iwa.core.constants.WALLET_PATH", tmp_path / "wallet.json"),
+                patch("iwa.core.constants.CONFIG_PATH", tmp_path / "config.yaml"),
+            ):
+                from iwa.core.models import Config as _IwaConfig
+                from iwa.plugins.olas.models import OlasConfig as _OlasConfig
+
+                import micromech.core.bridge as _bridge_mod
+
+                _iwa_cfg = _IwaConfig()
+                _orig_olas = _iwa_cfg.plugins.get("olas")
+                _iwa_cfg.plugins["olas"] = _OlasConfig()
+                _bridge_mod._service_info_cache.clear()
+
+                print(
+                    "\n--- Steps 2-6: full_deploy(skip_staking=True) [native 1 wei bond] ---"
+                )
+
+                lc = MechLifecycle(config, "gnosis")
+                result = lc.full_deploy(skip_staking=True)
+
+                assert result.get("mech_address"), f"full_deploy returned no mech_address: {result}"
+                assert result.get("staked") is False, f"Expected unstaked deploy: {result}"
+                service_id = result["service_id"]
+                print(f"  Service {service_id} deployed without staking")
+
+                svc_registry = w3.eth.contract(
+                    address=w3.to_checksum_address(SERVICE_REGISTRY),
+                    abi=_load_abi("service_registry.json"),
+                )
+                service_info = svc_registry.functions.getService(service_id).call()
+                security_deposit = service_info[0]
+                assert security_deposit == 1, (
+                    f"Expected native security deposit of 1 wei, got {security_deposit}"
+                )
+
+                supply_staking = w3.eth.contract(
+                    address=w3.to_checksum_address(SUPPLY_STAKING_ADDR),
+                    abi=_load_abi("staking.json"),
+                )
+                staking_state = supply_staking.functions.getStakingState(service_id).call()
+                assert staking_state == 0, f"Expected UNSTAKED(0), got {staking_state}"
+
+        finally:
+            if _iwa_cfg is not None:
+                if _orig_olas is not None:
+                    _iwa_cfg.plugins["olas"] = _orig_olas
+                else:
+                    _iwa_cfg.plugins.pop("olas", None)
+            restore()
 
 
 class TestOffchainHTTPE2E:

@@ -519,7 +519,7 @@ class TestBenchmarkDeliverySafe:
                 _bridge_mod._service_info_cache.clear()
 
                 lc = MechLifecycle(base_config, "gnosis")
-                result = lc.full_deploy(agent_id=40, bond_olas=5000)
+                result = lc.full_deploy(agent_id=40, bond_amount_wei=5000 * 10**18)
 
             assert result.get("mech_address"), f"full_deploy returned no mech: {result}"
             our_mech = result["mech_address"]

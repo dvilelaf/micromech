@@ -50,7 +50,7 @@ test-anvil:
     trap "kill $ANVIL_PID 2>/dev/null" EXIT
     sleep 3
     echo "Anvil running (PID $ANVIL_PID)"
-    ANVIL_URL=http://localhost:18545 CHAINLIST_ENRICHMENT=false uv run pytest tests/integration/test_anvil_e2e.py -v -s
+    ANVIL_URL=http://localhost:18545 CHAINLIST_ENRICHMENT=false uv run pytest --no-cov tests/integration/test_anvil_e2e.py -v -s
     echo "Anvil E2E tests passed"
 
 # Run multi-chain E2E tests (forks Gnosis, Base, Ethereum, Polygon)

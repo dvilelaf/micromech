@@ -12,6 +12,7 @@ from loguru import logger
 
 from micromech.core.config import MicromechConfig
 from micromech.core.constants import (
+    BOND_OLAS_WHOLE,
     CHAIN_DEFAULTS,
     DB_PATH,
     MIN_NATIVE_WEI,
@@ -150,6 +151,11 @@ def init(
     chain: Optional[str] = typer.Option(None, "--chain", help="Chain to deploy on"),
     yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive mode"),
     skip_funding: bool = typer.Option(False, "--skip-funding-check"),
+    skip_staking: bool = typer.Option(
+        False,
+        "--skip-staking",
+        help="Deploy without staking (no OLAS funding required)",
+    ),
 ) -> None:
     """Setup wizard — wallet, chain, funding, deploy. Get running in 3 minutes."""
     from micromech.core.config import register_plugin
@@ -229,7 +235,8 @@ def init(
 
     typer.echo(f"  Your mech needs funds on {selected_chain}:")
     typer.echo(f"    - ~{min_native} {native_sym} for gas")
-    typer.echo(f"    - {MIN_OLAS_WHOLE:,} OLAS for staking bond")
+    if not skip_staking:
+        typer.echo(f"    - {MIN_OLAS_WHOLE:,} OLAS for staking")
     typer.echo(f"\n  Send funds to: {wallet_address}")
 
     if not skip_funding:
@@ -240,14 +247,16 @@ def init(
         while not funded and attempts * 15 < max_wait:
             native_bal, olas_bal = _check_balances(selected_chain)
             native_ok = native_bal >= min_native
-            olas_ok = olas_bal >= MIN_OLAS_WHOLE
+            olas_ok = True if skip_staking else olas_bal >= MIN_OLAS_WHOLE
 
             native_status = "OK" if native_ok else "waiting"
-            olas_status = "OK" if olas_ok else "waiting"
+            olas_part = ""
+            if not skip_staking:
+                olas_status = "OK" if olas_ok else "waiting"
+                olas_part = f"  OLAS: {olas_bal:,.0f} [{olas_status}]"
 
             sys.stdout.write(
-                f"\r    {native_sym}: {native_bal:.4f} [{native_status}]  "
-                f"OLAS: {olas_bal:,.0f} [{olas_status}]    "
+                f"\r    {native_sym}: {native_bal:.4f} [{native_status}]{olas_part}    "
             )
             sys.stdout.flush()
 
@@ -318,7 +327,7 @@ def init(
         from micromech.management import MechLifecycle
 
         lc = MechLifecycle(config, chain_name=selected_chain)
-        result = lc.full_deploy(on_progress=_on_progress)
+        result = lc.full_deploy(on_progress=_on_progress, skip_staking=skip_staking)
 
         # Update config with deployment results
         chain_cfg.apply_deploy_result(result)
@@ -385,10 +394,12 @@ def run(
 
     async def _run_all():
         """Run server + optionally Telegram bot."""
+
         # Start heartbeat immediately — before any initialization — so the
         # Docker HEALTHCHECK sees a fresh file well within the start-period.
         async def _heartbeat_loop() -> None:
             import pathlib
+
             hb = pathlib.Path("/app/data/.heartbeat")
             while True:
                 await asyncio.sleep(30)
@@ -776,7 +787,7 @@ def metadata_publish(
 def create_service(
     agent_id: int = typer.Option(40, help="Agent ID for the service"),
     bond: int = typer.Option(
-        5000, help="Bond amount in OLAS (= minStakingDeposit for Supply Alpha)"
+        BOND_OLAS_WHOLE, help="Bond amount in OLAS (= minStakingDeposit for Supply Alpha)"
     ),
     chain: str = typer.Option("gnosis", "--chain", help="Target chain"),
     config_path: Optional[Path] = typer.Option(None, "--config", "-c"),
@@ -786,7 +797,12 @@ def create_service(
 
     cfg = _load_config(config_path)
     lc = MechLifecycle(cfg, chain_name=chain)
-    service_id = lc.create_service(agent_id=agent_id, bond_olas=bond)
+    from web3 import Web3
+
+    service_id = lc.create_service(
+        agent_id=agent_id,
+        bond_amount_wei=Web3.to_wei(bond, "ether"),
+    )
     if service_id:
         typer.echo(f"Service created: {service_id}")
     else:

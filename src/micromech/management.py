@@ -58,7 +58,9 @@ def _with_retries(fn: Callable, label: str, retries: int = MAX_RETRIES) -> Any:
 
 
 from micromech.core.config import ChainConfig, MicromechConfig
-from micromech.core.constants import GAS_FLOOR_CREATE2
+from micromech.core.constants import BOND_OLAS_WHOLE, GAS_FLOOR_CREATE2
+
+MIN_NATIVE_BOND_WEI = 1
 
 
 def _get_service_manager(
@@ -110,22 +112,21 @@ class MechLifecycle:
     def create_service(
         self,
         agent_id: int = 40,
-        bond_olas: int = 5000,
+        *,
+        bond_amount_wei: int,
+        token_address_or_tag: Optional[str] = "OLAS",
     ) -> Optional[int]:
         """Create a new service on-chain.
 
         Returns the service_id or None on failure.
         """
-        from web3 import Web3
-
         mgr = _get_service_manager(self.config, chain_name=self.chain_name)
         try:
-            bond_wei = Web3.to_wei(bond_olas, "ether")
             service_id = mgr.create(
                 chain_name=self.chain_name,
                 agent_ids=[agent_id],
-                bond_amount_wei=bond_wei,
-                token_address_or_tag="OLAS",
+                token_address_or_tag=token_address_or_tag,
+                bond_amount_wei=bond_amount_wei,
             )
             logger.info("Service created on {}: {}", self.chain_name, service_id)
             return service_id
@@ -623,7 +624,7 @@ class MechLifecycle:
     def full_deploy(
         self,
         agent_id: int = 40,
-        bond_olas: int = 5000,
+        bond_amount_wei: Optional[int] = None,
         on_progress: Optional[Callable[[int | str, int, str, bool], None]] = None,
         skip_staking: bool = False,
     ) -> dict[str, Any]:
@@ -676,6 +677,15 @@ class MechLifecycle:
             _progress(6, "Already fully deployed", True)
             return result
 
+        if bond_amount_wei is None:
+            if skip_staking:
+                bond_amount_wei = MIN_NATIVE_BOND_WEI
+            else:
+                from web3 import Web3
+
+                bond_amount_wei = Web3.to_wei(BOND_OLAS_WHOLE, "ether")
+        token_address_or_tag = None if skip_staking else "OLAS"
+
         # Resume logic: check what iwa already has for this chain
         has_service = bool(svc_info.get("service_id"))
         has_multisig = bool(svc_info.get("multisig_address"))
@@ -694,7 +704,8 @@ class MechLifecycle:
                 _progress(1, "Creating service...")
                 service_id = self.create_service(
                     agent_id=agent_id,
-                    bond_olas=bond_olas,
+                    bond_amount_wei=bond_amount_wei,
+                    token_address_or_tag=token_address_or_tag,
                 )
                 if not service_id:
                     _progress(1, "Failed to create service", False)
@@ -714,7 +725,7 @@ class MechLifecycle:
             else:
                 _progress(2, "Activating, registering and deploying Safe...")
                 mgr = _get_service_manager(self.config, service_key)
-                ok = mgr.spin_up()
+                ok = mgr.spin_up(bond_amount_wei=bond_amount_wei)
                 if not ok:
                     _progress(2, "Failed to spin up service", False)
                     msg = "Service spin-up failed (activate/register/deploy)"

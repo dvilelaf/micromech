@@ -186,30 +186,15 @@ class TestSetupBalanceEndpoint:
         assert resp.json()["sufficient"] is False
 
     @patch("micromech.web.app._needs_setup", return_value=True)
-    def test_balance_no_staking_requires_bond_not_staking_deposit(self, _mock):
-        """Without staking, only the 5k bond is required (not the extra 5k staking deposit)."""
-        from micromech.core.constants import BOND_OLAS_WHOLE, MIN_OLAS_WHOLE
-
-        c = _client()
-        # Enough for bond (5k) but not full staking amount (10k)
-        olas = BOND_OLAS_WHOLE + 1
-        with patch("micromech.core.bridge.check_balances", return_value=(10.0, float(olas))):
-            resp = c.get("/api/setup/balance?chain=gnosis&staking=false")
-        data = resp.json()
-        assert data["olas_required"] == BOND_OLAS_WHOLE
-        assert data["olas_required"] < MIN_OLAS_WHOLE  # less than staking path
-        assert data["olas_sufficient"] is True
-        assert data["sufficient"] is True
-
-    @patch("micromech.web.app._needs_setup", return_value=True)
-    def test_balance_no_staking_zero_olas_is_insufficient(self, _mock):
-        """Bond is always required even without staking — 0 OLAS means insufficient."""
+    def test_balance_no_staking_olas_not_required(self, _mock):
+        """Without staking, OLAS funding is not required by the setup gate."""
         c = _client()
         with patch("micromech.core.bridge.check_balances", return_value=(10.0, 0.0)):
             resp = c.get("/api/setup/balance?chain=gnosis&staking=false")
         data = resp.json()
-        assert data["olas_sufficient"] is False
-        assert data["sufficient"] is False
+        assert data["olas_required"] == 0
+        assert data["olas_sufficient"] is True
+        assert data["sufficient"] is True
 
     @patch("micromech.web.app._needs_setup", return_value=True)
     def test_balance_no_staking_still_requires_native(self, _mock):

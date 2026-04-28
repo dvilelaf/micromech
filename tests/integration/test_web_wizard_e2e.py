@@ -909,107 +909,114 @@ class TestWebWizardE2E:
         assert data["olas_sufficient"] is True
         assert data["sufficient"] is True
 
-    def test_balance_no_staking_flow_requires_bond_olas(self, tmp_path: Path):
-        """With staking=false, balance check still requires 5k OLAS (service registry bond)."""
-        from micromech.core.constants import BOND_OLAS_WHOLE
-
+    def test_balance_no_staking_flow_olas_not_required(self, tmp_path: Path):
+        """With staking=false, the funding gate only requires native gas."""
         app = _make_web_app(tmp_path)
         client = TestClient(app)
-        # 0 OLAS — not enough even for the bond
         with patch("micromech.core.bridge.check_balances", return_value=(1.0, 0.0)):
             resp = client.get("/api/setup/balance?chain=gnosis&staking=false")
         data = resp.json()
         assert resp.status_code == 200
         assert data["staking"] is False
-        assert data["olas_required"] == BOND_OLAS_WHOLE
-        assert data["olas_sufficient"] is False
-        assert data["sufficient"] is False
-
-    def test_balance_no_staking_flow_sufficient_when_olas_gte_bond(self, tmp_path: Path):
-        """With staking=false and bond OLAS available, balance check reports sufficient."""
-        from micromech.core.constants import BOND_OLAS_WHOLE
-
-        app = _make_web_app(tmp_path)
-        client = TestClient(app)
-        bond = float(BOND_OLAS_WHOLE)
-        with patch("micromech.core.bridge.check_balances", return_value=(1.0, bond)):
-            resp = client.get("/api/setup/balance?chain=gnosis&staking=false")
-        data = resp.json()
+        assert data["olas_required"] == 0
         assert data["olas_sufficient"] is True
         assert data["sufficient"] is True
 
-    def test_balance_no_staking_less_than_staking_amount(self, tmp_path: Path):
-        """No-staking path accepts 5k–9999 OLAS range that staking path would reject."""
-        from micromech.core.constants import BOND_OLAS_WHOLE, MIN_OLAS_WHOLE
+    def test_balance_no_staking_flow_still_requires_native(self, tmp_path: Path):
+        """With staking=false, insufficient native balance still blocks setup."""
+        app = _make_web_app(tmp_path)
+        client = TestClient(app)
+        with patch("micromech.core.bridge.check_balances", return_value=(0.0, 0.0)):
+            resp = client.get("/api/setup/balance?chain=gnosis&staking=false")
+        data = resp.json()
+        assert data["native_sufficient"] is False
+        assert data["sufficient"] is False
+
+    def test_balance_staking_still_requires_full_olas(self, tmp_path: Path):
+        """With staking=true, 7500 OLAS is still below the full staking requirement."""
+        from micromech.core.constants import MIN_OLAS_WHOLE
 
         app = _make_web_app(tmp_path)
         client = TestClient(app)
-        olas_in_range = float((BOND_OLAS_WHOLE + MIN_OLAS_WHOLE) // 2)  # 7500
-        with patch("micromech.core.bridge.check_balances", return_value=(1.0, olas_in_range)):
-            staking_resp = client.get("/api/setup/balance?chain=gnosis&staking=true")
-            no_staking_resp = client.get("/api/setup/balance?chain=gnosis&staking=false")
+        with patch("micromech.core.bridge.check_balances", return_value=(1.0, 7500.0)):
+            resp = client.get("/api/setup/balance?chain=gnosis&staking=true")
 
-        assert staking_resp.json()["sufficient"] is False  # 7500 < 10k → not enough for staking
-        assert no_staking_resp.json()["sufficient"] is True  # 7500 >= 5k → enough for bond only
+        assert resp.json()["sufficient"] is False
+        assert resp.json()["olas_required"] == MIN_OLAS_WHOLE
 
-    def test_deploy_staking_flow_sends_skip_staking_false(self, tmp_path: Path):
-        """Deploy with staking=true passes skip_staking=False to full_deploy."""
-        captured = {}
+    def test_e2e_create_micromech_with_staking(self, tmp_path: Path):
+        """E2E lifecycle: create -> spin_up -> create mech -> stake succeeds."""
+        from micromech.core.config import ChainConfig
+        from micromech.management import MechLifecycle
 
-        def fake_full_deploy(on_progress=None, skip_staking=False, **kw):
-            captured["skip_staking"] = skip_staking
-            return {"service_id": 1, "service_key": "gnosis:1",
-                    "mech_address": "0x" + "aa" * 20, "staked": True}
+        mock_mgr = MagicMock()
+        mock_mgr.create.return_value = 42
+        mock_mgr.spin_up.return_value = True
+        mock_mgr.service.multisig_address = "0x" + "11" * 20
+        mock_mgr.stake.return_value = True
 
-        def fake_load(cls, path=None):
-            return cls()
-
-        with (
-            patch("iwa.core.constants.WALLET_PATH", str(tmp_path / "wallet.json")),
-            patch.object(MicromechConfig, "load", classmethod(fake_load)),
-            patch("micromech.management.MechLifecycle.full_deploy", side_effect=fake_full_deploy),
-            patch("micromech.management._get_service_manager"),
-            patch("micromech.core.bridge.ChainInterfaces"),
-        ):
-            app = _make_web_app(tmp_path)
-            client = TestClient(app)
-            client.post("/api/setup/wallet", headers=_auth_headers(), json={"password": WIZARD_PASSWORD})
-            resp = client.post(
-                "/api/setup/deploy",
-                headers=_auth_headers(),
-                json={"chain": "gnosis", "staking": True},
-            )
-
-        assert resp.status_code == 200
-        assert captured.get("skip_staking") is False
-
-    def test_deploy_no_staking_flow_sends_skip_staking_true(self, tmp_path: Path):
-        """Deploy with staking=false passes skip_staking=True to full_deploy."""
-        captured = {}
-
-        def fake_full_deploy(on_progress=None, skip_staking=False, **kw):
-            captured["skip_staking"] = skip_staking
-            return {"service_id": 2, "service_key": "gnosis:2",
-                    "mech_address": "0x" + "bb" * 20, "staked": False}
-
-        def fake_load(cls, path=None):
-            return cls()
+        cfg = MicromechConfig(
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+                    factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+                    staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+                )
+            }
+        )
 
         with (
-            patch("iwa.core.constants.WALLET_PATH", str(tmp_path / "wallet.json")),
-            patch.object(MicromechConfig, "load", classmethod(fake_load)),
-            patch("micromech.management.MechLifecycle.full_deploy", side_effect=fake_full_deploy),
-            patch("micromech.management._get_service_manager"),
-            patch("micromech.core.bridge.ChainInterfaces"),
+            patch("micromech.core.bridge.get_service_info", return_value={}),
+            patch("micromech.management._get_service_manager", return_value=mock_mgr),
         ):
-            app = _make_web_app(tmp_path)
-            client = TestClient(app)
-            client.post("/api/setup/wallet", headers=_auth_headers(), json={"password": WIZARD_PASSWORD})
-            resp = client.post(
-                "/api/setup/deploy",
-                headers=_auth_headers(),
-                json={"chain": "gnosis", "staking": False},
-            )
+            lc = MechLifecycle(cfg, "gnosis")
+            with patch.object(lc, "create_mech", return_value="0x" + "aa" * 20):
+                result = lc.full_deploy(skip_staking=False)
 
-        assert resp.status_code == 200
-        assert captured.get("skip_staking") is True
+        assert result["service_id"] == 42
+        assert result["mech_address"] == "0x" + "aa" * 20
+        assert result["staked"] is True
+        assert cfg.chains["gnosis"].mech_address == "0x" + "aa" * 20
+        assert mock_mgr.create.call_args.kwargs["bond_amount_wei"] == 5000 * 10**18
+        assert mock_mgr.create.call_args.kwargs["token_address_or_tag"] == "OLAS"
+        mock_mgr.spin_up.assert_called_once_with(bond_amount_wei=5000 * 10**18)
+        mock_mgr.stake.assert_called_once()
+
+    def test_e2e_create_micromech_without_staking(self, tmp_path: Path):
+        """E2E lifecycle: create -> spin_up -> create mech succeeds without staking."""
+        from micromech.core.config import ChainConfig
+        from micromech.management import MechLifecycle
+
+        mock_mgr = MagicMock()
+        mock_mgr.create.return_value = 43
+        mock_mgr.spin_up.return_value = True
+        mock_mgr.service.multisig_address = "0x" + "22" * 20
+
+        cfg = MicromechConfig(
+            chains={
+                "gnosis": ChainConfig(
+                    chain="gnosis",
+                    marketplace_address="0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB",
+                    factory_address="0x8b299c20F87e3fcBfF0e1B86dC0acC06AB6993EF",
+                    staking_address="0xCAbD0C941E54147D40644CF7DA7e36d70DF46f44",
+                )
+            }
+        )
+
+        with (
+            patch("micromech.core.bridge.get_service_info", return_value={}),
+            patch("micromech.management._get_service_manager", return_value=mock_mgr),
+        ):
+            lc = MechLifecycle(cfg, "gnosis")
+            with patch.object(lc, "create_mech", return_value="0x" + "bb" * 20):
+                result = lc.full_deploy(skip_staking=True)
+
+        assert result["service_id"] == 43
+        assert result["mech_address"] == "0x" + "bb" * 20
+        assert result["staked"] is False
+        assert cfg.chains["gnosis"].mech_address == "0x" + "bb" * 20
+        assert mock_mgr.create.call_args.kwargs["bond_amount_wei"] == 1
+        assert mock_mgr.create.call_args.kwargs["token_address_or_tag"] is None
+        mock_mgr.spin_up.assert_called_once_with(bond_amount_wei=1)
+        mock_mgr.stake.assert_not_called()

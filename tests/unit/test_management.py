@@ -36,9 +36,14 @@ class TestMechLifecycleWithMocks:
 
         cfg = make_test_config()
         lc = MechLifecycle(cfg, chain_name=CHAIN_NAME)
-        result = lc.create_service(agent_id=40, bond_olas=10000)
+        result = lc.create_service(agent_id=40, bond_amount_wei=1)
         assert result == 42
-        mock_mgr.create.assert_called_once()
+        mock_mgr.create.assert_called_once_with(
+            chain_name=CHAIN_NAME,
+            agent_ids=[40],
+            token_address_or_tag="OLAS",
+            bond_amount_wei=1,
+        )
 
     @patch("micromech.management._get_service_manager")
     def test_activate(self, mock_get_mgr):
@@ -437,7 +442,7 @@ class TestMechLifecycleErrorHandling:
         mock_get_mgr.return_value = mock_mgr
 
         lc = MechLifecycle(make_test_config(), chain_name=CHAIN_NAME)
-        assert lc.create_service() is None
+        assert lc.create_service(bond_amount_wei=1) is None
 
     @patch("micromech.management._get_service_manager")
     def test_activate_failure(self, mock_get_mgr):
@@ -501,7 +506,7 @@ class TestFullDeploy:
         assert result["mech_address"] == "0x" + "bb" * 20
         assert result["staked"] is True
         assert len(progress) >= 6
-        mock_mgr.spin_up.assert_called_once()
+        mock_mgr.spin_up.assert_called_once_with(bond_amount_wei=5000 * 10**18)
 
     @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
@@ -522,7 +527,8 @@ class TestFullDeploy:
         assert result["mech_address"] == "0x" + "dd" * 20
         assert result["service_id"] == 42
         mock_mgr.create.assert_called_once()
-        mock_mgr.spin_up.assert_called_once()
+        assert mock_mgr.create.call_args.kwargs["token_address_or_tag"] == "OLAS"
+        mock_mgr.spin_up.assert_called_once_with(bond_amount_wei=5000 * 10**18)
 
     @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")
@@ -538,12 +544,18 @@ class TestFullDeploy:
 
         progress = []
         with patch.object(lc, "create_mech", return_value="0x" + "dd" * 20):
-            result = lc.full_deploy(skip_staking=True, on_progress=lambda s, t, m, ok=True: progress.append((s, m)))
+            result = lc.full_deploy(
+                skip_staking=True, on_progress=lambda s, t, m, ok=True: progress.append((s, m))
+            )
 
         assert result["staked"] is False
         mock_mgr.stake.assert_not_called()
         step6_msgs = [m for s, m in progress if s == 6]
         assert any("skipped" in m.lower() for m in step6_msgs)
+        mock_mgr.create.assert_called_once()
+        assert mock_mgr.create.call_args.kwargs["bond_amount_wei"] == 1
+        assert mock_mgr.create.call_args.kwargs["token_address_or_tag"] is None
+        mock_mgr.spin_up.assert_called_once_with(bond_amount_wei=1)
 
     @patch("micromech.core.bridge.get_service_info", return_value={})
     @patch("micromech.management._get_service_manager")

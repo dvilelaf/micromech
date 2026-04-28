@@ -21,6 +21,24 @@ class TestVersionCommand:
 
 
 class TestInitCommand:
+    def _make_init_mocks(self):
+        mock_wallet = MagicMock()
+        mock_wallet.master_account.address = "0x" + "11" * 20
+        mock_wallet.key_storage.get_pending_mnemonic.return_value = None
+
+        mock_lc = MagicMock()
+        mock_lc.full_deploy.return_value = {
+            "service_id": 42,
+            "service_key": "gnosis:42",
+            "multisig_address": "0x" + "aa" * 20,
+            "mech_address": "0x" + "bb" * 20,
+            "staked": False,
+        }
+
+        mock_config = MagicMock()
+        mock_config.chains = {}
+        return mock_wallet, mock_lc, mock_config
+
     @patch("micromech.cli._check_balances", return_value=(1.0, 20000.0))
     def test_init_wizard_skip_funding(self, mock_balances, tmp_path: Path):
         mock_wallet = MagicMock()
@@ -83,6 +101,46 @@ class TestInitCommand:
             )
         assert result.exit_code == 0
         assert "already fully deployed" in result.output.lower()
+
+    @patch("micromech.management.MechLifecycle")
+    @patch("micromech.cli._check_balances", return_value=(1.0, 20000.0))
+    def test_init_without_skip_staking_propagates_false(self, mock_balances, mock_lc_cls):
+        """Without --skip-staking, full_deploy receives skip_staking=False."""
+        mock_wallet, mock_lc, mock_config = self._make_init_mocks()
+        mock_lc_cls.return_value = mock_lc
+
+        mock_iwa = MagicMock(Wallet=MagicMock(return_value=mock_wallet))
+        with patch.dict("sys.modules", {"iwa.core.wallet": mock_iwa}):
+            with patch("micromech.cli.MicromechConfig") as mock_cfg_cls:
+                mock_cfg_cls.load.return_value = mock_config
+                result = runner.invoke(
+                    app,
+                    ["init", "--yes", "--skip-funding-check", "--chain", "gnosis"],
+                )
+
+        assert result.exit_code == 0
+        mock_lc.full_deploy.assert_called_once()
+        assert mock_lc.full_deploy.call_args.kwargs.get("skip_staking") is False
+
+    @patch("micromech.management.MechLifecycle")
+    def test_init_skip_staking_olas_not_required_in_balance_loop(self, mock_lc_cls):
+        """--skip-staking allows the funding loop to pass with zero OLAS."""
+        mock_wallet, mock_lc, mock_config = self._make_init_mocks()
+        mock_lc_cls.return_value = mock_lc
+
+        mock_iwa = MagicMock(Wallet=MagicMock(return_value=mock_wallet))
+        with patch.dict("sys.modules", {"iwa.core.wallet": mock_iwa}):
+            with patch("micromech.cli.MicromechConfig") as mock_cfg_cls:
+                mock_cfg_cls.load.return_value = mock_config
+                with patch("micromech.cli._check_balances", return_value=(1.0, 0.0)):
+                    result = runner.invoke(
+                        app,
+                        ["init", "--skip-staking", "--yes", "--chain", "gnosis"],
+                    )
+
+        assert result.exit_code == 0
+        mock_lc.full_deploy.assert_called_once()
+        assert mock_lc.full_deploy.call_args.kwargs.get("skip_staking") is True
 
 
 class TestConfigCommand:
@@ -268,6 +326,10 @@ class TestCreateServiceCommand:
         result = runner.invoke(app, ["create-service", "--config", str(config_path)])
         assert result.exit_code == 0
         assert "42" in result.output
+        mock_lc.create_service.assert_called_once_with(
+            agent_id=40,
+            bond_amount_wei=5000 * 10**18,
+        )
 
     @patch("micromech.management.MechLifecycle")
     def test_create_service_failure(self, mock_lc_cls, tmp_path: Path):
