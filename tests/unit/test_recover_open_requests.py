@@ -195,6 +195,14 @@ class TestRequestQueue:
         assert q.get_open(10) == []
         assert q.counts() == {"delivered": 1}
 
+    def test_remember_skipped_prevents_requeue(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        q.remember_skipped(_rid_hex(1), 1, "payment_type_mismatch")
+        q.enqueue_open(_rid_hex(1), 1)
+
+        assert q.get_open(10) == []
+        assert q.counts() == {"skipped": 1}
+
 
 # ── _revalidate_open ──────────────────────────────────────────────────────────
 
@@ -545,6 +553,86 @@ class TestDiscoverOpenRequests:
 
         assert result == [_rid(1)]
         assert q.get_open(10) == [_rid(1)]
+
+    def test_mech_queue_discovery_skips_payment_mismatch_before_status(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        marketplace = MagicMock()
+        mech = MagicMock()
+        good_payment = b"\x11" * 32
+        bad_payment = b"\x22" * 32
+
+        def request_info(rid):
+            fn = MagicMock()
+            fn.call.return_value = (TEST_SAFE, TEST_MECH, TEST_MECH, 1, 20, bad_payment)
+            return fn
+
+        marketplace.functions.mapRequestIdInfos.side_effect = request_info
+        mech.functions.numUndeliveredRequests.return_value.call.return_value = 1
+        mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [_rid(1)]
+        w3 = MagicMock()
+        w3.to_checksum_address.side_effect = lambda x: x
+        w3.eth.contract.side_effect = lambda address, abi: (
+            marketplace if address == TEST_MARKETPLACE else mech
+        )
+
+        with (
+            patch("recover_open_requests.Web3.HTTPProvider"),
+            patch("recover_open_requests.Web3", return_value=w3),
+            patch("time.sleep"),
+        ):
+            result = rec.discover_open_requests_from_mech_queues(
+                ["http://fake"],
+                TEST_MARKETPLACE,
+                [TEST_MECH],
+                delay_status=0,
+                queue=q,
+                payment_type=good_payment,
+            )
+
+        assert result == []
+        marketplace.functions.getRequestStatus.assert_not_called()
+        assert q.counts() == {"skipped": 1}
+
+    def test_mech_queue_discovery_does_not_persist_young_request(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        marketplace = MagicMock()
+        mech = MagicMock()
+        payment = b"\x11" * 32
+
+        marketplace.functions.mapRequestIdInfos.return_value.call.return_value = (
+            TEST_SAFE,
+            TEST_MECH,
+            TEST_MECH,
+            200,
+            20,
+            payment,
+        )
+        mech.functions.numUndeliveredRequests.return_value.call.return_value = 1
+        mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [_rid(1)]
+        w3 = MagicMock()
+        w3.to_checksum_address.side_effect = lambda x: x
+        w3.eth.contract.side_effect = lambda address, abi: (
+            marketplace if address == TEST_MARKETPLACE else mech
+        )
+
+        with (
+            patch("recover_open_requests.Web3.HTTPProvider"),
+            patch("recover_open_requests.Web3", return_value=w3),
+            patch("time.sleep"),
+        ):
+            result = rec.discover_open_requests_from_mech_queues(
+                ["http://fake"],
+                TEST_MARKETPLACE,
+                [TEST_MECH],
+                delay_status=0,
+                queue=q,
+                payment_type=payment,
+                cutoff_block=100,
+            )
+
+        assert result == []
+        marketplace.functions.getRequestStatus.assert_not_called()
+        assert q.counts() == {}
 
     def test_mech_queue_discovery_filters_delivery_rate(self, tmp_path):
         marketplace = MagicMock()

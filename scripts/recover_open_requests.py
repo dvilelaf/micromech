@@ -623,6 +623,31 @@ class RequestQueue:
     def mark_skipped(self, request_ids: list[bytes], reason: str) -> None:
         self._mark(request_ids, "skipped", error=reason)
 
+    def remember_skipped(
+        self,
+        request_id: str,
+        block_number: int | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Persist a request that should not be retried by future discovery runs."""
+        now = int(time.time())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO requests(request_id, status, discovered_block, last_error, updated_at)
+                VALUES (?, 'skipped', ?, ?, ?)
+                ON CONFLICT(request_id) DO UPDATE SET
+                    status = CASE
+                        WHEN requests.status = 'delivered' THEN requests.status
+                        ELSE 'skipped'
+                    END,
+                    discovered_block = COALESCE(requests.discovered_block, excluded.discovered_block),
+                    last_error = excluded.last_error,
+                    updated_at = excluded.updated_at
+                """,
+                (request_id, block_number, reason, now),
+            )
+
     def _mark(
         self,
         request_ids: list[bytes],
@@ -1348,17 +1373,9 @@ def discover_open_requests_from_mech_queues(
                 h = b32_to_hex(rid)
                 if h in known_set:
                     continue
-                try:
-                    status = _rpc_call(
-                        lambda rid=rid: marketplace.functions.getRequestStatus(rid).call(),
-                        name=f"getRequestStatus {h[:18]}",
-                    )
-                except Exception as exc:
-                    log("status failed %s: %s", h[:18], type(exc).__name__, level=logging.WARNING)
-                    time.sleep(delay_status)
-                    continue
 
-                if status == 2 and payment_type is not None:
+                request_block: int | None = None
+                if payment_type is not None:
                     try:
                         info = _rpc_call(
                             lambda rid=rid: marketplace.functions.mapRequestIdInfos(rid).call(),
@@ -1368,12 +1385,16 @@ def discover_open_requests_from_mech_queues(
                         log("request info failed %s: %s", h[:18], type(exc).__name__, level=logging.WARNING)
                         time.sleep(delay_status)
                         continue
+
                     request_payment_type = bytes(info[-1])
+                    request_block = int(info[3])
                     if request_payment_type != payment_type:
                         log("skip paymentType mismatch: %s...", h[:18], level=logging.DEBUG)
+                        known_set.add(h)
+                        if queue:
+                            queue.remember_skipped(h, request_block, "payment_type_mismatch")
                         time.sleep(delay_status)
                         continue
-                    request_block = int(info[3])
                     if not _request_marker_is_old_enough(
                         request_block,
                         cutoff_block=cutoff_block,
@@ -1385,6 +1406,7 @@ def discover_open_requests_from_mech_queues(
                             h[:18],
                             level=logging.DEBUG,
                         )
+                        known_set.add(h)
                         time.sleep(delay_status)
                         continue
                     max_delivery_rate = int(info[4])
@@ -1396,15 +1418,32 @@ def discover_open_requests_from_mech_queues(
                             h[:18],
                             level=logging.DEBUG,
                         )
+                        known_set.add(h)
+                        if queue:
+                            queue.remember_skipped(h, request_block, "max_delivery_rate_too_low")
                         time.sleep(delay_status)
                         continue
+
+                try:
+                    status = _rpc_call(
+                        lambda rid=rid: marketplace.functions.getRequestStatus(rid).call(),
+                        name=f"getRequestStatus {h[:18]}",
+                    )
+                except Exception as exc:
+                    log("status failed %s: %s", h[:18], type(exc).__name__, level=logging.WARNING)
+                    time.sleep(delay_status)
+                    continue
 
                 if status == 2:
                     open_set.add(h)
                     known_set.add(h)
                     if queue:
-                        queue.enqueue_open(h, None)
+                        queue.enqueue_open(h, request_block)
                     log("open via mech queue: %s... total=%s", h[:18], len(open_set))
+                else:
+                    known_set.add(h)
+                    if status == 3 and queue:
+                        queue.remember_skipped(h, request_block, "already_delivered")
                 time.sleep(delay_status)
                 if max_open and len(open_set) >= max_open:
                     break
