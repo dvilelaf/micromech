@@ -24,34 +24,45 @@ async def failed_deliveries_alert_task(
         logger.warning("failed_deliveries_alert_task: queue is None, skipping")
         return
 
-    logger.debug("Checking failed deliveries count...")
+    logger.debug("Checking delivery issue summary...")
 
     try:
-        stats = await asyncio.to_thread(
-            queue.count_by_status,
+        summary = await asyncio.to_thread(
+            queue.failure_summary,
             hours=config.failed_deliveries_alert_interval_hours,
         )
-        failed = stats.get("failed", 0)
+        actionable = summary.get("actionable", 0)
+        timed_out = summary.get("timed_out", 0)
+        other = summary.get("other", 0)
+        already_final = summary.get("already_final", 0)
 
-        if failed >= config.failed_deliveries_alert_threshold:
+        if actionable >= config.failed_deliveries_alert_threshold:
             logger.warning(
-                "Failed deliveries alert: {} failed in last {}h (threshold: {})",
-                failed,
+                "Delivery issues alert: {} actionable failure(s) in last {}h (threshold: {})",
+                actionable,
                 config.failed_deliveries_alert_interval_hours,
                 config.failed_deliveries_alert_threshold,
             )
+            ignored = (
+                f"\nIgnored {already_final} request(s) already final on-chain."
+                if already_final
+                else ""
+            )
             await notification_service.send(
-                "Failed Deliveries Alert",
-                f"{failed} requests created in the last "
-                f"{config.failed_deliveries_alert_interval_hours}h ended as failed "
+                "Delivery Issues Alert",
+                f"{actionable} actionable request issue(s) in the last "
+                f"{config.failed_deliveries_alert_interval_hours}h "
                 f"(threshold: {config.failed_deliveries_alert_threshold}).\n\n"
+                f"Breakdown: {timed_out} on-chain timeout(s), "
+                f"{other} other failure(s)."
+                f"{ignored}\n\n"
                 "Check the dashboard for details.",
                 level="warning",
             )
         else:
             logger.debug(
-                "Failed deliveries OK: {} in last {}h (threshold: {})",
-                failed,
+                "Delivery issues OK: {} actionable in last {}h (threshold: {})",
+                actionable,
                 config.failed_deliveries_alert_interval_hours,
                 config.failed_deliveries_alert_threshold,
             )

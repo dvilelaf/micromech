@@ -339,6 +339,44 @@ class PersistentQueue:
 
         return all_statuses
 
+    def failure_summary(
+        self,
+        chain: Optional[str] = None,
+        hours: Optional[int] = None,
+    ) -> dict[str, int]:
+        """Summarize failed requests by actionable delivery outcome."""
+        query = RequestRow.select().where(RequestRow.status == STATUS_FAILED)
+        query = _chain_filter(query, chain)
+        if hours is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+            query = query.where(RequestRow.updated_at >= cutoff)
+
+        row = query.select(
+            pw.fn.COUNT(RequestRow.request_id).alias("failed"),
+            pw.fn.SUM(
+                pw.Case(
+                    None,
+                    [(RequestRow.error.startswith("on_chain_unavailable:"), 1)],
+                    0,
+                )
+            ).alias("already_final"),
+            pw.fn.SUM(
+                pw.Case(None, [(RequestRow.error == "on_chain_timeout", 1)], 0)
+            ).alias("timed_out"),
+        ).first()
+        failed = int(row.failed or 0)
+        already_final = int(row.already_final or 0)
+        timed_out = int(row.timed_out or 0)
+        actionable = max(failed - already_final, 0)
+        other = max(actionable - timed_out, 0)
+        return {
+            "failed": failed,
+            "actionable": actionable,
+            "timed_out": timed_out,
+            "already_final": already_final,
+            "other": other,
+        }
+
     def count_by_chain(self) -> dict[str, int]:
         """Count total requests per chain."""
         result: dict[str, int] = {}

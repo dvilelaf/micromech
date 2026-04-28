@@ -1,6 +1,6 @@
 """Tests for PersistentQueue aggregate query methods."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from micromech.core.models import MechRequest, ToolResult
 from micromech.core.persistence import PersistentQueue
@@ -108,6 +108,96 @@ class TestOnchainOffchainCounts:
         assert counts["onchain"] == 2
         assert counts["offchain"] == 1
         q.close()
+
+
+class TestFailureSummary:
+    def test_excludes_already_final_from_actionable_count(self, tmp_path):
+        q = PersistentQueue(tmp_path / "test.db")
+        try:
+            req = _make_request("timeout")
+            q.add_request(req)
+            q.mark_executing(req.request_id)
+            q.mark_executed(req.request_id, ToolResult(output="ok", execution_time=0.5))
+            q.mark_timed_out(req.request_id, tx_hash="0x" + "1" * 64)
+
+            req = _make_request("delivery-error")
+            q.add_request(req)
+            q.mark_executing(req.request_id)
+            q.mark_executed(req.request_id, ToolResult(output="ok", execution_time=0.5))
+            q.mark_failed(req.request_id, "tx: reverted")
+
+            req = _make_request("already-final")
+            q.add_request(req)
+            q.mark_executing(req.request_id)
+            q.mark_executed(req.request_id, ToolResult(output="ok", execution_time=0.5))
+            q.mark_failed(req.request_id, "on_chain_unavailable: delivered")
+
+            summary = q.failure_summary(hours=1)
+
+            assert summary == {
+                "failed": 3,
+                "actionable": 2,
+                "timed_out": 1,
+                "already_final": 1,
+                "other": 1,
+            }
+        finally:
+            q.close()
+
+    def test_uses_failure_update_time_for_recent_window(self, tmp_path):
+        q = PersistentQueue(tmp_path / "test.db")
+        try:
+            req = _make_request("old-created-recent-fail")
+            req.created_at = datetime.now(timezone.utc) - timedelta(hours=2)
+            q.add_request(req)
+            q.mark_executing(req.request_id)
+            q.mark_executed(req.request_id, ToolResult(output="ok", execution_time=0.5))
+            q.mark_failed(req.request_id, "tx: reverted")
+
+            summary = q.failure_summary(hours=1)
+
+            assert summary["actionable"] == 1
+            assert summary["other"] == 1
+        finally:
+            q.close()
+
+    def test_excludes_old_failures_from_recent_window(self, tmp_path):
+        q = PersistentQueue(tmp_path / "test.db")
+        try:
+            req = _make_request("old-fail")
+            q.add_request(req)
+            q.mark_executing(req.request_id)
+            q.mark_executed(req.request_id, ToolResult(output="ok", execution_time=0.5))
+            q.mark_failed(req.request_id, "tx: reverted")
+
+            req = _make_request("old-final")
+            q.add_request(req)
+            q.mark_executing(req.request_id)
+            q.mark_executed(req.request_id, ToolResult(output="ok", execution_time=0.5))
+            q.mark_failed(req.request_id, "on_chain_unavailable: delivered")
+
+            old_time = datetime.now(timezone.utc) - timedelta(hours=2)
+            from micromech.core.persistence import RequestRow
+
+            RequestRow.update(updated_at=old_time).where(
+                RequestRow.request_id.in_(["old-fail", "old-final"])
+            ).execute()
+
+            recent = q.failure_summary(hours=1)
+            all_time = q.failure_summary(hours=None)
+
+            assert recent == {
+                "failed": 0,
+                "actionable": 0,
+                "timed_out": 0,
+                "already_final": 0,
+                "other": 0,
+            }
+            assert all_time["failed"] == 2
+            assert all_time["actionable"] == 1
+            assert all_time["already_final"] == 1
+        finally:
+            q.close()
 
 
 class TestChainFiltering:
