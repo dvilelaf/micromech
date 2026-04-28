@@ -147,6 +147,23 @@ MECH_ABI = [
         "stateMutability": "view",
         "type": "function",
     },
+    {
+        "inputs": [],
+        "name": "numUndeliveredRequests",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"name": "size", "type": "uint256"},
+            {"name": "offset", "type": "uint256"},
+        ],
+        "name": "getUndeliveredRequestIds",
+        "outputs": [{"name": "requestIds", "type": "bytes32[]"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
 ]
 
 BALANCE_TRACKER_ABI = [
@@ -836,6 +853,161 @@ def discover_open_requests(
     return result
 
 
+def _load_mech_sources(args: argparse.Namespace) -> list[str]:
+    """Load explicit priority mech addresses for queue-based discovery."""
+    values: list[str] = []
+    if args.priority_mechs:
+        values.extend(x.strip() for x in args.priority_mechs.split(","))
+    if args.priority_mechs_file:
+        path = Path(args.priority_mechs_file).expanduser()
+        values.extend(
+            line.split("#", 1)[0].strip()
+            for line in path.read_text().splitlines()
+        )
+
+    mechs: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if not value:
+            continue
+        try:
+            mech = Web3.to_checksum_address(value)
+        except ValueError as exc:
+            raise ValueError(f"invalid mech address: {value}") from exc
+        key = mech.lower()
+        if key not in seen:
+            seen.add(key)
+            mechs.append(mech)
+    return mechs
+
+
+def discover_open_requests_from_mech_queues(
+    rpc_urls: list[str],
+    marketplace_addr: str,
+    mech_addresses: list[str],
+    *,
+    page_size: int = 100,
+    delay_status: float = DELAY_STATUS,
+    checkpoint: Path | None = None,
+    queue: RequestQueue | None = None,
+    max_open: int | None = None,
+) -> list[bytes]:
+    """Read priority mech queues and keep marketplace-expired requests only."""
+    if page_size <= 0:
+        raise ValueError("page_size must be > 0")
+    if not mech_addresses:
+        raise ValueError("at least one priority mech address is required")
+
+    cp = (
+        load_checkpoint(checkpoint)
+        if checkpoint
+        else {
+            "open_requests": [],
+            "delivered": [],
+            "last_scanned_block": None,
+            "scan_from_block": None,
+        }
+    )
+    open_set = set(cp.get("open_requests", []))
+    delivered_set = set(cp.get("delivered", []))
+
+    w3, _ = _connect(rpc_urls)
+    web3 = _rpc_web3(w3)
+    marketplace = _make_marketplace(web3, marketplace_addr)
+    total_candidates = 0
+
+    log(
+        "Mech-queue discovery: %s priority mech(s), page_size=%s",
+        len(mech_addresses),
+        page_size,
+    )
+    for mech_addr in mech_addresses:
+        mech_addr = Web3.to_checksum_address(mech_addr)
+        mech = web3.eth.contract(address=web3.to_checksum_address(mech_addr), abi=MECH_ABI)
+        try:
+            n_undelivered = _rpc_call(
+                lambda mech=mech: mech.functions.numUndeliveredRequests().call(),
+                name=f"mech {mech_addr[:10]} numUndeliveredRequests",
+            )
+        except Exception as exc:
+            log(
+                "mech %s: cannot read numUndeliveredRequests (%s)",
+                mech_addr,
+                type(exc).__name__,
+                level=logging.WARNING,
+            )
+            continue
+
+        log("mech %s: %s undelivered candidate(s)", mech_addr, n_undelivered)
+        offset = 0
+        while offset < n_undelivered:
+            size = min(page_size, n_undelivered - offset)
+            try:
+                request_ids = _rpc_call(
+                    lambda mech=mech, size=size, offset=offset: mech.functions.getUndeliveredRequestIds(
+                        size,
+                        offset,
+                    ).call(),
+                    name=f"mech {mech_addr[:10]} getUndeliveredRequestIds {offset}+{size}",
+                )
+            except Exception as exc:
+                log(
+                    "mech %s: page offset=%s size=%s failed (%s)",
+                    mech_addr,
+                    offset,
+                    size,
+                    type(exc).__name__,
+                    level=logging.WARNING,
+                )
+                break
+
+            total_candidates += len(request_ids)
+            for rid in request_ids:
+                rid = bytes(rid)
+                h = b32_to_hex(rid)
+                if h in delivered_set:
+                    continue
+                try:
+                    status = _rpc_call(
+                        lambda rid=rid: marketplace.functions.getRequestStatus(rid).call(),
+                        name=f"getRequestStatus {h[:18]}",
+                    )
+                except Exception as exc:
+                    log("status failed %s: %s", h[:18], type(exc).__name__, level=logging.WARNING)
+                    time.sleep(delay_status)
+                    continue
+
+                if status == 2:
+                    open_set.add(h)
+                    if queue:
+                        queue.enqueue_open(h, None)
+                    log("open via mech queue: %s... total=%s", h[:18], len(open_set))
+                time.sleep(delay_status)
+                if max_open and len(open_set) >= max_open:
+                    break
+
+            if checkpoint:
+                cp["open_requests"] = sorted(open_set)
+                cp["mech_queue_source_count"] = len(mech_addresses)
+                cp["mech_queue_candidates_seen"] = total_candidates
+                save_checkpoint(checkpoint, cp)
+
+            if max_open and len(open_set) >= max_open:
+                break
+            offset += size
+
+        if max_open and len(open_set) >= max_open:
+            break
+
+    result = [hex_to_b32(h) for h in sorted(open_set)]
+    log(
+        "Mech-queue discovery complete: %s open request(s), %s candidate(s) checked",
+        len(result),
+        total_candidates,
+    )
+    return result
+
+
 # ── Delivery (Anvil impersonation) ─────────────────────────────────────────────
 
 
@@ -1257,6 +1429,26 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
     cp = load_checkpoint(checkpoint)
     rpc_list = _rpc_list(args, runtime.chain)
 
+    if args.discovery_source == "mech-queues":
+        try:
+            mechs = _load_mech_sources(args)
+        except Exception as exc:
+            log("priority mech source: %s", exc, level=logging.ERROR)
+            sys.exit(1)
+        open_requests = discover_open_requests_from_mech_queues(
+            rpc_list,
+            runtime.marketplace_addr,
+            mechs,
+            page_size=args.mech_queue_page_size,
+            delay_status=DELAY_STATUS,
+            checkpoint=checkpoint,
+            queue=queue,
+            max_open=args.max_discover,
+        )
+        log("Found %s open request(s). Checkpoint: %s", len(open_requests), checkpoint)
+        log("Queue: %s counts=%s", queue.path, queue.counts())
+        return
+
     w3, _ = _connect(rpc_list)
     current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
     scan_to = current - BLOCKS_24H
@@ -1315,6 +1507,7 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
         checkpoint=checkpoint,
         resume_from=resume_from,
         queue=queue,
+        max_open=args.max_discover,
     )
     log("Found %s open request(s). Checkpoint: %s", len(open_requests), checkpoint)
     log("Queue: %s counts=%s", queue.path, queue.counts())
@@ -1489,6 +1682,34 @@ def main() -> None:
     parser.add_argument("--log", default=str(DEFAULT_LOG), help="Path to log file")
     parser.add_argument("--verbose", action="store_true", help="Enable debug console logs")
     parser.add_argument("--no-iwa", action="store_true", help="Disable iwa RPC retry/rotation")
+    parser.add_argument(
+        "--discovery-source",
+        choices=["marketplace-logs", "mech-queues"],
+        default="marketplace-logs",
+        help="How --mode discover finds request IDs",
+    )
+    parser.add_argument(
+        "--priority-mechs",
+        default=None,
+        help="Comma-separated priority mech addresses for --discovery-source mech-queues",
+    )
+    parser.add_argument(
+        "--priority-mechs-file",
+        default=None,
+        help="File with one priority mech address per line for --discovery-source mech-queues",
+    )
+    parser.add_argument(
+        "--mech-queue-page-size",
+        type=int,
+        default=100,
+        help="Number of request IDs per getUndeliveredRequestIds page",
+    )
+    parser.add_argument(
+        "--max-discover",
+        type=int,
+        default=None,
+        help="Stop discovery after this many open requests are found",
+    )
     parser.add_argument(
         "--max-deliver",
         type=int,

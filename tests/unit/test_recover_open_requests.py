@@ -453,6 +453,51 @@ class TestDiscoverOpenRequests:
             )
         assert q.get_open(10) == [_rid(1)]
 
+    def test_mech_queue_discovery_filters_expired(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        marketplace = MagicMock()
+        mech = MagicMock()
+
+        def status_for(rid):
+            n = int.from_bytes(rid, "big")
+            fn = MagicMock()
+            fn.call.return_value = {1: 2, 2: 1, 3: 3}.get(n, 0)
+            return fn
+
+        marketplace.functions.getRequestStatus.side_effect = status_for
+        mech.functions.numUndeliveredRequests.return_value.call.return_value = 3
+
+        def get_ids(size, offset):
+            fn = MagicMock()
+            ids = [_rid(1), _rid(2), _rid(3)]
+            fn.call.return_value = ids[offset : offset + size]
+            return fn
+
+        mech.functions.getUndeliveredRequestIds.side_effect = get_ids
+        w3 = MagicMock()
+        w3.to_checksum_address.side_effect = lambda x: x
+        w3.eth.contract.side_effect = lambda address, abi: (
+            marketplace if address == TEST_MARKETPLACE else mech
+        )
+
+        with (
+            patch("recover_open_requests.Web3.HTTPProvider"),
+            patch("recover_open_requests.Web3", return_value=w3),
+            patch("time.sleep"),
+        ):
+            result = rec.discover_open_requests_from_mech_queues(
+                ["http://fake"],
+                TEST_MARKETPLACE,
+                [TEST_MECH],
+                page_size=2,
+                delay_status=0,
+                checkpoint=tmp_path / "recover.json",
+                queue=q,
+            )
+
+        assert result == [_rid(1)]
+        assert q.get_open(10) == [_rid(1)]
+
     def test_max_open_stops_early(self):
         # Two windows each with 3 open requests
         events = {(0, 999): [1, 2, 3], (1000, 1999): [4, 5, 6]}
