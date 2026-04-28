@@ -498,6 +498,70 @@ class TestDiscoverOpenRequests:
         assert result == [_rid(1)]
         assert q.get_open(10) == [_rid(1)]
 
+    def test_discovers_priority_mechs_from_create_events(self, tmp_path):
+        mech_addr = "0x" + "a" * 40
+        marketplace = MagicMock()
+        event_log = MagicMock()
+        event_log.__getitem__ = lambda self, k: (
+            {"mech": mech_addr} if k == "args" else MagicMock()
+        )
+        marketplace.events.CreateMech.get_logs.return_value = [event_log]
+        w3 = MagicMock()
+        w3.to_checksum_address.side_effect = lambda x: x
+        w3.eth.contract.return_value = marketplace
+        cache = tmp_path / "recover_mechs.json"
+
+        with (
+            patch("recover_open_requests._connect", return_value=(w3, "http://fake")),
+            patch("time.sleep"),
+        ):
+            result = rec.discover_priority_mechs(
+                ["http://fake"],
+                TEST_MARKETPLACE,
+                cache_path=cache,
+                from_block=100,
+                to_block=100,
+                window=1,
+            )
+
+        assert result == [rec.Web3.to_checksum_address(mech_addr)]
+        cached = json.loads(cache.read_text())
+        assert cached["last_scanned_block"] == 100
+        assert cached["mechs"] == result
+
+    def test_discovers_priority_mechs_from_blockscout(self, tmp_path):
+        mech_addr = "0x" + "b" * 40
+        topic0 = "0x" + rec.Web3.keccak(text="MarketplaceRequest(address,address,uint256,bytes32[],bytes[])").hex()
+        topic1 = "0x" + "0" * 24 + mech_addr[2:]
+        cache = tmp_path / "recover_mechs.json"
+
+        with patch(
+            "recover_open_requests._blockscout_get_json",
+            return_value={
+                "items": [
+                    {
+                        "block_number": 123,
+                        "topics": [topic0, topic1],
+                        "decoded": {
+                            "parameters": [
+                                {"name": "priorityMech", "value": mech_addr},
+                            ]
+                        },
+                    }
+                ],
+                "next_page_params": None,
+            },
+        ):
+            result = rec.discover_priority_mechs_blockscout(
+                TEST_MARKETPLACE,
+                cache_path=cache,
+                from_block=1,
+                to_block=200,
+            )
+
+        assert result == [rec.Web3.to_checksum_address(mech_addr)]
+        assert json.loads(cache.read_text())["mechs"] == result
+
     def test_max_open_stops_early(self):
         # Two windows each with 3 open requests
         events = {(0, 999): [1, 2, 3], (1000, 1999): [4, 5, 6]}

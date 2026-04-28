@@ -46,6 +46,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from web3 import Web3
@@ -73,6 +75,8 @@ LOG_WINDOW = 1000  # blocks per get_logs window (Gnosis public RPCs accept 1000-
 DEFAULT_CHECKPOINT = Path(__file__).resolve().with_name("recover.json")
 DEFAULT_QUEUE = Path(__file__).resolve().with_name("recover_queue.sqlite")
 DEFAULT_LOG = Path(__file__).resolve().with_name("recover.log")
+DEFAULT_MECHS_CACHE = Path(__file__).resolve().with_name("recover_mechs.json")
+DEFAULT_BLOCKSCOUT_API = "https://gnosis.blockscout.com/api/v2"
 
 _HEX32_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 _PRIVKEY_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
@@ -102,6 +106,16 @@ MARKETPLACE_ABI = [
         "outputs": [{"name": "", "type": "uint256"}],
         "stateMutability": "view",
         "type": "function",
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "mech", "type": "address"},
+            {"indexed": True, "name": "serviceId", "type": "uint256"},
+            {"indexed": True, "name": "mechFactory", "type": "address"},
+        ],
+        "name": "CreateMech",
+        "type": "event",
     },
     {
         "anonymous": False,
@@ -881,6 +895,275 @@ def _load_mech_sources(args: argparse.Namespace) -> list[str]:
     return mechs
 
 
+def _load_mechs_cache(path: Path, marketplace_addr: str) -> dict:
+    if not path.exists():
+        return {"marketplace": marketplace_addr, "last_scanned_block": None, "mechs": []}
+    try:
+        data = json.loads(path.read_text())
+    except Exception as exc:
+        log("Mechs cache unreadable (%s) — rebuilding", exc, level=logging.WARNING)
+        return {"marketplace": marketplace_addr, "last_scanned_block": None, "mechs": []}
+    if str(data.get("marketplace", "")).lower() != marketplace_addr.lower():
+        log("Mechs cache marketplace mismatch — rebuilding", level=logging.WARNING)
+        return {"marketplace": marketplace_addr, "last_scanned_block": None, "mechs": []}
+    mechs = []
+    seen = set()
+    for value in data.get("mechs", []):
+        try:
+            mech = Web3.to_checksum_address(value)
+        except ValueError:
+            continue
+        key = mech.lower()
+        if key not in seen:
+            seen.add(key)
+            mechs.append(mech)
+    return {
+        "marketplace": Web3.to_checksum_address(marketplace_addr),
+        "last_scanned_block": data.get("last_scanned_block"),
+        "mechs": mechs,
+    }
+
+
+def _save_mechs_cache(path: Path, data: dict) -> None:
+    path = path.expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+    tmp.replace(path)
+    path.chmod(0o600)
+
+
+def _blockscout_get_json(
+    api_base: str,
+    path: str,
+    params: dict | None = None,
+    *,
+    retries: int = 5,
+) -> dict:
+    query = urllib.parse.urlencode(params or {})
+    url = api_base.rstrip("/") + path
+    if query:
+        url += "?" + query
+    req = urllib.request.Request(
+        url,
+        headers={
+            "accept": "application/json",
+            "user-agent": "micromech-recover/1.0",
+        },
+    )
+    last_exc: Exception | None = None
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except Exception as exc:
+            last_exc = exc
+            delay = min(30.0, 2.0**attempt)
+            log("Blockscout request failed (%s); retrying in %.1fs", type(exc).__name__, delay, level=logging.WARNING)
+            time.sleep(delay)
+    raise last_exc or RuntimeError("Blockscout request failed")
+
+
+def discover_priority_mechs_blockscout(
+    marketplace_addr: str,
+    *,
+    cache_path: Path,
+    from_block: int = MARKETPLACE_DEPLOY_BLOCK,
+    to_block: int | None = None,
+    api_base: str = DEFAULT_BLOCKSCOUT_API,
+    refresh: bool = False,
+    max_pages: int | None = None,
+) -> list[str]:
+    """Discover mechs from Blockscout address logs when RPC getLogs is unavailable."""
+    marketplace_addr = Web3.to_checksum_address(marketplace_addr)
+    cache = (
+        {"marketplace": marketplace_addr, "last_scanned_block": None, "mechs": []}
+        if refresh
+        else _load_mechs_cache(cache_path, marketplace_addr)
+    )
+    mechs = list(cache.get("mechs", []))
+    seen = {m.lower() for m in mechs}
+    cached_to = int(cache["last_scanned_block"]) if cache.get("last_scanned_block") else None
+    stop_block = cached_to if cached_to is not None and not refresh else from_block - 1
+
+    if to_block is None and cached_to is not None and not refresh:
+        log("Using cached mech list: %s mech(s), scanned to block %s", len(mechs), cached_to)
+        return mechs
+
+    create_topic = Web3.keccak(text="CreateMech(address,uint256,address)").hex()
+    request_topic = Web3.keccak(text="MarketplaceRequest(address,address,uint256,bytes32[],bytes[])").hex()
+    if not create_topic.startswith("0x"):
+        create_topic = "0x" + create_topic
+    if not request_topic.startswith("0x"):
+        request_topic = "0x" + request_topic
+
+    path = f"/addresses/{marketplace_addr}/logs"
+    params: dict[str, str | int] = {}
+    pages = 0
+    lowest_seen: int | None = None
+    highest_seen = cached_to or 0
+    log("Discovering mechs from Blockscout logs: %s", api_base)
+
+    while True:
+        data = _blockscout_get_json(api_base, path, params)
+        items = data.get("items", [])
+        pages += 1
+        if not items:
+            break
+
+        for item in items:
+            block_number = int(item["block_number"])
+            lowest_seen = block_number if lowest_seen is None else min(lowest_seen, block_number)
+            highest_seen = max(highest_seen, block_number)
+            if to_block is not None and block_number > to_block:
+                continue
+            if block_number <= stop_block:
+                break
+            topics = item.get("topics") or []
+            if not topics:
+                continue
+            topic0 = str(topics[0]).lower()
+            mech = None
+            if topic0 == create_topic.lower() and len(topics) >= 2:
+                mech = Web3.to_checksum_address("0x" + str(topics[1])[-40:])
+            elif topic0 == request_topic.lower():
+                for parameter in (item.get("decoded") or {}).get("parameters") or []:
+                    if parameter.get("name") == "priorityMech":
+                        mech = Web3.to_checksum_address(parameter["value"])
+                        break
+                if mech is None and len(topics) >= 2:
+                    mech = Web3.to_checksum_address("0x" + str(topics[1])[-40:])
+            if mech is None:
+                continue
+            key = mech.lower()
+            if key not in seen:
+                seen.add(key)
+                mechs.append(mech)
+                log("priority mech discovered via Blockscout: %s total=%s", mech, len(mechs))
+
+        _save_mechs_cache(
+            cache_path,
+            {
+                "marketplace": marketplace_addr,
+                "last_scanned_block": cached_to,
+                "blockscout_partial": True,
+                "mechs": mechs,
+            },
+        )
+        if lowest_seen is not None and lowest_seen <= stop_block:
+            break
+        if max_pages is not None and pages >= max_pages:
+            log("Blockscout mech discovery stopped at max_pages=%s", max_pages, level=logging.WARNING)
+            break
+        next_params = data.get("next_page_params")
+        if not next_params:
+            break
+        params = next_params
+        if pages % 50 == 0:
+            log("Blockscout mech discovery progress: pages=%s lowest_block=%s mechs=%s", pages, lowest_seen, len(mechs))
+        time.sleep(0.2)
+
+    if to_block is not None:
+        highest_seen = max(highest_seen, to_block)
+    cache = {
+        "marketplace": marketplace_addr,
+        "last_scanned_block": highest_seen or to_block,
+        "blockscout_partial": max_pages is not None and pages >= max_pages,
+        "mechs": mechs,
+    }
+    _save_mechs_cache(cache_path, cache)
+    log("Blockscout mech discovery complete: %s mech(s), pages=%s. Cache: %s", len(mechs), pages, cache_path)
+    return mechs
+
+
+def discover_priority_mechs(
+    rpc_urls: list[str],
+    marketplace_addr: str,
+    *,
+    cache_path: Path,
+    from_block: int = MARKETPLACE_DEPLOY_BLOCK,
+    to_block: int | None = None,
+    window: int = LOG_WINDOW,
+    refresh: bool = False,
+) -> list[str]:
+    """Discover Olas mech addresses from Marketplace CreateMech events."""
+    if window <= 0:
+        raise ValueError("mech discovery window must be > 0")
+
+    marketplace_addr = Web3.to_checksum_address(marketplace_addr)
+    cache = (
+        {"marketplace": marketplace_addr, "last_scanned_block": None, "mechs": []}
+        if refresh
+        else _load_mechs_cache(cache_path, marketplace_addr)
+    )
+    mechs = list(cache.get("mechs", []))
+    seen = {m.lower() for m in mechs}
+
+    w3, _ = _connect(rpc_urls)
+    web3 = _rpc_web3(w3)
+    marketplace = _make_marketplace(web3, marketplace_addr)
+    if to_block is None:
+        to_block = _rpc_call(lambda: web3.eth.block_number, name="current block")
+
+    start = from_block
+    if cache.get("last_scanned_block") is not None and not refresh:
+        start = max(start, int(cache["last_scanned_block"]) + 1)
+
+    if start > to_block:
+        log("Mechs cache up to date: %s mech(s), scanned to block %s", len(mechs), cache.get("last_scanned_block"))
+        return mechs
+
+    n_windows = max(1, (to_block - start) // window + 1)
+    log(
+        "Discovering mechs from CreateMech logs: %s windows of %s blocks (%s -> %s)",
+        n_windows,
+        window,
+        start,
+        to_block,
+    )
+
+    for wi, from_b in enumerate(range(start, to_block + 1, window)):
+        to_b = min(from_b + window - 1, to_block)
+        try:
+            logs = _rpc_call(
+                lambda from_b=from_b, to_b=to_b: marketplace.events.CreateMech.get_logs(
+                    from_block=from_b,
+                    to_block=to_b,
+                ),
+                name=f"CreateMech logs {from_b}-{to_b}",
+            )
+        except Exception as exc:
+            log(
+                "CreateMech logs %s-%s failed (%s); aborting to avoid gaps",
+                from_b,
+                to_b,
+                type(exc).__name__,
+                level=logging.ERROR,
+            )
+            raise
+
+        for event_log in logs:
+            mech = Web3.to_checksum_address(event_log["args"]["mech"])
+            key = mech.lower()
+            if key not in seen:
+                seen.add(key)
+                mechs.append(mech)
+                log("mech discovered: %s total=%s", mech, len(mechs))
+
+        cache = {
+            "marketplace": marketplace_addr,
+            "last_scanned_block": to_b,
+            "mechs": mechs,
+        }
+        _save_mechs_cache(cache_path, cache)
+        if wi % 100 == 0:
+            log("Mech discovery progress: block %s/%s mechs=%s", to_b, to_block, len(mechs))
+        time.sleep(DELAY_LOGS)
+
+    log("Mech discovery complete: %s mech(s). Cache: %s", len(mechs), cache_path)
+    return mechs
+
+
 def discover_open_requests_from_mech_queues(
     rpc_urls: list[str],
     marketplace_addr: str,
@@ -1432,8 +1715,48 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
     if args.discovery_source == "mech-queues":
         try:
             mechs = _load_mech_sources(args)
+            if not mechs:
+                w3, _ = _connect(rpc_list)
+                current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
+                if args.lookback_days is not None:
+                    mech_from_block = current - int(args.lookback_days * 24 * 3600 / GNOSIS_BLOCK_TIME)
+                else:
+                    mech_from_block = MARKETPLACE_DEPLOY_BLOCK
+                if args.mech_discovery_provider in ("rpc", "auto"):
+                    try:
+                        mechs = discover_priority_mechs(
+                            rpc_list,
+                            runtime.marketplace_addr,
+                            cache_path=Path(args.mechs_cache),
+                            from_block=mech_from_block,
+                            to_block=current,
+                            window=args.mech_discovery_window,
+                            refresh=args.refresh_mechs,
+                        )
+                    except Exception as exc:
+                        if args.mech_discovery_provider == "rpc":
+                            raise
+                        log(
+                            "RPC mech discovery failed (%s); falling back to Blockscout",
+                            type(exc).__name__,
+                            level=logging.WARNING,
+                        )
+                        mechs = []
+                if not mechs and args.mech_discovery_provider in ("blockscout", "auto"):
+                    mechs = discover_priority_mechs_blockscout(
+                        runtime.marketplace_addr,
+                        cache_path=Path(args.mechs_cache),
+                        from_block=mech_from_block,
+                        to_block=current,
+                        api_base=args.blockscout_api,
+                        refresh=args.refresh_mechs,
+                        max_pages=args.blockscout_max_pages,
+                    )
         except Exception as exc:
             log("priority mech source: %s", exc, level=logging.ERROR)
+            sys.exit(1)
+        if not mechs:
+            log("No priority mechs found; cannot use mech-queues discovery", level=logging.ERROR)
             sys.exit(1)
         open_requests = discover_open_requests_from_mech_queues(
             rpc_list,
@@ -1680,6 +2003,7 @@ def main() -> None:
     parser.add_argument("--checkpoint", default=str(DEFAULT_CHECKPOINT))
     parser.add_argument("--queue", default=str(DEFAULT_QUEUE), help="Path to SQLite request queue")
     parser.add_argument("--log", default=str(DEFAULT_LOG), help="Path to log file")
+    parser.add_argument("--mechs-cache", default=str(DEFAULT_MECHS_CACHE), help="Path to priority mech cache")
     parser.add_argument("--verbose", action="store_true", help="Enable debug console logs")
     parser.add_argument("--no-iwa", action="store_true", help="Disable iwa RPC retry/rotation")
     parser.add_argument(
@@ -1703,6 +2027,34 @@ def main() -> None:
         type=int,
         default=100,
         help="Number of request IDs per getUndeliveredRequestIds page",
+    )
+    parser.add_argument(
+        "--mech-discovery-window",
+        type=int,
+        default=LOG_WINDOW,
+        help="Block window for CreateMech log discovery",
+    )
+    parser.add_argument(
+        "--mech-discovery-provider",
+        choices=["auto", "rpc", "blockscout"],
+        default="auto",
+        help="How to discover priority mechs when no explicit list is provided",
+    )
+    parser.add_argument(
+        "--blockscout-api",
+        default=DEFAULT_BLOCKSCOUT_API,
+        help="Blockscout API v2 base URL for mech discovery fallback",
+    )
+    parser.add_argument(
+        "--blockscout-max-pages",
+        type=int,
+        default=None,
+        help="Optional safety cap for Blockscout address log pages",
+    )
+    parser.add_argument(
+        "--refresh-mechs",
+        action="store_true",
+        help="Ignore recover_mechs.json and rebuild priority mech cache",
     )
     parser.add_argument(
         "--max-discover",
