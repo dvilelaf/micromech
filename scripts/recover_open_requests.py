@@ -1368,10 +1368,14 @@ def discover_open_requests_from_mech_queues(
                 break
 
             total_candidates += len(request_ids)
+            page_opened = 0
+            page_skipped = 0
+            page_known = 0
             for rid in request_ids:
                 rid = bytes(rid)
                 h = b32_to_hex(rid)
                 if h in known_set:
+                    page_known += 1
                     continue
 
                 request_block: int | None = None
@@ -1391,6 +1395,7 @@ def discover_open_requests_from_mech_queues(
                     if request_payment_type != payment_type:
                         log("skip paymentType mismatch: %s...", h[:18], level=logging.DEBUG)
                         known_set.add(h)
+                        page_skipped += 1
                         if queue:
                             queue.remember_skipped(h, request_block, "payment_type_mismatch")
                         time.sleep(delay_status)
@@ -1407,6 +1412,7 @@ def discover_open_requests_from_mech_queues(
                             level=logging.DEBUG,
                         )
                         known_set.add(h)
+                        page_skipped += 1
                         time.sleep(delay_status)
                         continue
                     max_delivery_rate = int(info[4])
@@ -1419,6 +1425,7 @@ def discover_open_requests_from_mech_queues(
                             level=logging.DEBUG,
                         )
                         known_set.add(h)
+                        page_skipped += 1
                         if queue:
                             queue.remember_skipped(h, request_block, "max_delivery_rate_too_low")
                         time.sleep(delay_status)
@@ -1439,14 +1446,29 @@ def discover_open_requests_from_mech_queues(
                     known_set.add(h)
                     if queue:
                         queue.enqueue_open(h, request_block)
+                    page_opened += 1
                     log("open via mech queue: %s... total=%s", h[:18], len(open_set))
                 else:
                     known_set.add(h)
                     if status == 3 and queue:
                         queue.remember_skipped(h, request_block, "already_delivered")
+                    page_skipped += 1
                 time.sleep(delay_status)
                 if max_open and len(open_set) >= max_open:
                     break
+
+            if n_undelivered >= page_size * 4:
+                log(
+                    "mech %s progress: offset=%s/%s page=%s known=%s opened=%s skipped=%s queue=%s",
+                    mech_addr,
+                    offset + size,
+                    n_undelivered,
+                    len(request_ids),
+                    page_known,
+                    page_opened,
+                    page_skipped,
+                    queue.counts() if queue else {},
+                )
 
             if checkpoint:
                 cp["open_requests"] = sorted(open_set)
@@ -1952,7 +1974,7 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
             runtime.marketplace_addr,
             mechs,
             page_size=args.mech_queue_page_size,
-            delay_status=DELAY_STATUS,
+            delay_status=args.mech_queue_delay_status,
             checkpoint=checkpoint,
             queue=queue,
             max_open=args.max_discover,
@@ -2226,6 +2248,12 @@ def main() -> None:
         type=int,
         default=250,
         help="Number of request IDs per getUndeliveredRequestIds page",
+    )
+    parser.add_argument(
+        "--mech-queue-delay-status",
+        type=float,
+        default=0.05,
+        help="Delay between per-request mech-queue checks; iwa handles RPC retry/rotation",
     )
     parser.add_argument(
         "--mech-discovery-window",
