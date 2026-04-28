@@ -725,28 +725,41 @@ def _revalidate_open(
     marketplace_addr: str,
     delay: float = DELAY_STATUS,
     rpc_urls: list[str] | None = None,
+    cutoff_block: int | None = None,
+    cutoff_timestamp: int | None = None,
 ) -> list[bytes]:
-    """Check status on-chain for each id. Returns only those still at status=2.
+    """Check status/age on-chain. Returns only still-status=2 and old enough.
 
     If rpc_urls is provided, rotates to the next RPC on failure.
     """
     rpc_idx = 0
-    still_open, skipped = [], 0
+    still_open, skipped_status, skipped_age = [], 0, 0
     for rid in request_ids:
         n_attempts = len(rpc_urls) if rpc_urls else 1
         for _ in range(n_attempts):
             try:
+                marketplace = _make_marketplace(_rpc_web3(w3), marketplace_addr)
                 status = _rpc_call(
-                    lambda: _make_marketplace(
-                        _rpc_web3(w3),
-                        marketplace_addr,
-                    ).functions.getRequestStatus(rid).call(),
+                    lambda: marketplace.functions.getRequestStatus(rid).call(),
                     name=f"revalidate {b32_to_hex(rid)[:18]}",
                 )
                 if status == 2:
+                    if cutoff_block is not None:
+                        info = _rpc_call(
+                            lambda: marketplace.functions.mapRequestIdInfos(rid).call(),
+                            name=f"revalidate info {b32_to_hex(rid)[:18]}",
+                        )
+                        request_block = int(info[3])
+                        if not _request_marker_is_old_enough(
+                            request_block,
+                            cutoff_block=cutoff_block,
+                            cutoff_timestamp=cutoff_timestamp,
+                        ):
+                            skipped_age += 1
+                            break
                     still_open.append(rid)
                 else:
-                    skipped += 1
+                    skipped_status += 1
                 break
             except Exception as e:
                 log("status check %s: %s", b32_to_hex(rid)[:18], type(e).__name__, level=logging.WARNING)
@@ -755,9 +768,32 @@ def _revalidate_open(
                     url = rpc_urls[rpc_idx % len(rpc_urls)]
                     w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 30}))
         time.sleep(delay)
-    if skipped:
-        log("Re-validation: %s no longer status=2 — filtered out", skipped)
+    if skipped_status:
+        log("Re-validation: %s no longer status=2 — filtered out", skipped_status)
+    if skipped_age:
+        log("Re-validation: %s younger than 24h cutoff — filtered out", skipped_age)
     return still_open
+
+
+def _request_marker_is_old_enough(
+    request_marker: int,
+    *,
+    cutoff_block: int | None,
+    cutoff_timestamp: int | None,
+) -> bool:
+    """Return whether a request marker is older than the 24h cutoff.
+
+    Some deployed Marketplace versions expose a field named requestBlockNumber
+    that contains a Unix timestamp. Treat large values as timestamps and normal
+    chain-height-sized values as block numbers.
+    """
+    if request_marker >= 1_000_000_000:
+        if cutoff_timestamp is None:
+            return True
+        return request_marker <= cutoff_timestamp
+    if cutoff_block is None:
+        return True
+    return request_marker <= cutoff_block
 
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
@@ -1226,6 +1262,8 @@ def discover_open_requests_from_mech_queues(
     max_open: int | None = None,
     payment_type: bytes | None = None,
     delivery_rate: int | None = None,
+    cutoff_block: int | None = None,
+    cutoff_timestamp: int | None = None,
 ) -> list[bytes]:
     """Read priority mech queues and keep marketplace-expired requests only."""
     if page_size <= 0:
@@ -1325,6 +1363,20 @@ def discover_open_requests_from_mech_queues(
                     request_payment_type = bytes(info[-1])
                     if request_payment_type != payment_type:
                         log("skip paymentType mismatch: %s...", h[:18], level=logging.DEBUG)
+                        time.sleep(delay_status)
+                        continue
+                    request_block = int(info[3])
+                    if not _request_marker_is_old_enough(
+                        request_block,
+                        cutoff_block=cutoff_block,
+                        cutoff_timestamp=cutoff_timestamp,
+                    ):
+                        log(
+                            "skip younger than 24h cutoff marker %s: %s...",
+                            request_block,
+                            h[:18],
+                            level=logging.DEBUG,
+                        )
                         time.sleep(delay_status)
                         continue
                     max_delivery_rate = int(info[4])
@@ -1550,6 +1602,8 @@ def deliver_all(
     checkpoint: Path | None = None,
     rpc_urls: list[str] | None = None,
     queue: RequestQueue | None = None,
+    cutoff_block: int | None = None,
+    cutoff_timestamp: int | None = None,
 ) -> int:
     """Deliver all open requests in batches. Returns count of delivered requests."""
     safe_addr = Web3.to_checksum_address(runtime.safe_addr)
@@ -1580,10 +1634,12 @@ def deliver_all(
                 marketplace_addr,
                 delay=0.3,
                 rpc_urls=rpc_urls,
+                cutoff_block=cutoff_block,
+                cutoff_timestamp=cutoff_timestamp,
             )
             if queue:
                 filtered = [r for r in original_batch if r not in set(batch)]
-                queue.mark_skipped(filtered, "no_longer_status_2")
+                queue.mark_skipped(filtered, "not_recoverable_or_younger_than_24h")
             if not batch:
                 log("All in batch already delivered — skipping")
                 continue
@@ -1838,6 +1894,15 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
             log("No priority mechs found; cannot use mech-queues discovery", level=logging.ERROR)
             sys.exit(1)
         w3, _ = _connect(rpc_list)
+        current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
+        latest_ts = int(_rpc_call(lambda: _rpc_web3(w3).eth.get_block(current)["timestamp"], name="latest timestamp"))
+        cutoff_block = current - BLOCKS_24H
+        cutoff_timestamp = latest_ts - 24 * 3600
+        log(
+            "Filtering mech queues by request marker older than 24h: block <= %s or timestamp <= %s",
+            cutoff_block,
+            cutoff_timestamp,
+        )
         mech_contract = _rpc_web3(w3).eth.contract(
             address=_rpc_web3(w3).to_checksum_address(runtime.mech_addr),
             abi=MECH_ABI,
@@ -1860,6 +1925,8 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
             max_open=args.max_discover,
             payment_type=bytes(payment_type),
             delivery_rate=runtime.delivery_rate,
+            cutoff_block=cutoff_block,
+            cutoff_timestamp=cutoff_timestamp,
         )
         log("Found %s open request(s). Checkpoint: %s", len(open_requests), checkpoint)
         log("Queue: %s counts=%s", queue.path, queue.counts())
@@ -1948,6 +2015,10 @@ def cmd_deliver(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
         sys.exit(1)
 
     w3, rpc_url = _connect(rpc_list)
+    current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
+    latest_ts = int(_rpc_call(lambda: _rpc_web3(w3).eth.get_block(current)["timestamp"], name="latest timestamp"))
+    cutoff_block = current - BLOCKS_24H
+    cutoff_timestamp = latest_ts - 24 * 3600
 
     # OPS-1 + D6: explicit confirmation with summary
     n_batches = (len(open_requests) + BATCH_SIZE - 1) // BATCH_SIZE
@@ -1987,6 +2058,8 @@ def cmd_deliver(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
         checkpoint=checkpoint,
         rpc_urls=rpc_list,
         queue=queue,
+        cutoff_block=cutoff_block,
+        cutoff_timestamp=cutoff_timestamp,
     )
     log("Done — %s request(s) delivered.", total)
 
@@ -1997,6 +2070,10 @@ def cmd_all(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
     queue = RequestQueue(Path(args.queue))
     rpc_list = _rpc_list(args, runtime.chain)
     w3, rpc_url = _connect(rpc_list)
+    current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
+    latest_ts = int(_rpc_call(lambda: _rpc_web3(w3).eth.get_block(current)["timestamp"], name="latest timestamp"))
+    cutoff_block = current - BLOCKS_24H
+    cutoff_timestamp = latest_ts - 24 * 3600
 
     print(f"""
 ⚠️  PIPELINE SUMMARY
@@ -2049,6 +2126,8 @@ def cmd_all(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
                 checkpoint=checkpoint,
                 rpc_urls=rpc_list,
                 queue=queue,
+                cutoff_block=cutoff_block,
+                cutoff_timestamp=cutoff_timestamp,
             )
             log("Waiting %.0fs before next Safe TX...", DELAY_TX)
             time.sleep(DELAY_TX)
