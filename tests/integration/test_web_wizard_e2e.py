@@ -15,6 +15,9 @@ Run:
 """
 
 import json
+import shutil
+import subprocess
+import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -943,6 +946,108 @@ class TestWebWizardE2E:
 
         assert resp.json()["sufficient"] is False
         assert resp.json()["olas_required"] == MIN_OLAS_WHOLE
+
+    def test_fund_next_respects_staking_aware_balance_result(self):
+        """The browser gate must follow staking-aware balance responses."""
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node is required for setup wizard JavaScript regression test")
+
+        template = Path("src/micromech/web/templates/setup.html").read_text()
+        start_marker = "    function startBalancePoll() {"
+        start = template.index(start_marker)
+        end = template.index("    function stopBalancePoll()", start)
+        start_balance_poll = textwrap.dedent(template[start:end])
+
+        poll_marker = "    async function pollAllBalances() {"
+        start = template.index(poll_marker)
+        end = template.index("    function copyAddress()", start)
+        poll_all_balances = textwrap.dedent(template[start:end])
+
+        script = f"""
+        const API_BASE = '';
+        const NATIVE_SYMBOLS = {{ gnosis: 'xDAI' }};
+        let walletAddress = '0xabc';
+        let balancePollId = null;
+        let stakingEnabled = false;
+        let selectedChains = new Set(['gnosis']);
+        let pollInflight = false;
+        let pollGen = 0;
+        let lastBalanceUpdate = 0;
+        let buildCalled = false;
+        let fetchCalls = [];
+        const elements = {{
+            'btn-fund-next': {{ disabled: false }},
+            'fund-address': {{ textContent: '' }},
+            'bal-native-gnosis': {{ textContent: '', className: '' }},
+            'olas-row-gnosis': {{ style: {{ display: '' }} }},
+            'bal-olas-gnosis': {{ textContent: '', className: '' }},
+        }};
+        let response = {{
+            native_balance: 1,
+            native_required: 0.1,
+            native_sufficient: true,
+            olas_balance: 0,
+            olas_required: 0,
+            olas_sufficient: true,
+            sufficient: true,
+        }};
+        globalThis.fetch = async (url) => {{
+            fetchCalls.push(url);
+            return {{ json: async () => response }};
+        }};
+        const document = {{ getElementById: (id) => elements[id] || null }};
+        function buildBalanceRows() {{ buildCalled = true; }}
+        function setInterval() {{ return 1; }}
+        {start_balance_poll}
+        startBalancePoll();
+        if (elements['btn-fund-next'].disabled !== true) {{
+            throw new Error('fund next was not disabled before pending balance poll');
+        }}
+        if (!buildCalled || balancePollId !== 1) {{
+            throw new Error('startBalancePoll did not continue normal polling flow');
+        }}
+        pollGen += 1;
+        pollInflight = false;
+        fetchCalls = [];
+
+        {poll_all_balances}
+
+        (async () => {{
+            elements['btn-fund-next'].disabled = true;
+            stakingEnabled = false;
+            await pollAllBalances();
+            if (!fetchCalls.pop().includes('staking=false')) {{
+                throw new Error('unstaked poll did not request staking=false');
+            }}
+            if (elements['btn-fund-next'].disabled !== false) {{
+                throw new Error('unstaked native-only balance did not enable fund next');
+            }}
+
+            response = {{
+                native_balance: 1,
+                native_required: 0.1,
+                native_sufficient: true,
+                olas_balance: 0,
+                olas_required: 10000,
+                olas_sufficient: false,
+                sufficient: false,
+            }};
+            elements['btn-fund-next'].disabled = false;
+            stakingEnabled = true;
+            await pollAllBalances();
+            if (!fetchCalls.pop().includes('staking=true')) {{
+                throw new Error('staking poll did not request staking=true');
+            }}
+            if (elements['btn-fund-next'].disabled !== true) {{
+                throw new Error('staking zero-OLAS balance did not disable fund next');
+            }}
+        }})().catch((err) => {{
+            console.error(err);
+            process.exit(1);
+        }});
+        """
+        subprocess.run([node, "-e", script], check=True)
 
     def test_e2e_create_micromech_with_staking(self, tmp_path: Path):
         """E2E lifecycle: create -> spin_up -> create mech -> stake succeeds."""

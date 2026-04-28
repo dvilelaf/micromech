@@ -822,6 +822,7 @@
 
     // --- Step 3: Balance polling (all selected chains) ---
     function startBalancePoll() {
+        document.getElementById('btn-fund-next').disabled = true;
         document.getElementById('fund-address').textContent = walletAddress || '...';
         buildBalanceRows();
         pollAllBalances();
