@@ -71,6 +71,7 @@ RPC_RETRY_BASE = 1.0
 RPC_RETRY_MAX = 30.0
 BATCH_SIZE = 20  # requestIds per deliverToMarketplace call
 LOG_WINDOW = 1000  # blocks per get_logs window (Gnosis public RPCs accept 1000-2000)
+MECH_DISCOVERY_WINDOW = 1_000_000  # CreateMech is sparse; public RPCs handle large sparse ranges.
 
 DEFAULT_CHECKPOINT = Path(__file__).resolve().with_name("recover.json")
 DEFAULT_QUEUE = Path(__file__).resolve().with_name("recover_queue.sqlite")
@@ -104,6 +105,20 @@ MARKETPLACE_ABI = [
         "inputs": [],
         "name": "numUndeliveredRequests",
         "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [{"name": "requestId", "type": "bytes32"}],
+        "name": "mapRequestIdInfos",
+        "outputs": [
+            {"name": "requester", "type": "address"},
+            {"name": "priorityMech", "type": "address"},
+            {"name": "deliveryMech", "type": "address"},
+            {"name": "requestBlockNumber", "type": "uint256"},
+            {"name": "maxDeliveryRate", "type": "uint256"},
+            {"name": "paymentType", "type": "bytes32"},
+        ],
         "stateMutability": "view",
         "type": "function",
     },
@@ -206,6 +221,7 @@ class RuntimeConfig:
         marketplace_addr: str,
         config_path: Path,
         wallet_path: Path,
+        delivery_rate: int | None = None,
     ) -> None:
         self.chain = chain
         self.mech_addr = mech_addr
@@ -213,6 +229,7 @@ class RuntimeConfig:
         self.marketplace_addr = marketplace_addr
         self.config_path = config_path
         self.wallet_path = wallet_path
+        self.delivery_rate = delivery_rate
 
 
 def b32_to_hex(b: bytes) -> str:
@@ -254,7 +271,7 @@ def setup_logging(log_path: Path, verbose: bool = False) -> None:
     console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%H:%M:%S"))
 
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
-    file_handler.setLevel(logging.DEBUG)
+    file_handler.setLevel(level)
     file_handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
     )
@@ -266,6 +283,14 @@ def setup_logging(log_path: Path, verbose: bool = False) -> None:
 
 def log(msg: str, *args, level: int = logging.INFO) -> None:
     _LOGGER.log(level, msg, *args)
+
+
+def _redact_url(url: str) -> str:
+    parsed = urllib.parse.urlsplit(str(url))
+    if not parsed.scheme or not parsed.netloc:
+        return str(url)
+    path = parsed.path.rsplit("/", 1)[0] + "/..." if "/" in parsed.path else parsed.path
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
 def _backoff_sleep(attempt: int, *, base: float = RPC_RETRY_BASE, cap: float = RPC_RETRY_MAX) -> None:
@@ -316,6 +341,18 @@ def _rpc_web3(default_w3: Web3 | None = None):
     if _IWA_CHAIN_INTERFACE is not None:
         return _IWA_CHAIN_INTERFACE.web3
     return default_w3
+
+
+def _safe_eth_rpc_url(rpc_urls: list[str]) -> str:
+    """Return a concrete HTTPS RPC URL suitable for safe-eth."""
+    if _IWA_CHAIN_INTERFACE is not None:
+        current = getattr(_IWA_CHAIN_INTERFACE, "current_rpc", None)
+        if isinstance(current, str) and current.startswith("https://"):
+            return current
+    for url in rpc_urls:
+        if url.startswith("https://"):
+            return url
+    raise RuntimeError("No HTTPS RPC URL available for Safe transaction submission")
 
 
 def _default_rpc_urls(chain_name: str) -> list[str]:
@@ -404,6 +441,7 @@ def _resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         marketplace_addr=Web3.to_checksum_address(marketplace_addr),
         config_path=config_path,
         wallet_path=wallet_path,
+        delivery_rate=chain_cfg.get("delivery_rate"),
     )
 
 
@@ -624,18 +662,18 @@ def _connect(rpc_urls: list[str], timeout: int = 30) -> tuple[Web3, str]:
     if _IWA_CHAIN_INTERFACE is not None:
         w3 = _IWA_CHAIN_INTERFACE.web3
         _rpc_call(lambda: w3.eth.block_number, name="iwa block_number probe")
-        return w3, f"iwa:{_IWA_CHAIN_NAME}"
+        return w3, _safe_eth_rpc_url(rpc_urls)
 
     for attempt in range(3):
         for url in rpc_urls:
             try:
                 w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": timeout}))
                 if w3.is_connected():
-                    log("connected rpc=%s", url)
+                    log("connected rpc=%s", _redact_url(url))
                     return w3, url
-                log("RPC not connected: %s", url, level=logging.WARNING)
+                log("RPC not connected: %s", _redact_url(url), level=logging.WARNING)
             except Exception as e:
-                log("RPC connect failed %s: %s", url, type(e).__name__, level=logging.WARNING)
+                log("RPC connect failed %s: %s", _redact_url(url), type(e).__name__, level=logging.WARNING)
         _backoff_sleep(attempt)
     raise RuntimeError(f"All RPCs unreachable: {rpc_urls}")
 
@@ -665,7 +703,7 @@ def _call_status_with_rotation(
             log(
                 "getRequestStatus %s via %s failed: %s",
                 b32_to_hex(request_id)[:18],
-                url,
+                _redact_url(url),
                 type(e).__name__,
                 level=logging.WARNING,
             )
@@ -1083,7 +1121,7 @@ def discover_priority_mechs(
     cache_path: Path,
     from_block: int = MARKETPLACE_DEPLOY_BLOCK,
     to_block: int | None = None,
-    window: int = LOG_WINDOW,
+    window: int = MECH_DISCOVERY_WINDOW,
     refresh: bool = False,
 ) -> list[str]:
     """Discover Olas mech addresses from Marketplace CreateMech events."""
@@ -1101,7 +1139,6 @@ def discover_priority_mechs(
 
     w3, _ = _connect(rpc_urls)
     web3 = _rpc_web3(w3)
-    marketplace = _make_marketplace(web3, marketplace_addr)
     if to_block is None:
         to_block = _rpc_call(lambda: web3.eth.block_number, name="current block")
 
@@ -1124,23 +1161,36 @@ def discover_priority_mechs(
 
     for wi, from_b in enumerate(range(start, to_block + 1, window)):
         to_b = min(from_b + window - 1, to_block)
-        try:
-            logs = _rpc_call(
-                lambda from_b=from_b, to_b=to_b: marketplace.events.CreateMech.get_logs(
+        logs = None
+        last_exc: Exception | None = None
+        for url in rpc_urls:
+            try:
+                direct_w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 30}))
+                direct_marketplace = _make_marketplace(direct_w3, marketplace_addr)
+                logs = direct_marketplace.events.CreateMech.get_logs(
                     from_block=from_b,
                     to_block=to_b,
-                ),
-                name=f"CreateMech logs {from_b}-{to_b}",
-            )
-        except Exception as exc:
+                )
+                break
+            except Exception as exc:
+                last_exc = exc
+                log(
+                    "CreateMech logs %s-%s via %s failed (%s)",
+                    from_b,
+                    to_b,
+                    _redact_url(url),
+                    type(exc).__name__,
+                    level=logging.DEBUG,
+                )
+        if logs is None:
             log(
                 "CreateMech logs %s-%s failed (%s); aborting to avoid gaps",
                 from_b,
                 to_b,
-                type(exc).__name__,
+                type(last_exc).__name__ if last_exc else "unknown",
                 level=logging.ERROR,
             )
-            raise
+            raise last_exc or RuntimeError(f"CreateMech logs {from_b}-{to_b} failed")
 
         for event_log in logs:
             mech = Web3.to_checksum_address(event_log["args"]["mech"])
@@ -1174,6 +1224,8 @@ def discover_open_requests_from_mech_queues(
     checkpoint: Path | None = None,
     queue: RequestQueue | None = None,
     max_open: int | None = None,
+    payment_type: bytes | None = None,
+    delivery_rate: int | None = None,
 ) -> list[bytes]:
     """Read priority mech queues and keep marketplace-expired requests only."""
     if page_size <= 0:
@@ -1259,6 +1311,33 @@ def discover_open_requests_from_mech_queues(
                     log("status failed %s: %s", h[:18], type(exc).__name__, level=logging.WARNING)
                     time.sleep(delay_status)
                     continue
+
+                if status == 2 and payment_type is not None:
+                    try:
+                        info = _rpc_call(
+                            lambda rid=rid: marketplace.functions.mapRequestIdInfos(rid).call(),
+                            name=f"mapRequestIdInfos {h[:18]}",
+                        )
+                    except Exception as exc:
+                        log("request info failed %s: %s", h[:18], type(exc).__name__, level=logging.WARNING)
+                        time.sleep(delay_status)
+                        continue
+                    request_payment_type = bytes(info[-1])
+                    if request_payment_type != payment_type:
+                        log("skip paymentType mismatch: %s...", h[:18], level=logging.DEBUG)
+                        time.sleep(delay_status)
+                        continue
+                    max_delivery_rate = int(info[4])
+                    if delivery_rate is not None and max_delivery_rate < delivery_rate:
+                        log(
+                            "skip maxDeliveryRate %s < %s: %s...",
+                            max_delivery_rate,
+                            delivery_rate,
+                            h[:18],
+                            level=logging.DEBUG,
+                        )
+                        time.sleep(delay_status)
+                        continue
 
                 if status == 2:
                     open_set.add(h)
@@ -1557,7 +1636,7 @@ def deliver_all(
 def start_anvil(fork_url: str, port: int | None = None) -> tuple[subprocess.Popen, str]:
     port = _find_free_port(port)
     anvil_rpc = f"http://127.0.0.1:{port}"
-    log("Starting Anvil fork port=%s fork_url=%s", port, fork_url)
+    log("Starting Anvil fork port=%s fork_url=%s", port, _redact_url(fork_url))
     proc = subprocess.Popen(
         [
             "anvil",
@@ -1758,6 +1837,18 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
         if not mechs:
             log("No priority mechs found; cannot use mech-queues discovery", level=logging.ERROR)
             sys.exit(1)
+        w3, _ = _connect(rpc_list)
+        mech_contract = _rpc_web3(w3).eth.contract(
+            address=_rpc_web3(w3).to_checksum_address(runtime.mech_addr),
+            abi=MECH_ABI,
+        )
+        payment_type = _rpc_call(
+            lambda: mech_contract.functions.paymentType().call(),
+            name="mech paymentType",
+        )
+        log("Filtering mech queues by paymentType=%s", "0x" + bytes(payment_type).hex())
+        if runtime.delivery_rate is not None:
+            log("Filtering mech queues by maxDeliveryRate >= %s", runtime.delivery_rate)
         open_requests = discover_open_requests_from_mech_queues(
             rpc_list,
             runtime.marketplace_addr,
@@ -1767,6 +1858,8 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
             checkpoint=checkpoint,
             queue=queue,
             max_open=args.max_discover,
+            payment_type=bytes(payment_type),
+            delivery_rate=runtime.delivery_rate,
         )
         log("Found %s open request(s). Checkpoint: %s", len(open_requests), checkpoint)
         log("Queue: %s counts=%s", queue.path, queue.counts())
@@ -2031,7 +2124,7 @@ def main() -> None:
     parser.add_argument(
         "--mech-discovery-window",
         type=int,
-        default=LOG_WINDOW,
+        default=MECH_DISCOVERY_WINDOW,
         help="Block window for CreateMech log discovery",
     )
     parser.add_argument(

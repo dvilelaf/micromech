@@ -42,6 +42,7 @@ def _runtime(tmp_path: Path | None = None) -> rec.RuntimeConfig:
         marketplace_addr=TEST_MARKETPLACE,
         config_path=base / "config.yaml",
         wallet_path=base / "wallet.json",
+        delivery_rate=10,
     )
 
 
@@ -498,6 +499,96 @@ class TestDiscoverOpenRequests:
         assert result == [_rid(1)]
         assert q.get_open(10) == [_rid(1)]
 
+    def test_mech_queue_discovery_filters_payment_type(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        marketplace = MagicMock()
+        mech = MagicMock()
+        good_payment = b"\x11" * 32
+        bad_payment = b"\x22" * 32
+
+        marketplace.functions.getRequestStatus.return_value.call.return_value = 2
+
+        def request_info(rid):
+            fn = MagicMock()
+            fn.call.return_value = (
+                TEST_SAFE,
+                TEST_MECH,
+                TEST_MECH,
+                1,
+                1,
+                good_payment if rid == _rid(1) else bad_payment,
+            )
+            return fn
+
+        marketplace.functions.mapRequestIdInfos.side_effect = request_info
+        mech.functions.numUndeliveredRequests.return_value.call.return_value = 2
+        mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [_rid(1), _rid(2)]
+        w3 = MagicMock()
+        w3.to_checksum_address.side_effect = lambda x: x
+        w3.eth.contract.side_effect = lambda address, abi: (
+            marketplace if address == TEST_MARKETPLACE else mech
+        )
+
+        with (
+            patch("recover_open_requests.Web3.HTTPProvider"),
+            patch("recover_open_requests.Web3", return_value=w3),
+            patch("time.sleep"),
+        ):
+            result = rec.discover_open_requests_from_mech_queues(
+                ["http://fake"],
+                TEST_MARKETPLACE,
+                [TEST_MECH],
+                delay_status=0,
+                queue=q,
+                payment_type=good_payment,
+            )
+
+        assert result == [_rid(1)]
+        assert q.get_open(10) == [_rid(1)]
+
+    def test_mech_queue_discovery_filters_delivery_rate(self, tmp_path):
+        marketplace = MagicMock()
+        mech = MagicMock()
+        payment = b"\x11" * 32
+        marketplace.functions.getRequestStatus.return_value.call.return_value = 2
+
+        def request_info(rid):
+            fn = MagicMock()
+            fn.call.return_value = (
+                TEST_SAFE,
+                TEST_MECH,
+                TEST_MECH,
+                1,
+                20 if rid == _rid(1) else 5,
+                payment,
+            )
+            return fn
+
+        marketplace.functions.mapRequestIdInfos.side_effect = request_info
+        mech.functions.numUndeliveredRequests.return_value.call.return_value = 2
+        mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [_rid(1), _rid(2)]
+        w3 = MagicMock()
+        w3.to_checksum_address.side_effect = lambda x: x
+        w3.eth.contract.side_effect = lambda address, abi: (
+            marketplace if address == TEST_MARKETPLACE else mech
+        )
+
+        with (
+            patch("recover_open_requests.Web3.HTTPProvider"),
+            patch("recover_open_requests.Web3", return_value=w3),
+            patch("time.sleep"),
+        ):
+            result = rec.discover_open_requests_from_mech_queues(
+                ["http://fake"],
+                TEST_MARKETPLACE,
+                [TEST_MECH],
+                delay_status=0,
+                payment_type=payment,
+                delivery_rate=10,
+            )
+
+        assert result == [_rid(1)]
+
     def test_discovers_priority_mechs_from_create_events(self, tmp_path):
         mech_addr = "0x" + "a" * 40
         marketplace = MagicMock()
@@ -513,6 +604,7 @@ class TestDiscoverOpenRequests:
 
         with (
             patch("recover_open_requests._connect", return_value=(w3, "http://fake")),
+            patch("recover_open_requests._make_marketplace", return_value=marketplace),
             patch("time.sleep"),
         ):
             result = rec.discover_priority_mechs(
