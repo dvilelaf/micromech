@@ -480,6 +480,40 @@ class TestDataIntegrity:
         record = queue.get_by_id("r1")
         assert record.request.extra_params == params
 
+    def test_priority_mech_roundtrip_does_not_leak_to_extra_params(
+        self, queue: PersistentQueue
+    ):
+        priority_mech = "0x" + "a" * 40
+        req = MechRequest(
+            request_id="r1",
+            priority_mech=priority_mech,
+            extra_params={"model": "qwen"},
+        )
+
+        queue.add_request(req)
+
+        record = queue.get_by_id("r1")
+        assert record.request.priority_mech == priority_mech
+        assert record.request.extra_params == {"model": "qwen"}
+
+    def test_reserved_priority_key_cannot_forge_priority_mech(
+        self, queue: PersistentQueue
+    ):
+        priority_mech = "0x" + "a" * 40
+        req = MechRequest(
+            request_id="r1",
+            extra_params={
+                "model": "qwen",
+                "_micromech_priority_mech": priority_mech,
+            },
+        )
+
+        queue.add_request(req)
+
+        record = queue.get_by_id("r1")
+        assert record.request.priority_mech == ""
+        assert record.request.extra_params == {"model": "qwen"}
+
     def test_binary_data_roundtrip(self, queue: PersistentQueue):
         data = bytes(range(256))
         req = MechRequest(request_id="r1", data=data)

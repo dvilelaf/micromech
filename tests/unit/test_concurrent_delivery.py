@@ -36,6 +36,7 @@ import pytest
 
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.models import MechRequest, RequestRecord, ToolResult
+from micromech.core.persistence import PersistentQueue
 from micromech.runtime.delivery import DeliveryManager
 
 # ---------------------------------------------------------------------------
@@ -440,24 +441,17 @@ class TestConcurrentWorkerStallResilience:
         assert set(delivery_order) == {STALL_ID, FAST1_ID, FAST2_ID}
 
     @pytest.mark.asyncio
-    async def test_expired_requests_skipped_without_safe_tx(self):
-        """[Test] Requests past their responseTimeout are marked failed immediately.
-
-        Submitting a Safe TX for an expired request mines OK but the marketplace
-        rejects it as a late delivery — wasting gas and blocking fresh requests.
-        The pre-filter must mark them failed without calling _submit_batch_delivery.
-        """
+    async def test_stale_requested_expired_requests_are_delivered(self):
+        """Requests older than 300s are still delivered when marketplace says so."""
         from datetime import timedelta
 
-        expired_record = _make_record(STALL_ID)
-        expired_record.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
-        expired_record.request.timeout = 300  # 5 min — record is 400s old → expired
+        stale_record = _make_record(STALL_ID)
+        stale_record.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
 
         fresh_record = _make_record(FAST1_ID)
         fresh_record.request.created_at = datetime.now(timezone.utc)
-        fresh_record.request.timeout = 300  # fresh
 
-        q = _make_queue([expired_record, fresh_record])
+        q = _make_queue([stale_record, fresh_record])
         bridge = _make_bridge()
         dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
 
@@ -468,34 +462,147 @@ class TestConcurrentWorkerStallResilience:
             return ("0x" + "ab" * 32, [True])
 
         with (
+            patch.object(dm, "_get_marketplace_status", return_value=2) as mock_status,
             patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
             patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
         ):
             delivered = await dm._deliver_concurrent()
 
-        # Only the fresh record should be delivered
-        assert delivered == 1, f"Expected 1 delivered, got {delivered}"
-        assert submit_call_count[0] == 1, (
-            f"_submit_batch_delivery called {submit_call_count[0]}x — "
-            "expired record should be skipped without a Safe TX"
-        )
-        # _submit_batch_delivery mocked to return [True] → no marketplace timeout.
-        # mark_failed called ONLY by pre-filter (expired detection), not delivery logic.
-        q.mark_failed.assert_called_once()
-        call_args = q.mark_failed.call_args[0]
-        assert call_args[0] == STALL_ID, "mark_failed called with wrong request_id"
-        assert "expired" in call_args[1], "mark_failed reason must mention 'expired'"
+        assert delivered == 2
+        assert submit_call_count[0] == 2
+        mock_status.assert_called_once_with(STALL_ID)
+        q.mark_failed.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_all_expired_zero_delivered_zero_txs(self):
-        """[Test] When all records are expired, zero TXs are submitted and zero delivered."""
+    async def test_stale_priority_requests_are_delivered_for_current_mech(self):
+        """Current-priority requests remain deliverable while status is RequestedPriority."""
+        from datetime import timedelta
+
+        chain_config = _make_chain_config()
+        stale_record = _make_record(STALL_ID)
+        stale_record.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
+        stale_record.request.priority_mech = chain_config.mech_address
+
+        q = _make_queue([stale_record])
+        bridge = _make_bridge()
+        dm = DeliveryManager(_make_config(), chain_config, q, bridge)
+
+        submit_call_count = [0]
+
+        def _count_submit(req_id_bytes_list, datas, safe_nonce=None):
+            submit_call_count[0] += 1
+            return ("0x" + "ab" * 32, [True])
+
+        with (
+            patch.object(dm, "_get_marketplace_status", return_value=1),
+            patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+            patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
+        ):
+            delivered = await dm._deliver_concurrent()
+
+        assert delivered == 1
+        assert submit_call_count[0] == 1
+        q.mark_failed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stale_priority_request_from_persistence_is_delivered(self, tmp_path):
+        """Persisted priority_mech is available when delivery checks RequestedPriority."""
+        from datetime import timedelta
+
+        chain_config = _make_chain_config()
+        queue = PersistentQueue(tmp_path / "requests.db")
+        try:
+            req = MechRequest(
+                request_id=STALL_ID,
+                chain="gnosis",
+                tool="echo",
+                prompt="persisted priority",
+                priority_mech=chain_config.mech_address,
+                created_at=datetime.now(timezone.utc) - timedelta(seconds=400),
+            )
+            queue.add_request(req)
+            queue.mark_executing(STALL_ID)
+            queue.mark_executed(STALL_ID, ToolResult(output='{"result": "ok"}'))
+
+            bridge = _make_bridge()
+            dm = DeliveryManager(_make_config(), chain_config, queue, bridge)
+
+            submit_call_count = [0]
+
+            def _count_submit(req_id_bytes_list, datas, safe_nonce=None):
+                submit_call_count[0] += 1
+                return ("0x" + "ab" * 32, [True])
+
+            with (
+                patch.object(dm, "_get_marketplace_status", return_value=1),
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
+            ):
+                delivered = await dm._deliver_concurrent()
+
+            assert delivered == 1
+            assert submit_call_count[0] == 1
+            assert queue.get_by_id(STALL_ID).request.status == "delivered"
+        finally:
+            queue.close()
+
+    @pytest.mark.asyncio
+    async def test_reserved_priority_key_from_persistence_does_not_authorize(
+        self, tmp_path
+    ):
+        """Payload-controlled reserved metadata cannot authorize RequestedPriority."""
+        from datetime import timedelta
+
+        chain_config = _make_chain_config()
+        queue = PersistentQueue(tmp_path / "requests.db")
+        try:
+            req = MechRequest(
+                request_id=STALL_ID,
+                chain="gnosis",
+                tool="echo",
+                prompt="forged priority",
+                extra_params={"_micromech_priority_mech": chain_config.mech_address},
+                created_at=datetime.now(timezone.utc) - timedelta(seconds=400),
+            )
+            queue.add_request(req)
+            queue.mark_executing(STALL_ID)
+            queue.mark_executed(STALL_ID, ToolResult(output='{"result": "ok"}'))
+
+            bridge = _make_bridge()
+            dm = DeliveryManager(_make_config(), chain_config, queue, bridge)
+
+            submit_call_count = [0]
+
+            def _count_submit(req_id_bytes_list, datas, safe_nonce=None):
+                submit_call_count[0] += 1
+                return ("0x" + "ab" * 32, [True])
+
+            with (
+                patch.object(dm, "_get_marketplace_status", return_value=1),
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
+            ):
+                delivered = await dm._deliver_concurrent()
+
+            assert delivered == 0
+            assert submit_call_count[0] == 0
+            assert queue.get_by_id(STALL_ID).request.status == "executed"
+        finally:
+            queue.close()
+
+    @pytest.mark.parametrize(
+        ("status", "label"),
+        [(0, "does_not_exist"), (3, "delivered")],
+    )
+    @pytest.mark.asyncio
+    async def test_stale_final_statuses_are_discarded_without_tx(self, status, label):
+        """Final on-chain requests are removed locally instead of being answered."""
         from datetime import timedelta
 
         records = []
         for rid in [STALL_ID, FAST1_ID, FAST2_ID]:
             r = _make_record(rid)
             r.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
-            r.request.timeout = 300
             records.append(r)
 
         q = _make_queue(records)
@@ -509,14 +616,118 @@ class TestConcurrentWorkerStallResilience:
             return ("0x" + "ab" * 32, [True])
 
         with (
+            patch.object(dm, "_get_marketplace_status", return_value=status),
             patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
             patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
         ):
             delivered = await dm._deliver_concurrent()
 
-        assert delivered == 0, "No records should be delivered when all are expired"
-        assert submit_call_count[0] == 0, "No Safe TXs should be submitted for expired records"
-        assert q.mark_failed.call_count == 3, "All 3 expired records must be marked failed"
+        assert delivered == 0
+        assert submit_call_count[0] == 0
+        assert q.mark_failed.call_count == 3
+        for call in q.mark_failed.call_args_list:
+            assert f"on_chain_unavailable: {label}" in call.args[1]
+
+    @pytest.mark.asyncio
+    async def test_stale_non_priority_request_waits_while_priority_gated(self):
+        """Fallback delivery does not answer while status is still RequestedPriority."""
+        from datetime import timedelta
+
+        stale_record = _make_record(STALL_ID)
+        stale_record.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
+        stale_record.request.priority_mech = "0x" + "e" * 40
+
+        q = _make_queue([stale_record])
+        bridge = _make_bridge()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        submit_call_count = [0]
+
+        def _count_submit(req_id_bytes_list, datas, safe_nonce=None):
+            submit_call_count[0] += 1
+            return ("0x" + "ab" * 32, [True])
+
+        with (
+            patch.object(dm, "_get_marketplace_status", return_value=1),
+            patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+            patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
+        ):
+            delivered = await dm._deliver_concurrent()
+
+        assert delivered == 0
+        assert submit_call_count[0] == 0
+        q.mark_failed.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_stale_missing_priority_waits_while_priority_gated(self):
+        """RequestedPriority delivery requires proof that this mech is priority."""
+        from datetime import timedelta
+
+        stale_record = _make_record(STALL_ID)
+        stale_record.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
+        stale_record.request.priority_mech = None
+
+        q = _make_queue([stale_record])
+        bridge = _make_bridge()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        submit_call_count = [0]
+
+        def _count_submit(req_id_bytes_list, datas, safe_nonce=None):
+            submit_call_count[0] += 1
+            return ("0x" + "ab" * 32, [True])
+
+        with (
+            patch.object(dm, "_get_marketplace_status", return_value=1),
+            patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+            patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
+        ):
+            delivered = await dm._deliver_concurrent()
+
+        assert delivered == 0
+        assert submit_call_count[0] == 0
+        q.mark_failed.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "status_result",
+        [RuntimeError("RPC down"), 99],
+    )
+    @pytest.mark.asyncio
+    async def test_stale_unknown_status_keeps_request_queued(self, status_result):
+        """Unknown or unavailable status does not submit tx or discard locally."""
+        from datetime import timedelta
+
+        stale_record = _make_record(STALL_ID)
+        stale_record.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
+
+        q = _make_queue([stale_record])
+        bridge = _make_bridge()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        submit_call_count = [0]
+
+        def _count_submit(req_id_bytes_list, datas, safe_nonce=None):
+            submit_call_count[0] += 1
+            return ("0x" + "ab" * 32, [True])
+
+        status_patch = patch.object(dm, "_get_marketplace_status", return_value=status_result)
+        if isinstance(status_result, Exception):
+            status_patch = patch.object(
+                dm,
+                "_get_marketplace_status",
+                side_effect=status_result,
+            )
+
+        with (
+            status_patch,
+            patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+            patch.object(dm, "_submit_batch_delivery", side_effect=_count_submit),
+        ):
+            delivered = await dm._deliver_concurrent()
+
+        assert delivered == 0
+        assert submit_call_count[0] == 0
+        q.mark_failed.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_boundary_age_equals_timeout_is_not_skipped(self):
@@ -548,16 +759,15 @@ class TestConcurrentWorkerStallResilience:
         assert delivered == 1
 
     @pytest.mark.asyncio
-    async def test_expired_offchain_request_skipped(self):
-        """[Test] Expired off-chain requests are also pre-filtered without calling _deliver_one."""
+    async def test_stale_offchain_request_still_attempted(self):
+        """The marketplace timeout check applies only to on-chain requests."""
         from datetime import timedelta
 
-        expired_offchain = _make_record(STALL_ID)
-        expired_offchain.request.is_offchain = True
-        expired_offchain.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
-        expired_offchain.request.timeout = 300
+        stale_offchain = _make_record(STALL_ID)
+        stale_offchain.request.is_offchain = True
+        stale_offchain.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=400)
 
-        q = _make_queue([expired_offchain])
+        q = _make_queue([stale_offchain])
         bridge = _make_bridge()
         dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
 
@@ -567,13 +777,16 @@ class TestConcurrentWorkerStallResilience:
             deliver_one_called[0] = True
             return ("0x" + "ab" * 32, None)
 
-        with patch.object(dm, "_deliver_one", side_effect=_mock_deliver_one):
+        with (
+            patch.object(dm, "_get_marketplace_status") as mock_status,
+            patch.object(dm, "_deliver_one", side_effect=_mock_deliver_one),
+        ):
             delivered = await dm._deliver_concurrent()
 
-        assert delivered == 0, "Expired off-chain request must not be delivered"
-        assert not deliver_one_called[0], "_deliver_one must not be called for expired off-chain"
-        q.mark_failed.assert_called_once()
-        assert "expired" in q.mark_failed.call_args[0][1]
+        assert delivered == 1
+        assert deliver_one_called[0]
+        mock_status.assert_not_called()
+        q.mark_failed.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

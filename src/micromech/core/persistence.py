@@ -24,6 +24,8 @@ from micromech.core.constants import (
 from micromech.core.errors import PersistenceError
 from micromech.core.models import MechRequest, MechResponse, RequestRecord, ToolResult
 
+_PRIORITY_MECH_EXTRA_KEY = "_micromech_priority_mech"
+
 
 class RequestRow(pw.Model):
     """Persistent storage for mech requests and their lifecycle."""
@@ -112,6 +114,10 @@ class PersistentQueue:
     def add_request(self, request: MechRequest) -> None:
         """Insert a new request. Idempotent — skips if request_id exists."""
         now = datetime.now(timezone.utc)
+        extra_params = dict(request.extra_params)
+        extra_params.pop(_PRIORITY_MECH_EXTRA_KEY, None)
+        if request.priority_mech:
+            extra_params[_PRIORITY_MECH_EXTRA_KEY] = request.priority_mech
         try:
             RequestRow.create(
                 request_id=request.request_id,
@@ -120,7 +126,7 @@ class PersistentQueue:
                 data=request.data,
                 prompt=request.prompt,
                 tool=request.tool,
-                extra_params=json.dumps(request.extra_params),
+                extra_params=json.dumps(extra_params),
                 created_at=request.created_at,
                 timeout=request.timeout,
                 delivery_method=request.delivery_method,
@@ -554,14 +560,18 @@ class PersistentQueue:
         if updated_at and updated_at.tzinfo is None:
             updated_at = updated_at.replace(tzinfo=timezone.utc)
 
+        extra_params = json.loads(row.extra_params) if row.extra_params else {}
+        priority_mech = extra_params.pop(_PRIORITY_MECH_EXTRA_KEY, "")
+
         request = MechRequest.model_construct(
             request_id=row.request_id,
             chain=row.chain,
             sender=row.sender,
+            priority_mech=priority_mech,
             data=bytes(row.data) if row.data else b"",
             prompt=row.prompt,
             tool=row.tool,
-            extra_params=json.loads(row.extra_params) if row.extra_params else {},
+            extra_params=extra_params,
             created_at=created_at,
             timeout=row.timeout,
             delivery_method=row.delivery_method,

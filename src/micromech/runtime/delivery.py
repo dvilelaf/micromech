@@ -33,6 +33,11 @@ from micromech.core.constants import (
     GAS_FALLBACK,
     GAS_FLOOR_DELIVERY,
     IPFS_API_URL,
+    MARKETPLACE_MAX_RESPONSE_TIMEOUT,
+    REQUEST_STATUS_DELIVERED,
+    REQUEST_STATUS_DOES_NOT_EXIST,
+    REQUEST_STATUS_REQUESTED_EXPIRED,
+    REQUEST_STATUS_REQUESTED_PRIORITY,
 )
 from micromech.core.locks import get_safe_lock as get_safe_lock  # re-exported for compat
 from micromech.core.models import RequestRecord
@@ -43,6 +48,13 @@ if TYPE_CHECKING:
 
 
 TX_RECEIPT_TIMEOUT = 120  # seconds
+
+_REQUEST_STATUS_LABELS = {
+    REQUEST_STATUS_DOES_NOT_EXIST: "does_not_exist",
+    REQUEST_STATUS_REQUESTED_PRIORITY: "requested_priority",
+    REQUEST_STATUS_REQUESTED_EXPIRED: "requested_expired",
+    REQUEST_STATUS_DELIVERED: "delivered",
+}
 
 
 # Redacts 0x-prefixed hex blobs ≥ 64 chars (private keys, tx hashes, sigs).
@@ -230,6 +242,49 @@ class DeliveryManager:
                 abi=abi,
             )
         return self._mech_contract
+
+    def _get_marketplace_status(self, request_id: str) -> int:
+        """Return MechMarketplace.getRequestStatus(request_id)."""
+        from micromech.runtime.contracts import load_marketplace_abi
+
+        web3 = self.bridge.web3
+        contract = web3.eth.contract(
+            address=web3.to_checksum_address(self.chain_config.marketplace_address),
+            abi=load_marketplace_abi(),
+        )
+        req_id_bytes = self._request_id_to_bytes(request_id)
+        return self.bridge.with_retry(
+            lambda: contract.functions.getRequestStatus(req_id_bytes).call()
+        )
+
+    def _mark_unavailable_on_chain(
+        self,
+        record: RequestRecord,
+        status: int,
+    ) -> None:
+        """Remove an executed request from the delivery queue when chain state is final."""
+        label = _REQUEST_STATUS_LABELS.get(status, f"status_{status}")
+        req_id = record.request.request_id
+        reason = f"on_chain_unavailable: {label}"
+        logger.info(
+            "Discarding {} before delivery: marketplace status={}",
+            req_id[:16] + "...",
+            label,
+        )
+        self.queue.mark_failed(req_id, reason)
+        self._delivery_failures.pop(req_id, None)
+        if self._metrics:
+            self._metrics.record_delivery_failed(
+                req_id,
+                reason,
+                chain=self._chain_name,
+            )
+
+    def _is_priority_request(self, record: RequestRecord) -> bool:
+        """Return whether this mech is the priority mech for a request, if known."""
+        priority_mech = (getattr(record.request, "priority_mech", None) or "").lower()
+        mech_address = (self.chain_config.mech_address or "").lower()
+        return bool(priority_mech and mech_address and priority_mech == mech_address)
 
     def _request_id_to_bytes(self, request_id: str) -> bytes:
         """Convert a request ID string to bytes32.
@@ -819,13 +874,12 @@ class DeliveryManager:
                 self._wallet_warning_logged = True
             return 0
 
-        # Fetch a larger batch so expired records drain quickly without blocking
-        # fresh deliveries. Expired records are cheap to process (no Safe TX) so
-        # scanning more per tick reduces backlog faster. Delivery slots are still
-        # capped at DEFAULT_DELIVERY_WORKERS after the pre-filter.
-        _EXPIRED_SWEEP_LIMIT = 100
+        # Fetch a larger batch so finalized on-chain records can drain without
+        # blocking fresh deliveries. Delivery slots are still capped after the
+        # availability check.
+        _FINALIZED_SWEEP_LIMIT = 100
         records = self.queue.get_undelivered(
-            limit=max(DEFAULT_DELIVERY_WORKERS * 4, _EXPIRED_SWEEP_LIMIT),
+            limit=max(DEFAULT_DELIVERY_WORKERS * 4, _FINALIZED_SWEEP_LIMIT),
             chain=self._chain_name,
         )
         if not records:
@@ -839,45 +893,60 @@ class DeliveryManager:
                 created = created.replace(tzinfo=timezone.utc)
             return (now - created).total_seconds()
 
-        # Pre-filter: skip records already past their on-chain responseTimeout.
-        # Submitting a Safe TX for an expired request mines OK but the marketplace
-        # rejects it as a late delivery — wasting gas and blocking fresh requests.
-        # Mark them failed immediately so the delivery slot goes to a live request.
         candidates = [r for r in records if r.request.request_id not in self._in_flight]
-        fresh, n_skipped = [], 0
+        deliverable: list[RequestRecord] = []
         for r in candidates:
             age = _age_seconds(r)
-            if age > r.request.timeout:
-                logger.warning(
-                    "Skipping expired request {} age={:.0f}s > timeout={}s",
-                    r.request.request_id[:16] + "...",
-                    age,
-                    r.request.timeout,
-                )
+            should_check_status = (
+                not r.request.is_offchain and age > MARKETPLACE_MAX_RESPONSE_TIMEOUT
+            )
+            if should_check_status:
                 try:
-                    self.queue.mark_failed(
+                    status = await asyncio.to_thread(
+                        self._get_marketplace_status,
                         r.request.request_id,
-                        f"pre_delivery_expired: age={age:.0f}s timeout={r.request.timeout}s",
                     )
-                except Exception as mark_err:
+                except Exception as status_err:
                     logger.warning(
-                        "Failed to mark expired request {} as failed: {}",
+                        "Could not check marketplace status for stale request {}: {}"
+                        " — keeping queued",
                         r.request.request_id[:16] + "...",
-                        mark_err,
+                        _sanitize_error(status_err),
                     )
-                if self._metrics:
-                    self._metrics.record_delivery_failed(
-                        r.request.request_id, "pre_delivery_expired", chain=self._chain_name
-                    )
-                n_skipped += 1
-            else:
-                fresh.append(r)
+                    continue
+                else:
+                    if status in (
+                        REQUEST_STATUS_DOES_NOT_EXIST,
+                        REQUEST_STATUS_DELIVERED,
+                    ):
+                        self._mark_unavailable_on_chain(r, status)
+                        continue
+                    if (
+                        status == REQUEST_STATUS_REQUESTED_PRIORITY
+                        and not self._is_priority_request(r)
+                    ):
+                        logger.debug(
+                            "Stale request {} is still priority-gated, keeping queued",
+                            r.request.request_id[:16] + "...",
+                        )
+                        continue
+                    if status not in (
+                        REQUEST_STATUS_REQUESTED_PRIORITY,
+                        REQUEST_STATUS_REQUESTED_EXPIRED,
+                    ):
+                        label = _REQUEST_STATUS_LABELS.get(status, f"status_{status}")
+                        logger.debug(
+                            "Unknown marketplace status {} for {}, keeping queued",
+                            label,
+                            r.request.request_id[:16] + "...",
+                        )
+                        continue
+            deliverable.append(r)
 
-        if n_skipped:
-            logger.info("Skipped {} expired requests this tick", n_skipped)
-
-        onchain = [r for r in fresh if not r.request.is_offchain][:DEFAULT_DELIVERY_WORKERS]
-        offchain = [r for r in fresh if r.request.is_offchain]
+        onchain = [r for r in deliverable if not r.request.is_offchain][
+            :DEFAULT_DELIVERY_WORKERS
+        ]
+        offchain = [r for r in deliverable if r.request.is_offchain]
 
         selected = onchain + offchain
         if not selected:

@@ -42,6 +42,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8090
 DEFAULT_MAX_CONCURRENT = 10
 DEFAULT_REQUEST_TIMEOUT = 300  # 5 minutes
+MARKETPLACE_MAX_RESPONSE_TIMEOUT = 300  # seconds; current Olas marketplace max
 DEFAULT_EVENT_POLL_INTERVAL = 15  # seconds
 DEFAULT_EVENT_LOOKBACK_BLOCKS = 1000
 DEFAULT_DELIVERY_BATCH_SIZE = 1  # 1 delivery per Safe tx — required for staking liveness (isRatioPass condition: delivery_delta <= nonce_delta)
@@ -94,6 +95,12 @@ STATUS_EXECUTED: Final = "executed"
 STATUS_DELIVERED: Final = "delivered"
 STATUS_FAILED: Final = "failed"
 STATUS_SKIPPED: Final = "skipped"
+
+# Olas MechMarketplace.RequestStatus enum
+REQUEST_STATUS_DOES_NOT_EXIST: Final[int] = 0
+REQUEST_STATUS_REQUESTED_PRIORITY: Final[int] = 1
+REQUEST_STATUS_REQUESTED_EXPIRED: Final[int] = 2
+REQUEST_STATUS_DELIVERED: Final[int] = 3
 
 # Delivery methods
 DELIVERY_MARKETPLACE: Final = "marketplace"

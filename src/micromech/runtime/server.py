@@ -22,6 +22,10 @@ from micromech.core.constants import (
     DEFAULT_HOST,
     DEFAULT_MAX_CONCURRENT,
     DEFAULT_PORT,
+    REQUEST_STATUS_DELIVERED,
+    REQUEST_STATUS_DOES_NOT_EXIST,
+    REQUEST_STATUS_REQUESTED_EXPIRED,
+    REQUEST_STATUS_REQUESTED_PRIORITY,
     STATUS_PENDING,
 )
 from micromech.core.models import MechRequest
@@ -260,19 +264,20 @@ class MechServer:
         )
         await self._request_queue.put(request)
 
-    # MechMarketplace.RequestStatus enum value for "any mech can deliver"
-    _REQUEST_STATUS_ANY = 2
+    # MechMarketplace.RequestStatus enum value once any mech can deliver.
+    _REQUEST_STATUS_EXPIRED = REQUEST_STATUS_REQUESTED_EXPIRED
 
     def _get_request_status(self, chain: str, request_id_hex: str) -> int:
         """Query getRequestStatus() on the marketplace contract (sync, runs in thread).
 
         Returns MechMarketplace.RequestStatus:
-          0 = DoesNotExist, 1 = RequestedPriority, 2 = RequestedAny, 3 = Delivered
+          0 = DoesNotExist, 1 = RequestedPriority, 2 = RequestedExpired, 3 = Delivered
         """
         bridge = self.bridges.get(chain)
         chain_cfg = self.config.enabled_chains.get(chain)
         if not bridge or not chain_cfg:
-            return 0
+            msg = f"bridge or chain config unavailable for {chain}"
+            raise RuntimeError(msg)
 
         if chain not in self._fallback_contracts:
             from micromech.runtime.contracts import load_marketplace_abi
@@ -291,7 +296,7 @@ class MechServer:
         """Poll getRequestStatus() for pending fallback requests.
 
         Interval and TTL are configurable via MicromechConfig. When a request
-        transitions to RequestedAny (status == 2), the priority mech's response
+        transitions to RequestedExpired (status == 2), the priority mech's response
         window has expired and any mech can deliver. Entries older than
         fallback_ttl_seconds are evicted to bound memory growth.
         """
@@ -331,14 +336,20 @@ class MechServer:
                     logger.debug("Fallback status check failed for {}: {}", req_id[:16], e)
                     continue
 
-                if status == self._REQUEST_STATUS_ANY:
+                if status == self._REQUEST_STATUS_EXPIRED:
                     self._fallback_pending.pop(req_id, None)
                     logger.info("Fallback: {} is now deliverable, queuing", req_id[:16])
                     await self._enqueue_request(request)
-                elif status != 1:
+                elif status in (REQUEST_STATUS_DOES_NOT_EXIST, REQUEST_STATUS_DELIVERED):
                     # Delivered (3) or DoesNotExist (0) — discard silently
                     self._fallback_pending.pop(req_id, None)
                     logger.debug("Fallback: discarding {} (status={})", req_id[:16], status)
+                elif status != REQUEST_STATUS_REQUESTED_PRIORITY:
+                    logger.debug(
+                        "Fallback: unknown status {} for {}, keeping pending",
+                        status,
+                        req_id[:16],
+                    )
 
     async def _processor_loop(self) -> None:
         """Process requests from the internal queue."""

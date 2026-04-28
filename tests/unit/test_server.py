@@ -596,22 +596,22 @@ class TestFallbackMode:
         assert "cc" * 32 not in server._queued_ids
         server.shutdown()
 
-    def test_get_request_status_returns_0_without_bridge(self, tmp_path, monkeypatch):
-        """_get_request_status returns 0 (DoesNotExist) when no bridge configured."""
+    def test_get_request_status_raises_without_bridge(self, tmp_path, monkeypatch):
+        """_get_request_status does not fabricate DoesNotExist when no bridge is configured."""
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
 
         cfg = _make_fallback_config()
         server = MechServer(cfg)  # No bridges injected
 
-        result = server._get_request_status("gnosis", "aa" * 32)
+        with pytest.raises(RuntimeError, match="bridge or chain config unavailable"):
+            server._get_request_status("gnosis", "aa" * 32)
 
-        assert result == 0
         server.shutdown()
 
     @pytest.mark.asyncio
-    async def test_fallback_checker_queues_when_status_any(self, tmp_path, monkeypatch):
-        """Checker moves request to queue when status == 2 (RequestedAny)."""
+    async def test_fallback_checker_queues_when_status_expired(self, tmp_path, monkeypatch):
+        """Checker moves request to queue when status == 2 (RequestedExpired)."""
         from datetime import datetime, timedelta, timezone
 
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
@@ -626,11 +626,11 @@ class TestFallbackMode:
             chain="gnosis",
             tool="echo",
             priority_mech=OTHER_MECH,
-            created_at=datetime.now(timezone.utc) - timedelta(seconds=260),
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=310),
         )
         server._fallback_pending[req_id] = req
 
-        # Simulate: status check returns 2 (RequestedAny) then stop
+        # Simulate: status check returns 2 (RequestedExpired) then stop
         call_count = 0
 
         async def mock_sleep(_t):
@@ -644,7 +644,7 @@ class TestFallbackMode:
             patch.object(
                 server,
                 "_get_request_status",
-                return_value=MechServer._REQUEST_STATUS_ANY,
+                return_value=MechServer._REQUEST_STATUS_EXPIRED,
             ),
         ):
             await server._fallback_checker_loop()
@@ -653,9 +653,12 @@ class TestFallbackMode:
         assert req_id in server._queued_ids
         server.shutdown()
 
+    @pytest.mark.parametrize("status", [0, 3])
     @pytest.mark.asyncio
-    async def test_fallback_checker_discards_when_delivered(self, tmp_path, monkeypatch):
-        """Checker discards request when status == 3 (already delivered)."""
+    async def test_fallback_checker_discards_final_statuses(
+        self, status, tmp_path, monkeypatch
+    ):
+        """Checker discards request when status is final."""
         from datetime import datetime, timedelta, timezone
 
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
@@ -670,7 +673,7 @@ class TestFallbackMode:
             chain="gnosis",
             tool="echo",
             priority_mech=OTHER_MECH,
-            created_at=datetime.now(timezone.utc) - timedelta(seconds=260),
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=310),
         )
         server._fallback_pending[req_id] = req
 
@@ -684,11 +687,47 @@ class TestFallbackMode:
 
         with (
             patch("asyncio.sleep", mock_sleep),
-            patch.object(server, "_get_request_status", return_value=3),
+            patch.object(server, "_get_request_status", return_value=status),
         ):
             await server._fallback_checker_loop()
 
         assert req_id not in server._fallback_pending
+        assert req_id not in server._queued_ids
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_fallback_checker_keeps_pending_without_bridge(self, tmp_path, monkeypatch):
+        """Checker keeps fallback entries pending when chain status cannot be queried."""
+        from datetime import datetime, timedelta, timezone
+
+        monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
+        monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
+
+        cfg = _make_fallback_config()
+        server = MechServer(cfg)  # No bridge injected
+        server._running = True
+        req_id = "e1" * 32
+        req = MechRequest(
+            request_id=req_id,
+            chain="gnosis",
+            tool="echo",
+            priority_mech=OTHER_MECH,
+            created_at=datetime.now(timezone.utc) - timedelta(seconds=310),
+        )
+        server._fallback_pending[req_id] = req
+
+        call_count = 0
+
+        async def mock_sleep(_t):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                server._running = False
+
+        with patch("asyncio.sleep", mock_sleep):
+            await server._fallback_checker_loop()
+
+        assert req_id in server._fallback_pending
         assert req_id not in server._queued_ids
         server.shutdown()
 
@@ -820,7 +859,7 @@ class TestFallbackMode:
             chain="gnosis",
             tool="echo",
             priority_mech=OTHER_MECH,
-            # created just now — well within the 250s poll delay
+            # created just now — well within the 300s poll delay
         )
         server._fallback_pending[req_id] = req
 
@@ -846,7 +885,7 @@ class TestFallbackMode:
 
     @pytest.mark.asyncio
     async def test_fallback_checker_polls_after_delay(self, tmp_path, monkeypatch):
-        """Checker calls getRequestStatus once _FALLBACK_POLL_DELAY seconds have passed."""
+        """Checker calls getRequestStatus once fallback_poll_delay seconds have passed."""
         from datetime import datetime, timedelta, timezone
 
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
@@ -856,7 +895,7 @@ class TestFallbackMode:
         server = MechServer(cfg)
         server._running = True
         req_id = "a2" * 32
-        old_enough = datetime.now(timezone.utc) - timedelta(seconds=260)
+        old_enough = datetime.now(timezone.utc) - timedelta(seconds=310)
         req = MechRequest(
             request_id=req_id,
             chain="gnosis",
@@ -876,10 +915,13 @@ class TestFallbackMode:
 
         with (
             patch("asyncio.sleep", mock_sleep),
-            patch.object(server, "_get_request_status", return_value=1),
+            patch.object(server, "_get_request_status", return_value=1) as mock_status,
         ):
             await server._fallback_checker_loop()
 
         # Request old enough — getRequestStatus should have been called
+        mock_status.assert_any_call("gnosis", req_id)
+        assert mock_status.call_count >= 1
         assert req_id in server._fallback_pending  # status=1, stays pending
+        assert req_id not in server._queued_ids
         server.shutdown()
