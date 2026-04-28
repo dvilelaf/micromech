@@ -353,7 +353,7 @@ class TestDeliverBatchReal:
             )
 
         mock_safe.build_multisig_tx.assert_not_called()
-        assert ok is True  # aborted cleanly, not a TX failure
+        assert ok is False
         assert delivered == []
 
     def test_all_filtered_by_simulation_skips_tx(self):
@@ -878,13 +878,12 @@ class TestDeliverAll:
         assert _rid(2) in args[1]
         assert total == 1
 
-    def test_real_mode_revalidates_before_batch(self, tmp_path):
-        """BLK-4: _revalidate_open must be called before each batch in real mode."""
+    def test_real_mode_relies_on_batch_simulation(self, tmp_path):
         w3 = self._mock_w3()
         rids = [_rid(1), _rid(2)]
 
         with (
-            patch("recover_open_requests._revalidate_open", return_value=rids) as mock_rev,
+            patch("recover_open_requests._revalidate_open") as mock_rev,
             patch(
                 "recover_open_requests.deliver_batch_real",
                 return_value=(True, rids),
@@ -900,27 +899,33 @@ class TestDeliverAll:
                 delay_tx=0,
             )
 
-        mock_rev.assert_called_once()
+        mock_rev.assert_not_called()
 
-    def test_real_mode_skips_batch_if_revalidation_empty(self):
+    def test_real_mode_reopens_queue_on_simulation_failure(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        q.enqueue_open(_rid_hex(1), 1)
         w3 = self._mock_w3()
 
         with (
-            patch("recover_open_requests._revalidate_open", return_value=[]),
-            patch("recover_open_requests.deliver_batch_real") as mock_deliver,
+            patch(
+                "recover_open_requests.deliver_batch_real",
+                return_value=(False, []),
+            ),
         ):
             total = rec.deliver_all(
                 [_rid(1)],
-                runtime=_runtime(),
+                runtime=_runtime(tmp_path),
                 mode="real",
                 w3=w3,
                 private_key="0x" + "a" * 64,
                 rpc_url="http://fake",
                 delay_tx=0,
+                queue=q,
             )
 
-        mock_deliver.assert_not_called()
         assert total == 0
+        assert q.get_open(10) == [_rid(1)]
+        assert q.counts() == {"open": 1}
 
     def test_batch_error_continues_to_next(self, tmp_path):
         """Exception in one batch should not abort subsequent batches."""

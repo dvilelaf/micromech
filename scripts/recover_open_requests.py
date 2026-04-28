@@ -1547,7 +1547,7 @@ def deliver_batch_real(
             log("Simulation: %s request(s) not deliverable — filtered out", n_filtered)
     except Exception as e:
         log("Simulation failed (%s) — aborting batch for safety", type(e).__name__, level=logging.WARNING)
-        return True, []
+        return False, []
 
     if not pairs:
         log("Simulation: batch empty after filtering — skipping")
@@ -1674,27 +1674,9 @@ def deliver_all(
         if queue:
             queue.mark_delivering(batch)
 
-        # BLK-4: Re-validate status before each batch in real mode
-        if mode == "real":
-            batch = _revalidate_open(
-                w3,
-                batch,
-                marketplace_addr,
-                delay=0.3,
-                rpc_urls=rpc_urls,
-                cutoff_block=cutoff_block,
-                cutoff_timestamp=cutoff_timestamp,
-            )
-            if queue:
-                filtered = [r for r in original_batch if r not in set(batch)]
-                queue.mark_skipped(filtered, "not_recoverable_or_younger_than_24h")
-            if not batch:
-                log("All in batch already delivered — skipping")
-                continue
-
         try:
             if mode == "anvil":
-                _, delivered_ids = deliver_batch_anvil(
+                tx_ok, delivered_ids = deliver_batch_anvil(
                     w3,
                     batch,
                     safe_addr,
@@ -1702,7 +1684,7 @@ def deliver_all(
                     marketplace_addr,
                 )
             else:
-                _, delivered_ids = deliver_batch_real(
+                tx_ok, delivered_ids = deliver_batch_real(
                     batch,
                     safe_addr,
                     mech_addr,
@@ -1715,9 +1697,12 @@ def deliver_all(
                 delivered_set.add(b32_to_hex(r))
             total += len(delivered_ids)
             if queue:
-                queue.mark_delivered(delivered_ids)
-                not_delivered = [r for r in batch if r not in set(delivered_ids)]
-                queue.mark_skipped(not_delivered, "not_delivered_after_tx")
+                if tx_ok:
+                    queue.mark_delivered(delivered_ids)
+                    not_delivered = [r for r in batch if r not in set(delivered_ids)]
+                    queue.mark_skipped(not_delivered, "not_delivered_after_tx")
+                else:
+                    queue.mark_open(batch, "tx_failed_or_simulation_failed")
         except Exception as e:
             log("Batch %s failed: %s", bn, type(e).__name__, level=logging.ERROR)
             if queue:
