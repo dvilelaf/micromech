@@ -1726,7 +1726,7 @@ def deliver_all(
                 else:
                     queue.mark_open(batch, "tx_failed_or_simulation_failed")
         except Exception as e:
-            log("Batch %s failed: %s", bn, type(e).__name__, level=logging.ERROR)
+            log("Batch %s failed: %s: %s", bn, type(e).__name__, e, level=logging.ERROR)
             if queue:
                 queue.mark_open(batch, type(e).__name__)
 
