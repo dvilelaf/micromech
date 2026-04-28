@@ -29,14 +29,14 @@ COPY docker/requirements.txt ./docker-requirements.txt
 RUN --mount=type=cache,id=uv-cache-${TARGETARCH},target=/root/.cache/uv \
     uv venv .venv && \
     CMAKE_ARGS="-DGGML_NATIVE=OFF" \
-    uv pip install --python .venv/bin/python -r docker-requirements.txt
+    uv pip install --python .venv/bin/python --require-hashes -r docker-requirements.txt
 
 # Copy the rest of the source code (does NOT invalidate the compiled .venv cache)
 COPY . /app
 
 # Install the project itself (fast — all dependencies already cached above)
 RUN --mount=type=cache,id=uv-cache-${TARGETARCH},target=/root/.cache/uv \
-    uv pip install --python .venv/bin/python --no-deps .
+    uv pip install --python .venv/bin/python --no-deps --no-build-isolation .
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Lean image — no compiler, no cmake. Only the C++ runtime libs that

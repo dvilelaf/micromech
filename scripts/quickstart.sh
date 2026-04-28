@@ -131,7 +131,7 @@ update:
         echo "✅ Already at latest version (v\$current)"
     fi
     # Warn if Docker has significant reclaimable space
-    waste_gb=\$(if command -v timeout >/dev/null 2>&1; then timeout 5 docker system df 2>/dev/null || true; fi | tail -n +2 | awk '/GB \(/ {gsub(/[^0-9.]/, "", \$4); t+=\$4} END {printf "%.0f", t}')
+    waste_gb=\$(if command -v timeout >/dev/null 2>&1; then timeout 5 docker system df 2>/dev/null || true; fi | tail -n +2 | awk '{v=\$NF; if (v ~ /^\\(/) v=\$(NF-1); n=v; gsub(/[^0-9.]/, "", n); u=toupper(v); gsub(/[0-9.]/, "", u); if (u ~ /^TB/) t+=n*1024; else if (u ~ /^GB/) t+=n; else if (u ~ /^MB/) t+=n/1024; else if (u ~ /^KB/) t+=n/1048576; else if (u ~ /^B/) t+=n/1073741824} END {printf "%.0f", t}')
     if [ "\${waste_gb:-0}" -ge 5 ]; then
         echo "⚠️  Docker has ~\${waste_gb}GB of reclaimable space. Run 'docker system prune' to free disk."
     fi
@@ -281,7 +281,7 @@ while true; do
             fi
 
             # Warn if Docker has significant reclaimable space
-            waste_gb=$(if command -v timeout >/dev/null 2>&1; then timeout 5 docker system df 2>/dev/null || true; fi | tail -n +2 | awk '/GB \(/ {gsub(/[^0-9.]/, "", $4); t+=$4} END {printf "%.0f", t}')
+            waste_gb=$(if command -v timeout >/dev/null 2>&1; then timeout 5 docker system df 2>/dev/null || true; fi | tail -n +2 | awk '{v=$NF; if (v ~ /^\(/) v=$(NF-1); n=v; gsub(/[^0-9.]/, "", n); u=toupper(v); gsub(/[0-9.]/, "", u); if (u ~ /^TB/) t+=n*1024; else if (u ~ /^GB/) t+=n; else if (u ~ /^MB/) t+=n/1024; else if (u ~ /^KB/) t+=n/1048576; else if (u ~ /^B/) t+=n/1073741824} END {printf "%.0f", t}')
             if [ "${waste_gb:-0}" -ge 5 ]; then
                 echo "$waste_gb" > data/.disk-warning
                 log "WARNING: Docker has ~${waste_gb}GB of reclaimable space"

@@ -71,6 +71,11 @@ dev = [
 [project.scripts]
 micromech = "micromech.cli:app"
 
+[dependency-groups]
+docker-build = [
+    "hatchling>=1.27.0",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/micromech"]
 

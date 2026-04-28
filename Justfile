@@ -257,8 +257,9 @@ build:
 # Export Docker dependency lock used by the Dockerfile dependency layer
 docker-lock:
     uv export --frozen --no-dev --no-emit-project \
+        --group docker-build \
         --extra web --extra cli --extra chain --extra tasks --extra llm --extra telegram \
-        --no-hashes --no-header --output-file docker/requirements.txt >/dev/null
+        --no-header --output-file docker/requirements.txt >/dev/null
 
 # Run the server
 run:
@@ -275,11 +276,11 @@ demo:
 # --- Docker ---
 
 # Docker build (native platform)
-docker-build:
+docker-build: _validate-docker-lock
     docker build -t micromech:latest .
 
 # Docker build multi-arch (amd64 + arm64)
-docker-build-multi:
+docker-build-multi: _validate-docker-lock
     docker buildx build --platform linux/amd64,linux/arm64 -t micromech:latest .
 
 # Docker run for local testing
@@ -501,8 +502,9 @@ _validate-docker-lock:
     TMP=$(mktemp)
     trap 'rm -f "$TMP"' EXIT
     uv export --frozen --no-dev --no-emit-project \
+        --group docker-build \
         --extra web --extra cli --extra chain --extra tasks --extra llm --extra telegram \
-        --no-hashes --no-header --output-file "$TMP" >/dev/null
+        --no-header --output-file "$TMP" >/dev/null
 
     if ! diff -u docker/requirements.txt "$TMP"; then
         echo "Error: docker/requirements.txt is out of sync"
@@ -528,7 +530,7 @@ release: release-check
     echo "Next: wait for CI to go green, then run: just publish"
 
 # Build and publish docker image (requires tag at HEAD)
-publish: _validate-git-state _validate-tag-at-head
+publish: _validate-git-state _validate-tag-at-head _validate-docker-lock
     #!/usr/bin/env bash
     set -e
 
