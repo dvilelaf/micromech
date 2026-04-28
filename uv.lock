@@ -2161,7 +2161,7 @@ wheels = [
 
 [[package]]
 name = "micromech"
-version = "0.0.42"
+version = "0.0.43"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
