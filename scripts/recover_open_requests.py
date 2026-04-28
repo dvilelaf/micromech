@@ -1,4 +1,4 @@
-#!/usr/bin/env env -S uv run python3
+#!/usr/bin/env -S uv run python3
 """
 Recover all open marketplace requests older than 24h.
 
@@ -14,44 +14,42 @@ to the mech's BalanceTracker.
 ⚠️  IMPORTANT: Stop the production mech before running real delivery.
     Both use the same Safe. Concurrent signing causes nonce races (GS026).
 
-NOTE: MECH_ADDR, SAFE_ADDR, MARKETPLACE_ADDR match data/config.yaml.
-      Update both if the mech is redeployed.
+Reads mech, marketplace, and Safe addresses from config.yaml by default.
+Reads the Safe signer private key from wallet.json using wallet_password.
+The script is standalone: it does not need to run from the micromech repo.
 
 Modes:
   --anvil-test          Fork Gnosis locally, process 15 requests, verify — no keys needed.
   --mode discover       Scan blocks, save open requestIds to checkpoint file. No TX.
-  --mode deliver        Re-validate on-chain, deliver via Safe. Needs AGENT_PRIVATE_KEY.
-  --mode all            discover + deliver in one pass. Needs AGENT_PRIVATE_KEY.
+  --mode deliver        Re-validate on-chain, deliver via Safe. Needs wallet_password
+                        (or AGENT_PRIVATE_KEY override).
+  --mode all            discover + deliver in one pass. Needs wallet_password
+                        (or AGENT_PRIVATE_KEY override).
 
 Usage:
-  python scripts/recover_open_requests.py --anvil-test
-  python scripts/recover_open_requests.py --mode discover [--checkpoint PATH]
-  AGENT_PRIVATE_KEY=0x... python scripts/recover_open_requests.py --mode deliver
+  python recover_open_requests.py --config /path/config.yaml --wallet /path/wallet.json --anvil-test
+  python recover_open_requests.py --config /path/config.yaml --wallet /path/wallet.json --mode discover
+  wallet_password=... python recover_open_requests.py --config /path/config.yaml --wallet /path/wallet.json --mode deliver
 
 Rate limits (real mode): 2s between get_logs, 1s between status checks, 10s between TXs.
 """
 
 import argparse
+import getpass
 import json
+import logging
 import os
 import re
+import socket
+import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
 from web3 import Web3
 
-# ── Addresses (Gnosis mainnet) ─────────────────────────────────────────────────
-MECH_ADDR = "0x33Ca1E117c4254b2eE8CD7Ef1621739431a37396"
-SAFE_ADDR = "0x0EE0CA8A2fc8a5d9aa92a80Ae4e6A86DcAc81953"
-MARKETPLACE_ADDR = "0x735FAAb1c4Ec41128c367AFb5c3baC73509f70bB"
-
-GNOSIS_RPCS = [
-    "https://rpc.gnosischain.com",
-    "https://gnosis-rpc.publicnode.com",
-    "https://rpc.ankr.com/gnosis",
-]
 ANVIL_RPC = "http://127.0.0.1:8545"
 ANVIL_PORT = 8545
 
@@ -67,13 +65,20 @@ MARKETPLACE_DEPLOY_BLOCK = 38_661_963
 DELAY_LOGS = 2.0  # seconds between get_logs calls
 DELAY_STATUS = 1.0  # seconds between getRequestStatus calls
 DELAY_TX = 10.0  # seconds between Safe TX submissions
+RPC_RETRY_BASE = 1.0
+RPC_RETRY_MAX = 30.0
 BATCH_SIZE = 20  # requestIds per deliverToMarketplace call
 LOG_WINDOW = 1000  # blocks per get_logs window (Gnosis public RPCs accept 1000-2000)
 
-DEFAULT_CHECKPOINT = Path.home() / ".local" / "share" / "micromech" / "recover.json"
+DEFAULT_CHECKPOINT = Path(__file__).resolve().with_name("recover.json")
+DEFAULT_QUEUE = Path(__file__).resolve().with_name("recover_queue.sqlite")
+DEFAULT_LOG = Path(__file__).resolve().with_name("recover.log")
 
 _HEX32_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
 _PRIVKEY_RE = re.compile(r"^0x[0-9a-fA-F]{64}$")
+_LOGGER = logging.getLogger("recover_open_requests")
+_IWA_CHAIN_INTERFACE = None
+_IWA_CHAIN_NAME: str | None = None
 
 # ── ABIs ───────────────────────────────────────────────────────────────────────
 MARKETPLACE_ABI = [
@@ -92,6 +97,13 @@ MARKETPLACE_ABI = [
         "type": "function",
     },
     {
+        "inputs": [],
+        "name": "numUndeliveredRequests",
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
         "anonymous": False,
         "inputs": [
             {"indexed": True, "name": "priorityMech", "type": "address"},
@@ -101,6 +113,18 @@ MARKETPLACE_ABI = [
             {"indexed": False, "name": "requestDatas", "type": "bytes[]"},
         ],
         "name": "MarketplaceRequest",
+        "type": "event",
+    },
+    {
+        "anonymous": False,
+        "inputs": [
+            {"indexed": True, "name": "deliveryMech", "type": "address"},
+            {"indexed": False, "name": "requesters", "type": "address[]"},
+            {"indexed": False, "name": "numDeliveries", "type": "uint256"},
+            {"indexed": False, "name": "requestIds", "type": "bytes32[]"},
+            {"indexed": False, "name": "deliveredRequests", "type": "bool[]"},
+        ],
+        "name": "MarketplaceDelivery",
         "type": "event",
     },
 ]
@@ -139,6 +163,27 @@ BALANCE_TRACKER_ABI = [
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
+class RuntimeConfig:
+    """Resolved addresses and files for a recovery run."""
+
+    def __init__(
+        self,
+        *,
+        chain: str,
+        mech_addr: str,
+        safe_addr: str,
+        marketplace_addr: str,
+        config_path: Path,
+        wallet_path: Path,
+    ) -> None:
+        self.chain = chain
+        self.mech_addr = mech_addr
+        self.safe_addr = safe_addr
+        self.marketplace_addr = marketplace_addr
+        self.config_path = config_path
+        self.wallet_path = wallet_path
+
+
 def b32_to_hex(b: bytes) -> str:
     return "0x" + b.hex()
 
@@ -163,6 +208,237 @@ def _confirm(prompt: str) -> bool:
         return False
 
 
+def setup_logging(log_path: Path, verbose: bool = False) -> None:
+    """Configure console and file logging for long recovery runs."""
+    level = logging.DEBUG if verbose else logging.INFO
+    _LOGGER.setLevel(logging.DEBUG)
+    _LOGGER.handlers.clear()
+    _LOGGER.propagate = False
+
+    log_path = log_path.expanduser().resolve()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setLevel(level)
+    console.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%H:%M:%S"))
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(message)s", "%Y-%m-%d %H:%M:%S")
+    )
+
+    _LOGGER.addHandler(console)
+    _LOGGER.addHandler(file_handler)
+    _LOGGER.info("logging initialized path=%s level=%s", log_path, logging.getLevelName(level))
+
+
+def log(msg: str, *args, level: int = logging.INFO) -> None:
+    _LOGGER.log(level, msg, *args)
+
+
+def _backoff_sleep(attempt: int, *, base: float = RPC_RETRY_BASE, cap: float = RPC_RETRY_MAX) -> None:
+    delay = min(cap, base * (2 ** max(0, attempt)))
+    log("RPC backoff sleep %.1fs", delay, level=logging.DEBUG)
+    time.sleep(delay)
+
+
+def setup_iwa_rpc(chain_name: str, enabled: bool = True) -> None:
+    """Use iwa ChainInterfaces for RPC retry/rotation when available."""
+    global _IWA_CHAIN_INTERFACE, _IWA_CHAIN_NAME
+    _IWA_CHAIN_INTERFACE = None
+    _IWA_CHAIN_NAME = None
+    if not enabled:
+        log("iwa RPC disabled; using explicit Web3 RPC list")
+        return
+    try:
+        from iwa.core.chain import ChainInterfaces
+
+        ci = ChainInterfaces().get(chain_name)
+        if ci is None:
+            log("iwa has no ChainInterface for %s; using explicit RPC list", chain_name, level=logging.WARNING)
+            return
+        _IWA_CHAIN_INTERFACE = ci
+        _IWA_CHAIN_NAME = chain_name
+        log("using iwa ChainInterface for chain=%s (RPC retry/rotation enabled)", chain_name)
+    except Exception as e:
+        log("iwa RPC setup failed (%s); using explicit RPC list", type(e).__name__, level=logging.WARNING)
+
+
+def _rpc_call(operation, *, name: str):
+    """Execute an RPC operation via iwa retry when configured."""
+    if _IWA_CHAIN_INTERFACE is not None:
+        return _IWA_CHAIN_INTERFACE.with_retry(operation, operation_name=name)
+
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            return operation()
+        except Exception as e:
+            last_exc = e
+            log("%s failed: %s", name, type(e).__name__, level=logging.WARNING)
+            _backoff_sleep(attempt)
+    raise last_exc or RuntimeError(f"{name} failed")
+
+
+def _rpc_web3(default_w3: Web3 | None = None):
+    if _IWA_CHAIN_INTERFACE is not None:
+        return _IWA_CHAIN_INTERFACE.web3
+    return default_w3
+
+
+def _default_rpc_urls(chain_name: str) -> list[str]:
+    """Return RPC URLs from iwa/secrets.env; no script-level hardcoded RPCs."""
+    if _IWA_CHAIN_INTERFACE is not None:
+        rpcs = getattr(_IWA_CHAIN_INTERFACE.chain, "rpcs", None) or []
+        if rpcs:
+            return [str(r) for r in rpcs]
+        rpc = getattr(_IWA_CHAIN_INTERFACE.chain, "rpc", None)
+        if rpc:
+            return [str(rpc)]
+    try:
+        from iwa.core.chain import ChainInterfaces
+
+        ci = ChainInterfaces().get(chain_name)
+        if ci is not None:
+            rpcs = getattr(ci.chain, "rpcs", None) or []
+            if rpcs:
+                return [str(r) for r in rpcs]
+            rpc = getattr(ci.chain, "rpc", None)
+            if rpc:
+                return [str(rpc)]
+    except Exception as e:
+        log("could not load RPCs from iwa: %s", type(e).__name__, level=logging.WARNING)
+    raise RuntimeError(
+        f"No RPCs available for {chain_name}. Configure {chain_name}_rpc in secrets.env or pass --rpc."
+    )
+
+
+def _rpc_list(args: argparse.Namespace, chain_name: str) -> list[str]:
+    return [args.rpc] if args.rpc else _default_rpc_urls(chain_name)
+
+
+def _find_free_port(preferred: int | None = None) -> int:
+    ports = []
+    if preferred is not None:
+        ports.extend(range(preferred, preferred + 100))
+    ports.append(0)
+    for port in ports:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+                return int(sock.getsockname()[1])
+            except OSError:
+                continue
+    raise RuntimeError("No free localhost port found for Anvil")
+
+
+def _load_yaml(path: Path) -> dict:
+    import yaml
+
+    return yaml.safe_load(path.read_text()) or {}
+
+
+def _resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
+    config_path = Path(args.config).expanduser().resolve()
+    wallet_path = Path(args.wallet).expanduser().resolve()
+    if not config_path.exists():
+        raise FileNotFoundError(f"config not found: {config_path}")
+    if not wallet_path.exists() and not args.anvil_test:
+        raise FileNotFoundError(f"wallet not found: {wallet_path}")
+
+    data = _load_yaml(config_path)
+    micromech = data.get("plugins", {}).get("micromech", {})
+    chain_cfg = micromech.get("chains", {}).get(args.chain)
+    if not chain_cfg:
+        raise ValueError(f"chain '{args.chain}' not found under plugins.micromech.chains")
+
+    mech_addr = args.mech or chain_cfg.get("mech_address")
+    marketplace_addr = args.marketplace or chain_cfg.get("marketplace_address")
+    if not mech_addr:
+        raise ValueError("mech_address missing in config; pass --mech")
+    if not marketplace_addr:
+        raise ValueError("marketplace_address missing in config; pass --marketplace")
+
+    safe_addr = args.safe or _safe_from_config(data, args.chain, args.service_key)
+    if not safe_addr:
+        safe_addr = _safe_from_wallet(wallet_path, args.chain) if wallet_path.exists() else None
+    if not safe_addr:
+        raise ValueError("Safe multisig not found in config/wallet; pass --safe")
+
+    return RuntimeConfig(
+        chain=args.chain,
+        mech_addr=Web3.to_checksum_address(mech_addr),
+        safe_addr=Web3.to_checksum_address(safe_addr),
+        marketplace_addr=Web3.to_checksum_address(marketplace_addr),
+        config_path=config_path,
+        wallet_path=wallet_path,
+    )
+
+
+def _safe_from_config(data: dict, chain: str, service_key: str | None) -> str | None:
+    services = data.get("plugins", {}).get("olas", {}).get("services", {}) or {}
+    if service_key:
+        service = services.get(service_key)
+        return service.get("multisig_address") if service else None
+
+    matches = []
+    for key, service in services.items():
+        if service.get("chain_name") == chain and service.get("multisig_address"):
+            matches.append((key, service["multisig_address"]))
+    if len(matches) == 1:
+        return matches[0][1]
+    if len(matches) > 1:
+        raise ValueError(
+            f"multiple OLAS services found for chain '{chain}'; pass --service-key"
+        )
+    return None
+
+
+def _safe_from_wallet(wallet_path: Path, chain: str) -> str | None:
+    try:
+        data = json.loads(wallet_path.read_text())
+    except Exception:
+        return None
+    matches = []
+    for addr, account in (data.get("accounts") or {}).items():
+        if account.get("signers") and chain in (account.get("chains") or []):
+            matches.append(addr)
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(f"multiple Safe accounts found in wallet for chain '{chain}'; pass --safe")
+    return None
+
+
+def _private_key_from_wallet(wallet_path: Path, safe_addr: str, password: str) -> str:
+    from iwa.core.keys import KeyStorage
+
+    wallet_data = json.loads(wallet_path.read_text())
+    safe_entry = (wallet_data.get("accounts") or {}).get(safe_addr)
+    if safe_entry is None:
+        for addr, entry in (wallet_data.get("accounts") or {}).items():
+            if addr.lower() == safe_addr.lower():
+                safe_entry = entry
+                break
+    if not safe_entry:
+        raise ValueError(f"Safe {safe_addr} not found in wallet.json")
+
+    signers = safe_entry.get("signers") or []
+    if not signers:
+        raise ValueError(f"Safe {safe_addr} has no signer entries in wallet.json")
+
+    ks = KeyStorage(path=wallet_path, password=password)
+    for signer in signers:
+        try:
+            pk = ks._get_private_key(signer)
+        except Exception:
+            pk = None
+        if pk:
+            return pk if pk.startswith("0x") else "0x" + pk
+    raise ValueError("No Safe signer in wallet.json could be decrypted with the provided password")
+
+
 def load_checkpoint(path: Path) -> dict:
     """Load checkpoint JSON, sanitising entries to valid hex32 strings."""
     if path.exists():
@@ -172,7 +448,7 @@ def load_checkpoint(path: Path) -> dict:
             data["delivered"] = [h for h in data.get("delivered", []) if _valid_hex32(h)]
             return data
         except Exception as e:
-            print(f"[warn] Checkpoint unreadable ({e}) — starting fresh")
+            log("Checkpoint unreadable (%s) — starting fresh", e, level=logging.WARNING)
     return {
         "open_requests": [],
         "delivered": [],
@@ -188,25 +464,196 @@ def save_checkpoint(path: Path, data: dict) -> None:
     path.chmod(0o600)
 
 
+class RequestQueue:
+    """Persistent queue for discovered marketplace request IDs."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path.expanduser().resolve()
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._init_db()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        return conn
+
+    def _init_db(self) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS requests (
+                    request_id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    discovered_block INTEGER,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    last_error TEXT,
+                    delivered_at INTEGER,
+                    updated_at INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_requests_status_block "
+                "ON requests(status, discovered_block)"
+            )
+
+    def enqueue_open(self, request_id: str, block_number: int | None = None) -> None:
+        now = int(time.time())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO requests(request_id, status, discovered_block, updated_at)
+                VALUES (?, 'open', ?, ?)
+                ON CONFLICT(request_id) DO UPDATE SET
+                    status = CASE
+                        WHEN requests.status IN ('delivered', 'skipped') THEN requests.status
+                        ELSE 'open'
+                    END,
+                    discovered_block = COALESCE(requests.discovered_block, excluded.discovered_block),
+                    updated_at = excluded.updated_at
+                """,
+                (request_id, block_number, now),
+            )
+
+    def get_open(self, limit: int) -> list[bytes]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT request_id
+                FROM requests
+                WHERE status = 'open'
+                ORDER BY COALESCE(discovered_block, 0), request_id
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [hex_to_b32(row[0]) for row in rows]
+
+    def mark_delivering(self, request_ids: list[bytes]) -> None:
+        self._mark(request_ids, "delivering", increment_attempts=True)
+
+    def mark_open(self, request_ids: list[bytes], error: str | None = None) -> None:
+        self._mark(request_ids, "open", error=error)
+
+    def mark_delivered(self, request_ids: list[bytes]) -> None:
+        now = int(time.time())
+        ids = [b32_to_hex(r) for r in request_ids]
+        if not ids:
+            return
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                UPDATE requests
+                SET status = 'delivered', delivered_at = ?, updated_at = ?, last_error = NULL
+                WHERE request_id = ?
+                """,
+                [(now, now, rid) for rid in ids],
+            )
+
+    def mark_skipped(self, request_ids: list[bytes], reason: str) -> None:
+        self._mark(request_ids, "skipped", error=reason)
+
+    def _mark(
+        self,
+        request_ids: list[bytes],
+        status: str,
+        *,
+        error: str | None = None,
+        increment_attempts: bool = False,
+    ) -> None:
+        ids = [b32_to_hex(r) for r in request_ids]
+        if not ids:
+            return
+        now = int(time.time())
+        attempts_expr = "attempts + 1" if increment_attempts else "attempts"
+        with self._connect() as conn:
+            conn.executemany(
+                f"""
+                UPDATE requests
+                SET status = ?, updated_at = ?, last_error = ?, attempts = {attempts_expr}
+                WHERE request_id = ?
+                """,
+                [(status, now, error, rid) for rid in ids],
+            )
+
+    def counts(self) -> dict[str, int]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) FROM requests GROUP BY status"
+            ).fetchall()
+        return {str(status): int(count) for status, count in rows}
+
+    def count_open(self) -> int:
+        return self.counts().get("open", 0)
+
+
 def _connect(rpc_urls: list[str], timeout: int = 30) -> tuple[Web3, str]:
     """Connect to the first working RPC. Returns (w3, url)."""
-    for url in rpc_urls:
-        try:
-            w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": timeout}))
-            if w3.is_connected():
-                return w3, url
-        except Exception:
-            continue
+    if _IWA_CHAIN_INTERFACE is not None:
+        w3 = _IWA_CHAIN_INTERFACE.web3
+        _rpc_call(lambda: w3.eth.block_number, name="iwa block_number probe")
+        return w3, f"iwa:{_IWA_CHAIN_NAME}"
+
+    for attempt in range(3):
+        for url in rpc_urls:
+            try:
+                w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": timeout}))
+                if w3.is_connected():
+                    log("connected rpc=%s", url)
+                    return w3, url
+                log("RPC not connected: %s", url, level=logging.WARNING)
+            except Exception as e:
+                log("RPC connect failed %s: %s", url, type(e).__name__, level=logging.WARNING)
+        _backoff_sleep(attempt)
     raise RuntimeError(f"All RPCs unreachable: {rpc_urls}")
 
 
-def _make_marketplace(w3: Web3):
-    return w3.eth.contract(address=w3.to_checksum_address(MARKETPLACE_ADDR), abi=MARKETPLACE_ABI)
+def _make_marketplace(w3: Web3, marketplace_addr: str):
+    return w3.eth.contract(address=w3.to_checksum_address(marketplace_addr), abi=MARKETPLACE_ABI)
+
+
+def _call_status_with_rotation(
+    rpc_urls: list[str],
+    marketplace_addr: str,
+    request_id: bytes,
+    *,
+    start_idx: int = 0,
+) -> tuple[int | None, int, object]:
+    """Call getRequestStatus with RPC rotation and exponential backoff."""
+    last_exc: Exception | None = None
+    for attempt in range(max(1, len(rpc_urls) * 3)):
+        rpc_idx = start_idx + attempt
+        url = rpc_urls[rpc_idx % len(rpc_urls)]
+        try:
+            w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 30}))
+            marketplace = _make_marketplace(w3, marketplace_addr)
+            return marketplace.functions.getRequestStatus(request_id).call(), rpc_idx, marketplace
+        except Exception as e:
+            last_exc = e
+            log(
+                "getRequestStatus %s via %s failed: %s",
+                b32_to_hex(request_id)[:18],
+                url,
+                type(e).__name__,
+                level=logging.WARNING,
+            )
+            if (attempt + 1) % len(rpc_urls) == 0:
+                _backoff_sleep(attempt // len(rpc_urls))
+    if last_exc:
+        log(
+            "getRequestStatus exhausted for %s: %s",
+            b32_to_hex(request_id)[:18],
+            type(last_exc).__name__,
+            level=logging.ERROR,
+        )
+    return None, start_idx, None
 
 
 def _revalidate_open(
     w3: Web3,
     request_ids: list[bytes],
+    marketplace_addr: str,
     delay: float = DELAY_STATUS,
     rpc_urls: list[str] | None = None,
 ) -> list[bytes]:
@@ -215,27 +662,32 @@ def _revalidate_open(
     If rpc_urls is provided, rotates to the next RPC on failure.
     """
     rpc_idx = 0
-    marketplace = _make_marketplace(w3)
     still_open, skipped = [], 0
     for rid in request_ids:
         n_attempts = len(rpc_urls) if rpc_urls else 1
         for _ in range(n_attempts):
             try:
-                if marketplace.functions.getRequestStatus(rid).call() == 2:
+                status = _rpc_call(
+                    lambda: _make_marketplace(
+                        _rpc_web3(w3),
+                        marketplace_addr,
+                    ).functions.getRequestStatus(rid).call(),
+                    name=f"revalidate {b32_to_hex(rid)[:18]}",
+                )
+                if status == 2:
                     still_open.append(rid)
                 else:
                     skipped += 1
                 break
             except Exception as e:
-                print(f"  [warn] status check {b32_to_hex(rid)[:18]}: {type(e).__name__}")
+                log("status check %s: %s", b32_to_hex(rid)[:18], type(e).__name__, level=logging.WARNING)
                 if rpc_urls:
                     rpc_idx += 1
                     url = rpc_urls[rpc_idx % len(rpc_urls)]
-                    w3_new = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 30}))
-                    marketplace = _make_marketplace(w3_new)
+                    w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 30}))
         time.sleep(delay)
     if skipped:
-        print(f"  Re-validation: {skipped} no longer status=2 — filtered out")
+        log("Re-validation: %s no longer status=2 — filtered out", skipped)
     return still_open
 
 
@@ -244,6 +696,7 @@ def _revalidate_open(
 
 def discover_open_requests(
     rpc_urls: list[str],
+    marketplace_addr: str,
     scan_from: int,
     scan_to: int,
     *,
@@ -252,6 +705,7 @@ def discover_open_requests(
     delay_status: float = DELAY_STATUS,
     checkpoint: Path | None = None,
     resume_from: int | None = None,
+    queue: RequestQueue | None = None,
 ) -> list[bytes]:
     """Scan [scan_from, scan_to] for status=2 requestIds with RPC rotation.
 
@@ -259,7 +713,7 @@ def discover_open_requests(
     Returns list of 32-byte requestId bytes.
     """
     if scan_from >= scan_to:
-        print(f"[warn] scan_from ({scan_from}) >= scan_to ({scan_to}) — nothing to scan")
+        log("scan_from (%s) >= scan_to (%s) — nothing to scan", scan_from, scan_to, level=logging.WARNING)
         return []
 
     cp = (
@@ -280,14 +734,21 @@ def discover_open_requests(
     rpc_idx = 0
 
     def _w3_and_contract():
+        if _IWA_CHAIN_INTERFACE is not None:
+            w3 = _IWA_CHAIN_INTERFACE.web3
+            return w3, _make_marketplace(w3, marketplace_addr)
         url = rpc_urls[rpc_idx % len(rpc_urls)]
         w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 30}))
-        return w3, _make_marketplace(w3)
+        return w3, _make_marketplace(w3, marketplace_addr)
 
     n_windows = max(1, (scan_to - start) // LOG_WINDOW + 1)
-    print(
-        f"  Scanning {n_windows} windows of {LOG_WINDOW} blocks "
-        f"({start} → {scan_to}), {delay_logs:.0f}s between calls"
+    log(
+        "Scanning %s windows of %s blocks (%s -> %s), %.0fs between calls",
+        n_windows,
+        LOG_WINDOW,
+        start,
+        scan_to,
+        delay_logs,
     )
 
     for wi, from_b in enumerate(range(start, scan_to + 1, LOG_WINDOW)):
@@ -298,24 +759,30 @@ def discover_open_requests(
         logs = None
         for _ in range(len(rpc_urls)):
             try:
-                logs = marketplace.events.MarketplaceRequest.get_logs(
-                    from_block=from_b, to_block=to_b
+                logs = _rpc_call(
+                    lambda: _make_marketplace(
+                        _rpc_web3(w3),
+                        marketplace_addr,
+                    ).events.MarketplaceRequest.get_logs(
+                        from_block=from_b,
+                        to_block=to_b,
+                    ),
+                    name=f"get_logs {from_b}-{to_b}",
                 )
                 break
             except Exception as e:
-                print(f"  [warn] get_logs {from_b}-{to_b}: {type(e).__name__} — rotating RPC")
+                log("get_logs %s-%s: %s — rotating RPC", from_b, to_b, type(e).__name__, level=logging.WARNING)
                 rpc_idx += 1
                 w3, marketplace = _w3_and_contract()
 
         if logs is None:
-            print(f"  [error] All RPCs failed for {from_b}-{to_b} — skipping")
-            time.sleep(delay_logs)
-            continue
+            msg = f"All RPCs failed for {from_b}-{to_b}; aborting to avoid scan gaps"
+            raise RuntimeError(msg)
 
         # Collect unseen requestIds
         new_ids: list[bytes] = []
-        for log in logs:
-            for rid in log["args"]["requestIds"]:
+        for event_log in logs:
+            for rid in event_log["args"]["requestIds"]:
                 h = b32_to_hex(rid)
                 if h not in seen and h not in delivered_set:
                     seen.add(h)
@@ -326,14 +793,25 @@ def discover_open_requests(
             h = b32_to_hex(rid)
             for _ in range(len(rpc_urls)):
                 try:
-                    if marketplace.functions.getRequestStatus(rid).call() == 2:
+                    status = _rpc_call(
+                        lambda: _make_marketplace(
+                            _rpc_web3(w3),
+                            marketplace_addr,
+                        ).functions.getRequestStatus(rid).call(),
+                        name=f"getRequestStatus {h[:18]}",
+                    )
+                    if status == 2:
                         open_set.add(h)
-                        print(f"    open: {h[:18]}... (total: {len(open_set)})")
+                        if queue:
+                            queue.enqueue_open(h, from_b)
+                        log("open: %s... total=%s queue=%s", h[:18], len(open_set), bool(queue))
                     break
                 except Exception:
                     rpc_idx += 1
                     w3, marketplace = _w3_and_contract()
             time.sleep(delay_status)
+            if max_open and len(open_set) >= max_open:
+                break
 
         # Persist checkpoint (BLK-3: scan_from_block is sticky once set)
         if checkpoint:
@@ -345,16 +823,16 @@ def discover_open_requests(
 
         if wi % 10 == 0:
             pct = 100 * (from_b - start) / max(1, scan_to - start)
-            print(f"  Progress: {pct:.0f}% block {from_b}, open: {len(open_set)}")
+            log("Progress: %.0f%% block %s open=%s", pct, from_b, len(open_set))
 
         if max_open and len(open_set) >= max_open:
-            print(f"  Reached target {max_open} — stopping discovery.")
+            log("Reached target %s — stopping discovery.", max_open)
             break
 
         time.sleep(delay_logs)
 
     result = [hex_to_b32(h) for h in sorted(open_set)]
-    print(f"\n  Discovery complete: {len(result)} open request(s)")
+    log("Discovery complete: %s open request(s)", len(result))
     return result
 
 
@@ -366,6 +844,7 @@ def deliver_batch_anvil(
     batch: list[bytes],
     safe_addr: str,
     mech_addr: str,
+    marketplace_addr: str,
 ) -> tuple[bool, list[bytes]]:
     """Deliver batch via impersonated Safe (Anvil only).
 
@@ -384,10 +863,20 @@ def deliver_batch_anvil(
     tx_hash = w3.eth.send_transaction(tx)
     receipt = w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
     ok = receipt["status"] == 1
-    print(
-        f"  TX 0x{tx_hash.hex()[:18]}... [{'OK' if ok else 'REVERTED'}] — {len(batch)} request(s)"
+    delivered_ids = _delivered_ids_from_receipt_or_status(
+        w3,
+        receipt,
+        batch,
+        marketplace_addr,
+    ) if ok else []
+    log(
+        "TX 0x%s... [%s] — %s/%s delivered",
+        tx_hash.hex()[:18],
+        "OK" if ok else "REVERTED",
+        len(delivered_ids),
+        len(batch),
     )
-    return ok, (batch if ok else [])
+    return ok, delivered_ids
 
 
 # ── Delivery (real Safe via safe_eth) ─────────────────────────────────────────
@@ -397,6 +886,7 @@ def deliver_batch_real(
     batch: list[bytes],
     safe_addr: str,
     mech_addr: str,
+    marketplace_addr: str,
     rpc_url: str,
     private_key: str,
     w3: Web3,
@@ -420,13 +910,13 @@ def deliver_batch_real(
         pairs = [(r, d) for r, d, ok in zip(batch, datas, flags) if ok]
         n_filtered = len(batch) - len(pairs)
         if n_filtered:
-            print(f"  Simulation: {n_filtered} request(s) not deliverable — filtered out")
+            log("Simulation: %s request(s) not deliverable — filtered out", n_filtered)
     except Exception as e:
-        print(f"  [warn] Simulation failed ({type(e).__name__}) — aborting batch for safety")
+        log("Simulation failed (%s) — aborting batch for safety", type(e).__name__, level=logging.WARNING)
         return True, []
 
     if not pairs:
-        print("  Simulation: batch empty after filtering — skipping")
+        log("Simulation: batch empty after filtering — skipping")
         return True, []
 
     eff_batch = [r for r, _ in pairs]
@@ -445,24 +935,78 @@ def deliver_batch_real(
     safe_tx.sign(private_key)
     tx_hash_bytes, _ = safe_tx.execute(private_key)
     tx_hash = "0x" + tx_hash_bytes.hex()
-    print(f"  TX {tx_hash[:20]}... submitted ({len(eff_batch)} request(s))")
+    log("TX %s... submitted (%s request(s))", tx_hash[:20], len(eff_batch))
 
     # BLK-1: Wait for on-chain confirmation
     try:
         receipt = ec.w3.eth.wait_for_transaction_receipt(tx_hash_bytes, timeout=180)
         if receipt["status"] != 1:
-            print(f"  TX {tx_hash[:20]}... REVERTED — nothing marked as delivered")
+            log("TX %s... REVERTED — nothing marked as delivered", tx_hash[:20], level=logging.ERROR)
             return False, []
-        print(f"  TX {tx_hash[:20]}... CONFIRMED ✓ ({len(eff_batch)} delivered)")
-        return True, eff_batch
+        delivered_ids = _delivered_ids_from_receipt_or_status(
+            ec.w3,
+            receipt,
+            eff_batch,
+            marketplace_addr,
+        )
+        log(
+            "TX %s... CONFIRMED (%s/%s delivered)",
+            tx_hash[:20],
+            len(delivered_ids),
+            len(eff_batch),
+        )
+        return True, delivered_ids
     except Exception as e:
-        print(f"  [warn] Receipt timeout ({type(e).__name__}) — marking as undelivered for safety")
+        log("Receipt timeout (%s) — marking as undelivered for safety", type(e).__name__, level=logging.WARNING)
         return False, []
+
+
+def _delivered_ids_from_receipt_or_status(
+    w3: Web3,
+    receipt,
+    request_ids: list[bytes],
+    marketplace_addr: str,
+) -> list[bytes]:
+    """Return ids accepted by marketplace, using event flags then status fallback."""
+    marketplace = _make_marketplace(w3, marketplace_addr)
+
+    try:
+        events = marketplace.events.MarketplaceDelivery().process_receipt(receipt)
+        wanted = {b32_to_hex(r): r for r in request_ids}
+        delivered: list[bytes] = []
+        for event in events:
+            args = event["args"]
+            for rid, ok in zip(args["requestIds"], args["deliveredRequests"]):
+                h = b32_to_hex(rid)
+                if ok and h in wanted:
+                    delivered.append(wanted[h])
+        if delivered:
+            return delivered
+        if events:
+            return []
+    except Exception as e:
+        log("Could not decode delivery flags (%s); checking status", type(e).__name__, level=logging.WARNING)
+
+    delivered = []
+    for rid in request_ids:
+        try:
+            if _rpc_call(
+                lambda: _make_marketplace(
+                    _rpc_web3(w3),
+                    marketplace_addr,
+                ).functions.getRequestStatus(rid).call(),
+                name=f"post-tx status {b32_to_hex(rid)[:18]}",
+            ) == 3:
+                delivered.append(rid)
+        except Exception as e:
+            log("post-TX status check %s: %s", b32_to_hex(rid)[:18], type(e).__name__, level=logging.WARNING)
+    return delivered
 
 
 def deliver_all(
     open_requests: list[bytes],
     *,
+    runtime: RuntimeConfig,
     mode: str,
     w3: Web3,
     private_key: str | None = None,
@@ -471,50 +1015,82 @@ def deliver_all(
     batch_size: int = BATCH_SIZE,
     checkpoint: Path | None = None,
     rpc_urls: list[str] | None = None,
+    queue: RequestQueue | None = None,
 ) -> int:
     """Deliver all open requests in batches. Returns count of delivered requests."""
-    safe_addr = Web3.to_checksum_address(SAFE_ADDR)
-    mech_addr = Web3.to_checksum_address(MECH_ADDR)
+    safe_addr = Web3.to_checksum_address(runtime.safe_addr)
+    mech_addr = Web3.to_checksum_address(runtime.mech_addr)
+    marketplace_addr = Web3.to_checksum_address(runtime.marketplace_addr)
 
     cp = load_checkpoint(checkpoint) if checkpoint else {"open_requests": [], "delivered": []}
     delivered_set: set[str] = set(cp.get("delivered", []))
 
     pending = [r for r in open_requests if b32_to_hex(r) not in delivered_set]
     n_batches = (len(pending) + batch_size - 1) // batch_size
-    print(f"\n  {len(pending)} request(s) to deliver in {n_batches} batch(es) of {batch_size}")
+    log("%s request(s) to deliver in %s batch(es) of %s", len(pending), n_batches, batch_size)
 
     total = 0
     for i in range(0, len(pending), batch_size):
-        batch = pending[i : i + batch_size]
+        original_batch = pending[i : i + batch_size]
+        batch = original_batch
         bn = i // batch_size + 1
-        print(f"\n  Batch {bn}/{n_batches}: {len(batch)} request(s)")
+        log("Batch %s/%s: %s request(s)", bn, n_batches, len(batch))
+        if queue:
+            queue.mark_delivering(batch)
 
         # BLK-4: Re-validate status before each batch in real mode
         if mode == "real":
-            batch = _revalidate_open(w3, batch, delay=0.3, rpc_urls=rpc_urls)
+            batch = _revalidate_open(
+                w3,
+                batch,
+                marketplace_addr,
+                delay=0.3,
+                rpc_urls=rpc_urls,
+            )
+            if queue:
+                filtered = [r for r in original_batch if r not in set(batch)]
+                queue.mark_skipped(filtered, "no_longer_status_2")
             if not batch:
-                print("  All in batch already delivered — skipping")
+                log("All in batch already delivered — skipping")
                 continue
 
         try:
             if mode == "anvil":
-                _, delivered_ids = deliver_batch_anvil(w3, batch, safe_addr, mech_addr)
+                _, delivered_ids = deliver_batch_anvil(
+                    w3,
+                    batch,
+                    safe_addr,
+                    mech_addr,
+                    marketplace_addr,
+                )
             else:
                 _, delivered_ids = deliver_batch_real(
-                    batch, safe_addr, mech_addr, rpc_url, private_key, w3
+                    batch,
+                    safe_addr,
+                    mech_addr,
+                    marketplace_addr,
+                    rpc_url,
+                    private_key,
+                    w3,
                 )
             for r in delivered_ids:
                 delivered_set.add(b32_to_hex(r))
             total += len(delivered_ids)
+            if queue:
+                queue.mark_delivered(delivered_ids)
+                not_delivered = [r for r in batch if r not in set(delivered_ids)]
+                queue.mark_skipped(not_delivered, "not_delivered_after_tx")
         except Exception as e:
-            print(f"  [error] Batch {bn} failed: {type(e).__name__}")
+            log("Batch %s failed: %s", bn, type(e).__name__, level=logging.ERROR)
+            if queue:
+                queue.mark_open(batch, type(e).__name__)
 
         if checkpoint:
             cp["delivered"] = sorted(delivered_set)
             save_checkpoint(checkpoint, cp)
 
         if i + batch_size < len(pending):
-            print(f"  Waiting {delay_tx:.0f}s...")
+            log("Waiting %.0fs...", delay_tx)
             time.sleep(delay_tx)
 
     return total
@@ -523,77 +1099,84 @@ def deliver_all(
 # ── Anvil test ─────────────────────────────────────────────────────────────────
 
 
-def start_anvil(fork_url: str) -> subprocess.Popen:
+def start_anvil(fork_url: str, port: int | None = None) -> tuple[subprocess.Popen, str]:
+    port = _find_free_port(port)
+    anvil_rpc = f"http://127.0.0.1:{port}"
+    log("Starting Anvil fork port=%s fork_url=%s", port, fork_url)
     proc = subprocess.Popen(
         [
             "anvil",
             "--fork-url",
             fork_url,
             "--port",
-            str(ANVIL_PORT),
+            str(port),
             "--block-time",
             "1",
             "--silent",
         ],
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
     )
-    w3 = Web3(Web3.HTTPProvider(ANVIL_RPC))
+    w3 = Web3(Web3.HTTPProvider(anvil_rpc))
     for _ in range(30):
         time.sleep(0.5)
         if proc.poll() is not None:  # D7: detect early crash
+            stderr = (proc.stderr.read() if proc.stderr else "").strip()
             raise RuntimeError(
-                f"Anvil crashed (exit {proc.returncode}). Is port {ANVIL_PORT} already in use?"
+                f"Anvil crashed (exit {proc.returncode}) on port {port}: {stderr}"
             )
         try:
             if w3.is_connected():
-                print(f"  Anvil ready at block {w3.eth.block_number}")
-                return proc
+                log("Anvil ready at block %s", w3.eth.block_number)
+                return proc, anvil_rpc
         except Exception:
             pass
     proc.kill()
+    stderr = (proc.stderr.read() if proc.stderr else "").strip()
     raise RuntimeError("Anvil did not start in 15s.")
 
 
-def run_anvil_test() -> None:
+def run_anvil_test(runtime: RuntimeConfig, max_requests: int = 15) -> None:
     """End-to-end Anvil test: find 15 open requests, deliver in batches, verify."""
     print("=" * 60)
     print("Anvil recovery test")
     print("=" * 60)
 
-    TARGET = 15
-    rpc_url = GNOSIS_RPCS[0]
+    TARGET = max_requests
+    rpc_url = _default_rpc_urls(runtime.chain)[0]
 
     print(f"\n[1] Discovering up to {TARGET} open requests on Gnosis (>3 days old)...")
-    w3_gnosis, _ = _connect(GNOSIS_RPCS, timeout=20)
+    w3_gnosis, _ = _connect(_default_rpc_urls(runtime.chain), timeout=20)
     current = w3_gnosis.eth.block_number
     scan_to = current - BLOCKS_24H
     scan_from = current - BLOCKS_3D
 
     if scan_from >= scan_to:
-        print("ERROR: empty scan range — check block constants")
+        log("empty scan range — check block constants", level=logging.ERROR)
         sys.exit(1)
 
     open_requests = discover_open_requests(
-        GNOSIS_RPCS,
+        _default_rpc_urls(runtime.chain),
+        runtime.marketplace_addr,
         scan_from=scan_from,
         scan_to=scan_to,
         max_open=TARGET,
-        delay_logs=0.3,
-        delay_status=0.3,
+        delay_logs=0.05,
+        delay_status=0.05,
     )
     if not open_requests:
-        print("No open requests found — cannot run test.")
+        log("No open requests found — cannot run test.", level=logging.ERROR)
         sys.exit(1)
 
     print("\n[2] Starting Anvil fork of Gnosis...")
-    anvil_proc = start_anvil(rpc_url)
+    anvil_proc, anvil_rpc = start_anvil(rpc_url)
 
     try:
-        w3 = Web3(Web3.HTTPProvider(ANVIL_RPC))
-        safe_addr = Web3.to_checksum_address(SAFE_ADDR)
-        mech_addr = Web3.to_checksum_address(MECH_ADDR)
-        marketplace = _make_marketplace(w3)
+        w3 = Web3(Web3.HTTPProvider(anvil_rpc))
+        safe_addr = Web3.to_checksum_address(runtime.safe_addr)
+        mech_addr = Web3.to_checksum_address(runtime.mech_addr)
+        marketplace = _make_marketplace(w3, runtime.marketplace_addr)
         mech = w3.eth.contract(address=mech_addr, abi=MECH_ABI)
 
         payment_type = mech.functions.paymentType().call()
@@ -601,59 +1184,81 @@ def run_anvil_test() -> None:
         bt = w3.eth.contract(address=w3.to_checksum_address(bt_addr), abi=BALANCE_TRACKER_ABI)
 
         balance_before = bt.functions.mapMechBalances(mech_addr).call()
-        print(f"\n  BalanceTracker: {bt_addr}")
-        print(f"  Balance before: {balance_before / 1e18:.6f} xDAI")
+        log("BalanceTracker: %s", bt_addr)
+        log("Balance before: %.6f xDAI", balance_before / 1e18)
 
         for rid in open_requests:
             s = marketplace.functions.getRequestStatus(rid).call()
             assert s == 2, f"Expected status=2, got {s} for {rid.hex()[:16]}"
-        print(f"  All {len(open_requests)} confirmed status=2 on fork ✓")
+        log("All %s confirmed status=2 on fork", len(open_requests))
 
         w3.provider.make_request("anvil_impersonateAccount", [safe_addr])
         w3.provider.make_request("anvil_setBalance", [safe_addr, hex(10 * 10**18)])
 
-        print(f"\n[3] Delivering {len(open_requests)} request(s) in batches of {BATCH_SIZE}...")
-        total = deliver_all(open_requests, mode="anvil", w3=w3, delay_tx=2.0, batch_size=BATCH_SIZE)
+        log("Delivering %s request(s) in batches of %s...", len(open_requests), BATCH_SIZE)
+        total = deliver_all(
+            open_requests,
+            runtime=runtime,
+            mode="anvil",
+            w3=w3,
+            delay_tx=2.0,
+            batch_size=BATCH_SIZE,
+        )
 
         balance_after = bt.functions.mapMechBalances(mech_addr).call()
         delta = balance_after - balance_before
-        print(f"\n  Balance after:  {balance_after / 1e18:.6f} xDAI")
-        print(f"  Balance delta:  +{delta / 1e18:.6f} xDAI")
+        log("Balance after: %.6f xDAI", balance_after / 1e18)
+        log("Balance delta: +%.6f xDAI", delta / 1e18)
 
-        for rid in open_requests[:3]:
+        n_spot = min(3, len(open_requests))
+        for rid in open_requests[:n_spot]:
             s = marketplace.functions.getRequestStatus(rid).call()
             assert s == 3, f"Expected status=3, got {s} for {rid.hex()[:16]}"
-        print("  Status spot-check: first 3 delivered ✓")
+        log("Status spot-check: first %s delivered", n_spot)
 
         assert balance_after > balance_before, "Balance did not increase!"
         assert total == len(open_requests), f"Expected {len(open_requests)} delivered, got {total}"
-        print(f"\n  ✓ PASS — {total} request(s) delivered, +{delta / 1e18:.6f} xDAI credited.")
+        log("PASS — %s request(s) delivered, +%.6f xDAI credited.", total, delta / 1e18)
 
     finally:
         anvil_proc.kill()
-        print("\nAnvil stopped.")
+        anvil_proc.wait(timeout=5)
+        log("Anvil stopped.")
 
 
 # ── Real-mode entrypoints ──────────────────────────────────────────────────────
 
 
-def _get_private_key() -> str:
-    pk = os.environ.get("AGENT_PRIVATE_KEY", "")
+def _get_private_key(runtime: RuntimeConfig, password_env: str) -> str:
+    env_pk = os.environ.get("AGENT_PRIVATE_KEY", "")
+    if env_pk:
+        try:
+            _validate_private_key(env_pk)
+        except ValueError as e:
+            log("AGENT_PRIVATE_KEY invalid: %s", e, level=logging.ERROR)
+            sys.exit(1)
+        return env_pk
+
+    password = os.environ.get(password_env)
+    if password is None:
+        password = getpass.getpass("Wallet password: ")
     try:
+        pk = _private_key_from_wallet(runtime.wallet_path, runtime.safe_addr, password)
         _validate_private_key(pk)
-    except ValueError as e:
-        print(f"AGENT_PRIVATE_KEY invalid: {e}", file=sys.stderr)
+        return pk
+    except Exception as e:
+        log("Could not decrypt Safe signer from wallet.json: %s", type(e).__name__, level=logging.ERROR)
         sys.exit(1)
-    return pk
 
 
-def cmd_discover(args: argparse.Namespace) -> None:
+def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
     checkpoint = Path(args.checkpoint)
+    queue = RequestQueue(Path(args.queue))
     cp = load_checkpoint(checkpoint)
-    rpc_list = [args.rpc] if args.rpc else GNOSIS_RPCS
+    rpc_list = _rpc_list(args, runtime.chain)
 
     w3, _ = _connect(rpc_list)
-    current = w3.eth.block_number
+    current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
     scan_to = current - BLOCKS_24H
 
     # BLK-3: sticky scan_from_block — reuse stored value on resume to avoid gaps.
@@ -665,20 +1270,25 @@ def cmd_discover(args: argparse.Namespace) -> None:
     stored_scan_from = cp.get("scan_from_block")
     if stored_scan_from is not None:
         scan_from = stored_scan_from
-        print(f"Resume: using stored scan_from_block={scan_from}")
+        log("Resume: using stored scan_from_block=%s", scan_from)
         diff_days = abs(scan_from - computed_scan_from) * GNOSIS_BLOCK_TIME / 86400
         if diff_days >= 1:
-            print(
-                f"  [warn] computed scan_from would be {computed_scan_from} "
-                f"but stored is {scan_from} ({diff_days:.1f} day diff) — stored takes precedence"
+            log(
+                "computed scan_from would be %s but stored is %s (%.1f day diff) — stored takes precedence",
+                computed_scan_from,
+                scan_from,
+                diff_days,
+                level=logging.WARNING,
             )
     else:
         scan_from = computed_scan_from
 
     if scan_from >= scan_to:
-        print(
-            f"[error] scan_from ({scan_from}) >= scan_to ({scan_to}). Try --lookback-days N.",
-            file=sys.stderr,
+        log(
+            "scan_from (%s) >= scan_to (%s). Try --lookback-days N.",
+            scan_from,
+            scan_to,
+            level=logging.ERROR,
         )
         sys.exit(1)
 
@@ -686,49 +1296,63 @@ def cmd_discover(args: argparse.Namespace) -> None:
     if resume_from is not None:
         resume_from += 1
         if resume_from > scan_to:
-            print(
-                f"Scan already complete (scanned up to {resume_from - 1}). "
-                f"Run --mode deliver to deliver."
+            log(
+                "Scan already complete (scanned up to %s). Run --mode deliver to deliver.",
+                resume_from - 1,
             )
             return
-        print(f"Resuming from block {resume_from}")
+        log("Resuming from block %s", resume_from)
 
     origin = f"block {scan_from} (contract deployment)" if args.lookback_days is None else f"{args.lookback_days} days"
-    print(f"\nDiscovery: blocks {scan_from}–{scan_to} (from {origin}, excluding last 24h)")
+    log("Discovery: blocks %s-%s (from %s, excluding last 24h)", scan_from, scan_to, origin)
     open_requests = discover_open_requests(
         rpc_list,
+        runtime.marketplace_addr,
         scan_from=scan_from,
         scan_to=scan_to,
         delay_logs=DELAY_LOGS,
         delay_status=DELAY_STATUS,
         checkpoint=checkpoint,
         resume_from=resume_from,
+        queue=queue,
     )
-    print(f"\nFound {len(open_requests)} open request(s). Checkpoint: {checkpoint}")
+    log("Found %s open request(s). Checkpoint: %s", len(open_requests), checkpoint)
+    log("Queue: %s counts=%s", queue.path, queue.counts())
 
 
-def cmd_deliver(args: argparse.Namespace) -> None:
+def cmd_deliver(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
     checkpoint = Path(args.checkpoint)
+    queue = RequestQueue(Path(args.queue))
     cp = load_checkpoint(checkpoint)
-    rpc_list = [args.rpc] if args.rpc else GNOSIS_RPCS
+    rpc_list = _rpc_list(args, runtime.chain)
 
+    queued_ids = queue.get_open(args.max_deliver or 1_000_000_000)
     stored_ids = cp.get("open_requests", [])
-    if not stored_ids:
-        print("No open requests in checkpoint. Run --mode discover first.")
+    if queued_ids:
+        open_requests = queued_ids
+        source = f"queue {queue.path}"
+    elif stored_ids:
+        open_requests = [hex_to_b32(h) for h in stored_ids]
+        source = f"checkpoint {checkpoint}"
+    else:
+        log("No open requests in queue/checkpoint. Run --mode discover first.", level=logging.ERROR)
         sys.exit(1)
 
     w3, rpc_url = _connect(rpc_list)
-
-    # Per-batch re-validation (BLK-4) inside deliver_all handles filtering.
-    open_requests = [hex_to_b32(h) for h in stored_ids]
 
     # OPS-1 + D6: explicit confirmation with summary
     n_batches = (len(open_requests) + BATCH_SIZE - 1) // BATCH_SIZE
     print(f"""
 ⚠️  DELIVERY SUMMARY
-   Safe:        {SAFE_ADDR}
-   Mech:        {MECH_ADDR}
-   Requests:    {len(open_requests)} checkpoint entries, {n_batches} batch(es) of ≤{BATCH_SIZE}
+   Config:      {runtime.config_path}
+   Wallet:      {runtime.wallet_path}
+   Chain:       {runtime.chain}
+   Safe:        {runtime.safe_addr}
+   Mech:        {runtime.mech_addr}
+   Marketplace: {runtime.marketplace_addr}
+   Source:      {source}
+   Queue:       {queue.path} counts={queue.counts()}
+   Requests:    {len(open_requests)} entries, {n_batches} batch(es) of ≤{BATCH_SIZE}
                 (each batch is re-validated on-chain before delivery)
    Payload:     b\"{{}}\"  — requesters receive an empty delivery in exchange for payment
    Delay:       {DELAY_TX}s between batches
@@ -738,12 +1362,13 @@ def cmd_deliver(args: argparse.Namespace) -> None:
    ⚠ --rpc override uses a single RPC URL with no automatic failover during delivery.
 """)
     if not _confirm("Proceed with real delivery?"):
-        print("Aborted.")
+        log("Aborted.", level=logging.WARNING)
         sys.exit(0)
 
-    private_key = _get_private_key()
+    private_key = _get_private_key(runtime, args.password_env)
     total = deliver_all(
         open_requests,
+        runtime=runtime,
         mode="real",
         w3=w3,
         private_key=private_key,
@@ -752,8 +1377,83 @@ def cmd_deliver(args: argparse.Namespace) -> None:
         batch_size=BATCH_SIZE,
         checkpoint=checkpoint,
         rpc_urls=rpc_list,
+        queue=queue,
     )
-    print(f"\nDone — {total} request(s) delivered.")
+    log("Done — %s request(s) delivered.", total)
+
+
+def cmd_all(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
+    """Run discovery and delivery concurrently through the persistent queue."""
+    checkpoint = Path(args.checkpoint)
+    queue = RequestQueue(Path(args.queue))
+    rpc_list = _rpc_list(args, runtime.chain)
+    w3, rpc_url = _connect(rpc_list)
+
+    print(f"""
+⚠️  PIPELINE SUMMARY
+   Config:      {runtime.config_path}
+   Wallet:      {runtime.wallet_path}
+   Chain:       {runtime.chain}
+   Safe:        {runtime.safe_addr}
+   Mech:        {runtime.mech_addr}
+   Marketplace: {runtime.marketplace_addr}
+   Checkpoint:  {checkpoint}
+   Queue:       {queue.path} counts={queue.counts()}
+   Payload:     b\"{{}}\"
+   Delivery:    sequential Safe TXs, batches of ≤{BATCH_SIZE}
+
+   Discovery and delivery will run at the same time. Safe submissions remain
+   sequential to avoid nonce races.
+""")
+    if not _confirm("Proceed with real discovery+delivery?"):
+        log("Aborted.", level=logging.WARNING)
+        sys.exit(0)
+
+    private_key = _get_private_key(runtime, args.password_env)
+    done = threading.Event()
+    errors: list[BaseException] = []
+
+    def _producer() -> None:
+        try:
+            cmd_discover(args, runtime)
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=_producer, name="recover-discovery", daemon=True)
+    thread.start()
+
+    total = 0
+    while True:
+        batch = queue.get_open(BATCH_SIZE)
+        if batch:
+            total += deliver_all(
+                batch,
+                runtime=runtime,
+                mode="real",
+                w3=w3,
+                private_key=private_key,
+                rpc_url=rpc_url,
+                delay_tx=0,
+                batch_size=BATCH_SIZE,
+                checkpoint=checkpoint,
+                rpc_urls=rpc_list,
+                queue=queue,
+            )
+            log("Waiting %.0fs before next Safe TX...", DELAY_TX)
+            time.sleep(DELAY_TX)
+            continue
+
+        if done.is_set():
+            break
+        time.sleep(2)
+
+    thread.join()
+    if errors:
+        log("discovery failed: %s", type(errors[0]).__name__, level=logging.ERROR)
+        sys.exit(1)
+    log("Done — %s request(s) delivered. Queue counts=%s", total, queue.counts())
 
 
 # ── CLI ────────────────────────────────────────────────────────────────────────
@@ -766,7 +1466,35 @@ def main() -> None:
     )
     parser.add_argument("--anvil-test", action="store_true", help="Run Anvil end-to-end test")
     parser.add_argument("--mode", choices=["discover", "deliver", "all"], default="discover")
+    parser.add_argument("--config", default="data/config.yaml", help="Path to config.yaml")
+    parser.add_argument("--wallet", default="data/wallet.json", help="Path to wallet.json")
+    parser.add_argument("--chain", default="gnosis", help="Chain key under plugins.micromech.chains")
+    parser.add_argument("--service-key", default=None, help="OLAS service key if config has multiple")
+    parser.add_argument("--mech", default=None, help="Override mech address from config.yaml")
+    parser.add_argument("--safe", default=None, help="Override Safe multisig address from config.yaml")
+    parser.add_argument("--marketplace", default=None, help="Override marketplace address from config.yaml")
+    parser.add_argument(
+        "--password-env",
+        default="wallet_password",
+        help="Environment variable containing the wallet password",
+    )
+    parser.add_argument(
+        "--anvil-max-requests",
+        type=int,
+        default=15,
+        help="Maximum requests to recover during --anvil-test",
+    )
     parser.add_argument("--checkpoint", default=str(DEFAULT_CHECKPOINT))
+    parser.add_argument("--queue", default=str(DEFAULT_QUEUE), help="Path to SQLite request queue")
+    parser.add_argument("--log", default=str(DEFAULT_LOG), help="Path to log file")
+    parser.add_argument("--verbose", action="store_true", help="Enable debug console logs")
+    parser.add_argument("--no-iwa", action="store_true", help="Disable iwa RPC retry/rotation")
+    parser.add_argument(
+        "--max-deliver",
+        type=int,
+        default=None,
+        help="Maximum queued requests to deliver in this run",
+    )
     parser.add_argument("--rpc", default=None, help="Override RPC URL")
     parser.add_argument(
         "--lookback-days",
@@ -775,39 +1503,31 @@ def main() -> None:
         help="Days to look back (default: from contract deployment block 38661963 / 2025-02-20)",
     )
     args = parser.parse_args()
+    setup_logging(Path(args.log), verbose=args.verbose)
 
     # LOW-2: Reject non-HTTPS RPCs in real mode (Anvil uses http locally — exempt)
     if args.rpc and not args.anvil_test and not args.rpc.startswith("https://"):
-        print(
-            f"[error] --rpc must use HTTPS. Got: {args.rpc}",
-            file=sys.stderr,
-        )
+        log("--rpc must use HTTPS. Got: %s", args.rpc, level=logging.ERROR)
         sys.exit(1)
 
-    # OPS-3: Fail-fast if key is missing for modes that need it
-    if not args.anvil_test and args.mode in ("deliver", "all"):
-        if not os.environ.get("AGENT_PRIVATE_KEY"):
-            print(
-                "AGENT_PRIVATE_KEY env var required for modes 'deliver' and 'all'.", file=sys.stderr
-            )
-            sys.exit(1)
+    try:
+        runtime = _resolve_runtime_config(args)
+    except Exception as e:
+        log("runtime config: %s", e, level=logging.ERROR)
+        sys.exit(1)
+
+    setup_iwa_rpc(runtime.chain, enabled=(not args.rpc and not args.no_iwa))
 
     if args.anvil_test:
-        run_anvil_test()
+        run_anvil_test(runtime, max_requests=args.anvil_max_requests)
         return
 
     if args.mode == "discover":
-        cmd_discover(args)
+        cmd_discover(args, runtime)
     elif args.mode == "deliver":
-        cmd_deliver(args)
+        cmd_deliver(args, runtime)
     elif args.mode == "all":
-        cmd_discover(args)
-        # OPS-2: verify discovery completed before delivering
-        cp = load_checkpoint(Path(args.checkpoint))
-        if cp.get("last_scanned_block") is None:
-            print("[error] Discovery did not complete — aborting deliver phase.", file=sys.stderr)
-            sys.exit(1)
-        cmd_deliver(args)
+        cmd_all(args, runtime)
 
 
 if __name__ == "__main__":

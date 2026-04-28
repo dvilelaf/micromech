@@ -28,6 +28,23 @@ def _rid_hex(n: int) -> str:
     return rec.b32_to_hex(_rid(n))
 
 
+TEST_SAFE = "0x" + "0" * 40
+TEST_MECH = "0x" + "1" * 40
+TEST_MARKETPLACE = "0x" + "2" * 40
+
+
+def _runtime(tmp_path: Path | None = None) -> rec.RuntimeConfig:
+    base = tmp_path or Path("/tmp")
+    return rec.RuntimeConfig(
+        chain="gnosis",
+        mech_addr=TEST_MECH,
+        safe_addr=TEST_SAFE,
+        marketplace_addr=TEST_MARKETPLACE,
+        config_path=base / "config.yaml",
+        wallet_path=base / "wallet.json",
+    )
+
+
 # ── b32_to_hex / hex_to_b32 ────────────────────────────────────────────────────
 
 
@@ -93,6 +110,14 @@ class TestValidatePrivateKey:
 
 
 class TestCheckpoint:
+    def test_default_checkpoint_lives_next_to_script(self):
+        assert rec.DEFAULT_CHECKPOINT == Path(rec.__file__).resolve().with_name("recover.json")
+
+    def test_default_queue_lives_next_to_script(self):
+        assert rec.DEFAULT_QUEUE == Path(rec.__file__).resolve().with_name(
+            "recover_queue.sqlite"
+        )
+
     def test_load_missing_returns_defaults(self, tmp_path):
         cp = rec.load_checkpoint(tmp_path / "missing.json")
         assert cp["open_requests"] == []
@@ -136,6 +161,40 @@ class TestCheckpoint:
         assert cp["open_requests"] == [_rid_hex(1)]
 
 
+# ── RequestQueue ──────────────────────────────────────────────────────────────
+
+
+class TestRequestQueue:
+    def test_enqueue_and_get_open(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        q.enqueue_open(_rid_hex(2), 20)
+        q.enqueue_open(_rid_hex(1), 10)
+
+        assert q.get_open(10) == [_rid(1), _rid(2)]
+        assert q.counts() == {"open": 2}
+
+    def test_mark_delivered_and_skipped(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        q.enqueue_open(_rid_hex(1), 1)
+        q.enqueue_open(_rid_hex(2), 2)
+
+        q.mark_delivering([_rid(1), _rid(2)])
+        q.mark_delivered([_rid(1)])
+        q.mark_skipped([_rid(2)], "no_longer_status_2")
+
+        assert q.get_open(10) == []
+        assert q.counts() == {"delivered": 1, "skipped": 1}
+
+    def test_delivered_is_not_reopened_by_duplicate_discovery(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        q.enqueue_open(_rid_hex(1), 1)
+        q.mark_delivered([_rid(1)])
+        q.enqueue_open(_rid_hex(1), 2)
+
+        assert q.get_open(10) == []
+        assert q.counts() == {"delivered": 1}
+
+
 # ── _revalidate_open ──────────────────────────────────────────────────────────
 
 
@@ -160,12 +219,12 @@ class TestRevalidateOpen:
         w3 = self._marketplace_mock({1: 2, 2: 3, 3: 2, 4: 0})
         rids = [_rid(1), _rid(2), _rid(3), _rid(4)]
         with patch("time.sleep"):
-            result = rec._revalidate_open(w3, rids, delay=0)
+            result = rec._revalidate_open(w3, rids, TEST_MARKETPLACE, delay=0)
         assert result == [_rid(1), _rid(3)]
 
     def test_empty_input(self):
         w3 = self._marketplace_mock({})
-        assert rec._revalidate_open(w3, [], delay=0) == []
+        assert rec._revalidate_open(w3, [], TEST_MARKETPLACE, delay=0) == []
 
     def test_rpc_failure_skips_entry(self):
         marketplace = MagicMock()
@@ -174,7 +233,7 @@ class TestRevalidateOpen:
         w3.to_checksum_address.side_effect = lambda x: x
         w3.eth.contract.return_value = marketplace
         with patch("time.sleep"):
-            result = rec._revalidate_open(w3, [_rid(1)], delay=0)
+            result = rec._revalidate_open(w3, [_rid(1)], TEST_MARKETPLACE, delay=0)
         assert result == []
 
 
@@ -186,6 +245,7 @@ class TestDeliverBatchReal:
 
     _SAFE = "0x" + "0" * 40
     _MECH = "0x" + "1" * 40
+    _MARKETPLACE = "0x" + "2" * 40
     _RPC = "https://rpc.example.com"
     _PK = "0x" + "a" * 64
 
@@ -224,9 +284,10 @@ class TestDeliverBatchReal:
         with (
             patch("safe_eth.eth.EthereumClient", return_value=mock_ec),
             patch("safe_eth.safe.Safe", return_value=mock_safe),
+            patch("recover_open_requests._delivered_ids_from_receipt_or_status", return_value=[_rid(1), _rid(3)]),
         ):
             ok, delivered = rec.deliver_batch_real(
-                batch, self._SAFE, self._MECH, self._RPC, self._PK, w3
+                batch, self._SAFE, self._MECH, self._MARKETPLACE, self._RPC, self._PK, w3
             )
 
         assert ok is True
@@ -245,7 +306,7 @@ class TestDeliverBatchReal:
             patch("safe_eth.safe.Safe", return_value=mock_safe),
         ):
             ok, delivered = rec.deliver_batch_real(
-                batch, self._SAFE, self._MECH, self._RPC, self._PK, w3
+                batch, self._SAFE, self._MECH, self._MARKETPLACE, self._RPC, self._PK, w3
             )
 
         assert ok is False
@@ -262,7 +323,7 @@ class TestDeliverBatchReal:
             patch("safe_eth.safe.Safe", return_value=mock_safe),
         ):
             ok, delivered = rec.deliver_batch_real(
-                batch, self._SAFE, self._MECH, self._RPC, self._PK, w3
+                batch, self._SAFE, self._MECH, self._MARKETPLACE, self._RPC, self._PK, w3
             )
 
         assert ok is False
@@ -279,7 +340,7 @@ class TestDeliverBatchReal:
             patch("safe_eth.safe.Safe", return_value=mock_safe),
         ):
             ok, delivered = rec.deliver_batch_real(
-                batch, self._SAFE, self._MECH, self._RPC, self._PK, w3
+                batch, self._SAFE, self._MECH, self._MARKETPLACE, self._RPC, self._PK, w3
             )
 
         mock_safe.build_multisig_tx.assert_not_called()
@@ -297,7 +358,7 @@ class TestDeliverBatchReal:
             patch("safe_eth.safe.Safe", return_value=mock_safe),
         ):
             ok, delivered = rec.deliver_batch_real(
-                batch, self._SAFE, self._MECH, self._RPC, self._PK, w3
+                batch, self._SAFE, self._MECH, self._MARKETPLACE, self._RPC, self._PK, w3
             )
 
         mock_safe.build_multisig_tx.assert_not_called()
@@ -347,7 +408,7 @@ class TestDiscoverOpenRequests:
     def test_empty_range_returns_empty(self):
         with patch("time.sleep"):
             result = rec.discover_open_requests(
-                ["http://fake"], scan_from=100, scan_to=50, delay_logs=0, delay_status=0
+                ["http://fake"], TEST_MARKETPLACE, scan_from=100, scan_to=50, delay_logs=0, delay_status=0
             )
         assert result == []
 
@@ -364,6 +425,7 @@ class TestDiscoverOpenRequests:
         ):
             result = rec.discover_open_requests(
                 ["http://fake"],
+                TEST_MARKETPLACE,
                 scan_from=100,
                 scan_to=200,
                 delay_logs=0,
@@ -371,6 +433,25 @@ class TestDiscoverOpenRequests:
             )
         assert _rid(1) in result
         assert _rid(2) not in result
+
+    def test_finds_open_requests_enqueues(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        w3 = self._setup_mocks({(100, 200): [1, 2]}, {1: 2, 2: 3})
+        with (
+            patch("recover_open_requests.Web3.HTTPProvider"),
+            patch("recover_open_requests.Web3", return_value=w3),
+            patch("time.sleep"),
+        ):
+            rec.discover_open_requests(
+                ["http://fake"],
+                TEST_MARKETPLACE,
+                scan_from=100,
+                scan_to=200,
+                delay_logs=0,
+                delay_status=0,
+                queue=q,
+            )
+        assert q.get_open(10) == [_rid(1)]
 
     def test_max_open_stops_early(self):
         # Two windows each with 3 open requests
@@ -384,6 +465,7 @@ class TestDiscoverOpenRequests:
         ):
             result = rec.discover_open_requests(
                 ["http://fake"],
+                TEST_MARKETPLACE,
                 scan_from=0,
                 scan_to=2000,
                 max_open=3,
@@ -402,6 +484,7 @@ class TestDiscoverOpenRequests:
         ):
             rec.discover_open_requests(
                 ["http://fake"],
+                TEST_MARKETPLACE,
                 scan_from=500,
                 scan_to=600,
                 delay_logs=0,
@@ -433,6 +516,7 @@ class TestDiscoverOpenRequests:
         ):
             rec.discover_open_requests(
                 ["http://fake"],
+                TEST_MARKETPLACE,
                 scan_from=700,  # different from stored 500 — must be ignored
                 scan_to=1000,
                 delay_logs=0,
@@ -464,6 +548,7 @@ class TestDeliverAll:
         ) as mock_deliver:
             total = rec.deliver_all(
                 rids,
+                runtime=_runtime(tmp_path),
                 mode="anvil",
                 w3=w3,
                 delay_tx=0,
@@ -491,6 +576,7 @@ class TestDeliverAll:
         ) as mock_deliver:
             total = rec.deliver_all(
                 [_rid(1), _rid(2)],
+                runtime=_runtime(tmp_path),
                 mode="anvil",
                 w3=w3,
                 delay_tx=0,
@@ -517,6 +603,7 @@ class TestDeliverAll:
         ):
             rec.deliver_all(
                 rids,
+                runtime=_runtime(tmp_path),
                 mode="real",
                 w3=w3,
                 private_key="0x" + "a" * 64,
@@ -535,6 +622,7 @@ class TestDeliverAll:
         ):
             total = rec.deliver_all(
                 [_rid(1)],
+                runtime=_runtime(),
                 mode="real",
                 w3=w3,
                 private_key="0x" + "a" * 64,
@@ -553,7 +641,7 @@ class TestDeliverAll:
 
         call_count = 0
 
-        def side_effect(w3_, batch, safe, mech):
+        def side_effect(w3_, batch, safe, mech, marketplace):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -563,6 +651,7 @@ class TestDeliverAll:
         with patch("recover_open_requests.deliver_batch_anvil", side_effect=side_effect):
             total = rec.deliver_all(
                 rids,
+                runtime=_runtime(tmp_path),
                 mode="anvil",
                 w3=w3,
                 delay_tx=0,
@@ -583,10 +672,39 @@ class TestDeliverAll:
             "recover_open_requests.deliver_batch_anvil",
             return_value=(True, [_rid(1), _rid(3)]),  # rid 2 not delivered
         ):
-            total = rec.deliver_all(rids, mode="anvil", w3=w3, delay_tx=0, checkpoint=cp_path)
+            total = rec.deliver_all(
+                rids,
+                runtime=_runtime(tmp_path),
+                mode="anvil",
+                w3=w3,
+                delay_tx=0,
+                checkpoint=cp_path,
+            )
 
         assert total == 2
         cp = rec.load_checkpoint(cp_path)
         assert _rid_hex(1) in cp["delivered"]
         assert _rid_hex(2) not in cp["delivered"]
         assert _rid_hex(3) in cp["delivered"]
+
+    def test_queue_marks_delivered_and_skipped_after_batch(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        for rid in [_rid(1), _rid(2), _rid(3)]:
+            q.enqueue_open(rec.b32_to_hex(rid), 1)
+        w3 = self._mock_w3()
+
+        with patch(
+            "recover_open_requests.deliver_batch_anvil",
+            return_value=(True, [_rid(1), _rid(3)]),
+        ):
+            total = rec.deliver_all(
+                [_rid(1), _rid(2), _rid(3)],
+                runtime=_runtime(tmp_path),
+                mode="anvil",
+                w3=w3,
+                delay_tx=0,
+                queue=q,
+            )
+
+        assert total == 2
+        assert q.counts() == {"delivered": 2, "skipped": 1}

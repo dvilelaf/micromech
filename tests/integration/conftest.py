@@ -139,6 +139,11 @@ def _anvil_forks(request):
     - Kills only the processes it started on teardown.
     - Set env var SKIP_ANVIL=1 to skip Anvil startup (for mocked-only tests).
     """
+    selected = getattr(request.session, "items", [])
+    if selected and all("test_recover_open_requests_live.py" in i.nodeid for i in selected):
+        yield
+        return
+
     if os.environ.get("SKIP_ANVIL") == "1":
         yield
         return
