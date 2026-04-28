@@ -1589,7 +1589,16 @@ def deliver_batch_real(
         to=Web3.to_checksum_address(mech_addr), value=0, data=call_bytes
     )
     safe_tx.sign(private_key)
-    tx_hash_bytes, _ = safe_tx.execute(private_key)
+    tx_gas = 750_000 + 90_000 * len(eff_batch)
+    try:
+        tx_gas_price = max(int(ec.w3.eth.gas_price or 0), 1_000_000_000)
+    except Exception:
+        tx_gas_price = 1_000_000_000
+    tx_hash_bytes, _ = safe_tx.execute(
+        private_key,
+        tx_gas=tx_gas,
+        tx_gas_price=tx_gas_price,
+    )
     tx_hash = "0x" + tx_hash_bytes.hex()
     log("TX %s... submitted (%s request(s))", tx_hash[:20], len(eff_batch))
 
