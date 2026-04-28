@@ -69,7 +69,7 @@ DELAY_STATUS = 1.0  # seconds between getRequestStatus calls
 DELAY_TX = 10.0  # seconds between Safe TX submissions
 RPC_RETRY_BASE = 1.0
 RPC_RETRY_MAX = 30.0
-BATCH_SIZE = 20  # requestIds per deliverToMarketplace call
+BATCH_SIZE = 50  # requestIds per deliverToMarketplace call
 LOG_WINDOW = 1000  # blocks per get_logs window (Gnosis public RPCs accept 1000-2000)
 MECH_DISCOVERY_WINDOW = 1_000_000  # CreateMech is sparse; public RPCs handle large sparse ranges.
 
@@ -652,6 +652,11 @@ class RequestQueue:
                 "SELECT status, COUNT(*) FROM requests GROUP BY status"
             ).fetchall()
         return {str(status): int(count) for status, count in rows}
+
+    def all_request_ids(self) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT request_id FROM requests").fetchall()
+        return {str(row[0]) for row in rows}
 
     def count_open(self) -> int:
         return self.counts().get("open", 0)
@@ -1283,6 +1288,9 @@ def discover_open_requests_from_mech_queues(
     )
     open_set = set(cp.get("open_requests", []))
     delivered_set = set(cp.get("delivered", []))
+    known_set = open_set | delivered_set
+    if queue:
+        known_set |= queue.all_request_ids()
 
     w3, _ = _connect(rpc_urls)
     web3 = _rpc_web3(w3)
@@ -1338,7 +1346,7 @@ def discover_open_requests_from_mech_queues(
             for rid in request_ids:
                 rid = bytes(rid)
                 h = b32_to_hex(rid)
-                if h in delivered_set:
+                if h in known_set:
                     continue
                 try:
                     status = _rpc_call(
@@ -1393,6 +1401,7 @@ def discover_open_requests_from_mech_queues(
 
                 if status == 2:
                     open_set.add(h)
+                    known_set.add(h)
                     if queue:
                         queue.enqueue_open(h, None)
                     log("open via mech queue: %s... total=%s", h[:18], len(open_set))
@@ -2015,13 +2024,9 @@ def cmd_deliver(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
         sys.exit(1)
 
     w3, rpc_url = _connect(rpc_list)
-    current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
-    latest_ts = int(_rpc_call(lambda: _rpc_web3(w3).eth.get_block(current)["timestamp"], name="latest timestamp"))
-    cutoff_block = current - BLOCKS_24H
-    cutoff_timestamp = latest_ts - 24 * 3600
 
     # OPS-1 + D6: explicit confirmation with summary
-    n_batches = (len(open_requests) + BATCH_SIZE - 1) // BATCH_SIZE
+    n_batches = (len(open_requests) + args.batch_size - 1) // args.batch_size
     print(f"""
 ⚠️  DELIVERY SUMMARY
    Config:      {runtime.config_path}
@@ -2032,8 +2037,8 @@ def cmd_deliver(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
    Marketplace: {runtime.marketplace_addr}
    Source:      {source}
    Queue:       {queue.path} counts={queue.counts()}
-   Requests:    {len(open_requests)} entries, {n_batches} batch(es) of ≤{BATCH_SIZE}
-                (each batch is re-validated on-chain before delivery)
+   Requests:    {len(open_requests)} entries, {n_batches} batch(es) of ≤{args.batch_size}
+                (status is re-validated on-chain before delivery)
    Payload:     b\"{{}}\"  — requesters receive an empty delivery in exchange for payment
    Delay:       {DELAY_TX}s between batches
 
@@ -2054,12 +2059,10 @@ def cmd_deliver(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
         private_key=private_key,
         rpc_url=rpc_url,
         delay_tx=DELAY_TX,
-        batch_size=BATCH_SIZE,
+        batch_size=args.batch_size,
         checkpoint=checkpoint,
         rpc_urls=rpc_list,
         queue=queue,
-        cutoff_block=cutoff_block,
-        cutoff_timestamp=cutoff_timestamp,
     )
     log("Done — %s request(s) delivered.", total)
 
@@ -2070,10 +2073,6 @@ def cmd_all(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
     queue = RequestQueue(Path(args.queue))
     rpc_list = _rpc_list(args, runtime.chain)
     w3, rpc_url = _connect(rpc_list)
-    current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
-    latest_ts = int(_rpc_call(lambda: _rpc_web3(w3).eth.get_block(current)["timestamp"], name="latest timestamp"))
-    cutoff_block = current - BLOCKS_24H
-    cutoff_timestamp = latest_ts - 24 * 3600
 
     print(f"""
 ⚠️  PIPELINE SUMMARY
@@ -2086,7 +2085,7 @@ def cmd_all(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
    Checkpoint:  {checkpoint}
    Queue:       {queue.path} counts={queue.counts()}
    Payload:     b\"{{}}\"
-   Delivery:    sequential Safe TXs, batches of ≤{BATCH_SIZE}
+   Delivery:    sequential Safe TXs, batches of ≤{args.batch_size}
 
    Discovery and delivery will run at the same time. Safe submissions remain
    sequential to avoid nonce races.
@@ -2112,7 +2111,7 @@ def cmd_all(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
 
     total = 0
     while True:
-        batch = queue.get_open(BATCH_SIZE)
+        batch = queue.get_open(args.batch_size)
         if batch:
             total += deliver_all(
                 batch,
@@ -2122,12 +2121,10 @@ def cmd_all(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
                 private_key=private_key,
                 rpc_url=rpc_url,
                 delay_tx=0,
-                batch_size=BATCH_SIZE,
+                batch_size=args.batch_size,
                 checkpoint=checkpoint,
                 rpc_urls=rpc_list,
                 queue=queue,
-                cutoff_block=cutoff_block,
-                cutoff_timestamp=cutoff_timestamp,
             )
             log("Waiting %.0fs before next Safe TX...", DELAY_TX)
             time.sleep(DELAY_TX)
@@ -2176,6 +2173,12 @@ def main() -> None:
     parser.add_argument("--queue", default=str(DEFAULT_QUEUE), help="Path to SQLite request queue")
     parser.add_argument("--log", default=str(DEFAULT_LOG), help="Path to log file")
     parser.add_argument("--mechs-cache", default=str(DEFAULT_MECHS_CACHE), help="Path to priority mech cache")
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=BATCH_SIZE,
+        help="Maximum request IDs per deliverToMarketplace transaction",
+    )
     parser.add_argument("--verbose", action="store_true", help="Enable debug console logs")
     parser.add_argument("--no-iwa", action="store_true", help="Disable iwa RPC retry/rotation")
     parser.add_argument(
@@ -2197,7 +2200,7 @@ def main() -> None:
     parser.add_argument(
         "--mech-queue-page-size",
         type=int,
-        default=100,
+        default=250,
         help="Number of request IDs per getUndeliveredRequestIds page",
     )
     parser.add_argument(
@@ -2249,6 +2252,9 @@ def main() -> None:
     )
     args = parser.parse_args()
     setup_logging(Path(args.log), verbose=args.verbose)
+    if args.batch_size <= 0:
+        log("--batch-size must be > 0", level=logging.ERROR)
+        sys.exit(1)
 
     # LOW-2: Reject non-HTTPS RPCs in real mode (Anvil uses http locally — exempt)
     if args.rpc and not args.anvil_test and not args.rpc.startswith("https://"):
