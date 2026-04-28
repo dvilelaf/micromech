@@ -1,8 +1,12 @@
+# syntax=docker/dockerfile:1.7
+
 # ── Stage 1: builder ─────────────────────────────────────────────────────────
 # Has full build toolchain to compile llama-cpp-python from source.
 # The compiled .venv is copied to the lean runtime stage below.
 FROM python:3.12-slim-bookworm AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+ARG TARGETARCH
 
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
@@ -15,23 +19,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy only dependency files first so the expensive uv sync layer is cached
-# independently of source code changes.
-COPY pyproject.toml uv.lock ./
+# Copy only the exported dependency lock first so the expensive dependency
+# layer is cached independently of source code and package version changes.
+COPY docker/requirements.txt ./docker-requirements.txt
 
 # Install all dependencies but not the project itself (no src/ needed yet).
 # GGML_NATIVE=OFF disables CPU-specific optimizations that break QEMU-based
 # cross-compilation for arm64. The resulting binary still works on arm64 hardware.
-RUN CMAKE_ARGS="-DGGML_NATIVE=OFF" \
-    uv sync --frozen --no-dev --no-install-project \
-    --extra web --extra cli --extra chain --extra tasks --extra llm --extra telegram
+RUN --mount=type=cache,id=uv-cache-${TARGETARCH},target=/root/.cache/uv \
+    uv venv .venv && \
+    CMAKE_ARGS="-DGGML_NATIVE=OFF" \
+    uv pip install --python .venv/bin/python -r docker-requirements.txt
 
 # Copy the rest of the source code (does NOT invalidate the compiled .venv cache)
 COPY . /app
 
 # Install the project itself (fast — all dependencies already cached above)
-RUN uv sync --frozen --no-dev \
-    --extra web --extra cli --extra chain --extra tasks --extra llm --extra telegram
+RUN --mount=type=cache,id=uv-cache-${TARGETARCH},target=/root/.cache/uv \
+    uv pip install --python .venv/bin/python --no-deps .
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
 # Lean image — no compiler, no cmake. Only the C++ runtime libs that

@@ -254,6 +254,12 @@ init-anvil chain="gnosis":
 build:
     uv build
 
+# Export Docker dependency lock used by the Dockerfile dependency layer
+docker-lock:
+    uv export --frozen --no-dev --no-emit-project \
+        --extra web --extra cli --extra chain --extra tasks --extra llm --extra telegram \
+        --no-hashes --no-header --output-file docker/requirements.txt >/dev/null
+
 # Run the server
 run:
     uv run micromech run
@@ -464,6 +470,8 @@ release-check:
     fi
     echo "Version consistency OK ($VERSION)"
 
+    echo "Validating Docker dependency lock..."
+    just _validate-docker-lock
     echo "Running security checks..."
     just security
     echo "Running quality checks..."
@@ -484,6 +492,25 @@ release-check:
     fi
 
     echo "All checks passed! Ready to release $TAG."
+
+# Validate Docker dependency lock is synced with uv.lock
+_validate-docker-lock:
+    #!/usr/bin/env bash
+    set -e
+
+    TMP=$(mktemp)
+    trap 'rm -f "$TMP"' EXIT
+    uv export --frozen --no-dev --no-emit-project \
+        --extra web --extra cli --extra chain --extra tasks --extra llm --extra telegram \
+        --no-hashes --no-header --output-file "$TMP" >/dev/null
+
+    if ! diff -u docker/requirements.txt "$TMP"; then
+        echo "Error: docker/requirements.txt is out of sync"
+        echo "Fix: run just docker-lock"
+        exit 1
+    fi
+
+    echo "Docker dependency lock OK"
 
 # Run checks, create and push release tag
 release: release-check
@@ -506,9 +533,12 @@ publish: _validate-git-state _validate-tag-at-head
     set -e
 
     VERSION=$(grep -m1 'version = ' pyproject.toml | cut -d '"' -f2)
+    CACHE_REF="dvilela/micromech:buildcache"
 
     echo "Publishing version $VERSION to DockerHub (multi-arch)..."
     docker buildx build --platform linux/amd64,linux/arm64 \
+        --cache-from type=registry,ref=$CACHE_REF \
+        --cache-to type=registry,ref=$CACHE_REF,mode=max \
         --build-arg VERSION=$VERSION \
         -t dvilela/micromech:latest -t dvilela/micromech:$VERSION \
         -f Dockerfile --push .
