@@ -34,6 +34,7 @@ from micromech.runtime.delivery import DeliveryManager
 from micromech.runtime.executor import ToolExecutor
 from micromech.runtime.listener import EventListener
 from micromech.runtime.metrics import MetricsCollector
+from micromech.runtime.queue_scanner import MechQueueScanner
 from micromech.tools.registry import ToolRegistry
 
 
@@ -72,6 +73,9 @@ class MechServer:
         # Per-chain components
         self.listeners: dict[str, EventListener] = {}
         self.deliveries: dict[str, DeliveryManager] = {}
+        self.queue_scanners: dict[str, MechQueueScanner] = {}
+        # Dedup set to prevent double execution of the same request
+        self._queued_ids: set[str] = set()
 
         for chain_name, chain_cfg in config.enabled_chains.items():
             bridge = self.bridges.get(chain_name)
@@ -79,14 +83,22 @@ class MechServer:
             self.deliveries[chain_name] = DeliveryManager(
                 config, chain_cfg, self.queue, bridge, metrics=self.metrics
             )
+            if bridge and chain_cfg.mech_address:
+                self.queue_scanners[chain_name] = MechQueueScanner(
+                    config=config,
+                    chain_config=chain_cfg,
+                    bridge=bridge,
+                    queue=self.queue,
+                    registry=self.registry,
+                    queued_ids=self._queued_ids,
+                    enqueue=self._enqueue_request,
+                )
 
         # Unbounded queue — backpressure is handled by the executor semaphore
         self._request_queue: asyncio.Queue[MechRequest] = asyncio.Queue()
         self._running = False
         self._tasks: list[asyncio.Task] = []
         self._executor_tasks: set[asyncio.Task] = set()
-        # Dedup set to prevent double execution of the same request
-        self._queued_ids: set[str] = set()
         # Fallback mode: requests where priorityMech != us, waiting for timeout
         self._fallback_pending: dict[str, MechRequest] = {}
         # Cached marketplace contracts for _get_request_status (keyed by chain name)
@@ -235,20 +247,9 @@ class MechServer:
             chain_cfg = self.config.enabled_chains.get(request.chain)
             mech_addr = chain_cfg.mech_address if chain_cfg else ""
             if mech_addr and request.priority_mech.lower() != mech_addr.lower():
-                # Only track if we actually have the tool
-                if not request.tool or not self.registry.has(request.tool):
-                    logger.debug(
-                        "Fallback: skipping {} — tool '{}' not available",
-                        req_id[:16],
-                        request.tool,
-                    )
-                    return
-                self._fallback_pending[req_id] = request
                 logger.info(
-                    "Fallback: tracking {} (tool={}, priority_mech={})",
+                    "Fallback event ignored for {}; queue scanner owns fallback harvesting",
                     req_id[:16],
-                    request.tool,
-                    request.priority_mech[:10],
                 )
                 return
 
@@ -338,6 +339,13 @@ class MechServer:
 
                 if status == self._REQUEST_STATUS_EXPIRED:
                     self._fallback_pending.pop(req_id, None)
+                    if not request.tool or not self.registry.has(request.tool):
+                        logger.debug(
+                            "Fallback: discarding {} — tool '{}' unavailable",
+                            req_id[:16],
+                            request.tool,
+                        )
+                        continue
                     logger.info("Fallback: {} is now deliverable, queuing", req_id[:16])
                     await self._enqueue_request(request)
                 elif status in (REQUEST_STATUS_DOES_NOT_EXIST, REQUEST_STATUS_DELIVERED):
@@ -430,12 +438,19 @@ class MechServer:
             elif bridge and (not cc or not cc.mech_address):
                 logger.warning("Listener skipped for {} — no mech_address configured", chain_name)
 
+        if self.config.queue_scanner_enabled:
+            for chain_name, scanner in self.queue_scanners.items():
+                self._tasks.append(asyncio.create_task(scanner.run()))
+                logger.info("Mech queue scanner started for chain: {}", chain_name)
+
         if with_http:
             self._tasks.append(asyncio.create_task(self._run_http()))
 
         if self.config.fallback_mode_enabled:
-            self._tasks.append(asyncio.create_task(self._fallback_checker_loop()))
-            logger.info("Fallback mode enabled — monitoring all marketplace requests")
+            logger.info(
+                "Fallback mode enabled — scanning {} configured priority mech queue(s)",
+                len(self.config.fallback_mech_addresses),
+            )
 
         # Start task scheduler (checkpoint, rewards, fund, alerts, etc.)
         try:

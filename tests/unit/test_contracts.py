@@ -15,9 +15,12 @@ from micromech.runtime.contracts import (
 class TestABIConstants:
     def test_mech_deliver_abi_is_list(self):
         assert isinstance(MECH_DELIVER_ABI, list)
-        assert len(MECH_DELIVER_ABI) == 2
-        assert MECH_DELIVER_ABI[0]["name"] == "deliverToMarketplace"
-        assert MECH_DELIVER_ABI[1]["name"] == "deliverMarketplaceWithSignatures"
+        names = {entry.get("name") for entry in MECH_DELIVER_ABI}
+        assert "paymentType" in names
+        assert "numUndeliveredRequests" in names
+        assert "getUndeliveredRequestIds" in names
+        assert "deliverToMarketplace" in names
+        assert "deliverMarketplaceWithSignatures" in names
 
     def test_marketplace_request_abi_is_list(self):
         assert isinstance(MARKETPLACE_REQUEST_ABI, list)
@@ -27,6 +30,19 @@ class TestABIConstants:
         assert "Deliver" in names
         assert "MarketplaceDelivery" in names
         assert "getRequestStatus" in names
+        assert "mapRequestIdInfos" in names
+        request_info = next(
+            entry for entry in MARKETPLACE_REQUEST_ABI
+            if entry.get("name") == "mapRequestIdInfos"
+        )
+        assert [out["name"] for out in request_info["outputs"]] == [
+            "priorityMech",
+            "deliveryMech",
+            "requester",
+            "responseTimeout",
+            "deliveryRate",
+            "paymentType",
+        ]
 
     def test_metadata_abi_has_change_hash(self):
         assert isinstance(COMPLEMENTARY_SERVICE_METADATA_ABI, list)

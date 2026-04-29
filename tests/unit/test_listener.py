@@ -803,7 +803,7 @@ class TestAdaptivePolling:
 
 
 class TestFallbackMode:
-    """Tests for fallback_mode_enabled listener behaviour."""
+    """Fallback mode must not widen the event listener."""
 
     def _make_fallback_config(self) -> MicromechConfig:
         return MicromechConfig(
@@ -811,16 +811,15 @@ class TestFallbackMode:
             fallback_mode_enabled=True,
         )
 
-    def test_fallback_mode_includes_non_matching_priority(self):
-        """With fallback_mode_enabled, events for OTHER_MECH are returned."""
+    def test_fallback_mode_still_filters_non_matching_priority(self):
+        """Fallback harvesting is queue-based; listener remains own-mech only."""
         cfg = self._make_fallback_config()
         listener = EventListener(cfg, CHAIN_CFG_MECH)
         event = _make_event(OTHER_MECH)
 
         reqs = listener._parse_marketplace_event(event, MECH_ADDR)
 
-        assert len(reqs) == 1
-        assert reqs[0].priority_mech == OTHER_MECH
+        assert reqs == []
 
     def test_normal_mode_still_filters_other_mech(self):
         """Without fallback mode, events for OTHER_MECH are filtered out."""
@@ -841,11 +840,12 @@ class TestFallbackMode:
         assert len(reqs) == 1
         assert reqs[0].priority_mech == MECH_ADDR
 
-    def test_fallback_fetch_uses_empty_filter(self):
-        """With fallback_mode_enabled, get_logs is called without priorityMech filter."""
+    def test_fallback_fetch_still_uses_priority_mech_filter(self):
+        """With fallback enabled, get_logs remains filtered to our mech."""
         cfg = self._make_fallback_config()
         bridge = MagicMock()
         bridge.with_retry.side_effect = lambda fn, **kw: fn()
+        bridge.web3.to_checksum_address.return_value = MECH_ADDR
 
         listener = EventListener(cfg, CHAIN_CFG_MECH, bridge=bridge)
         mock_contract = MagicMock()
@@ -856,7 +856,7 @@ class TestFallbackMode:
 
         call_kwargs = mock_contract.events.MarketplaceRequest.get_logs.call_args.kwargs
         assert "argument_filters" in call_kwargs
-        assert call_kwargs["argument_filters"] == {}
+        assert call_kwargs["argument_filters"] == {"priorityMech": MECH_ADDR}
 
     def test_normal_fetch_uses_priority_mech_filter(self):
         """Without fallback mode, get_logs is called with priorityMech filter."""

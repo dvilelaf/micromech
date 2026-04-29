@@ -8,6 +8,7 @@ All web3/contract calls are mocked so no network is required.
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -44,6 +45,97 @@ def _runtime(tmp_path: Path | None = None) -> rec.RuntimeConfig:
         wallet_path=base / "wallet.json",
         delivery_rate=10,
     )
+
+
+def test_runtime_config_loads_fallback_mechs_from_config(tmp_path):
+    config = tmp_path / "config.yaml"
+    fallback = "0x" + "a" * 40
+    config.write_text(
+        f"""
+plugins:
+  micromech:
+    fallback_mech_addresses:
+      - "{fallback}"
+    chains:
+      gnosis:
+        mech_address: "{TEST_MECH}"
+        marketplace_address: "{TEST_MARKETPLACE}"
+  olas:
+    services:
+      mech:
+        chain_name: "gnosis"
+        multisig_address: "{TEST_SAFE}"
+"""
+    )
+    args = SimpleNamespace(
+        config=str(config),
+        wallet=str(tmp_path / "wallet.json"),
+        anvil_test=True,
+        chain="gnosis",
+        mech=None,
+        marketplace=None,
+        safe=None,
+        service_key=None,
+    )
+
+    runtime = rec._resolve_runtime_config(args)
+
+    assert runtime.fallback_mech_addresses == [rec.Web3.to_checksum_address(fallback)]
+
+
+def _discover_args(tmp_path: Path, *, age_proof: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
+        checkpoint=str(tmp_path / "recover.json"),
+        queue=str(tmp_path / "recover.sqlite"),
+        discovery_source="mech-queues",
+        priority_mechs=None,
+        priority_mechs_file=None,
+        mech_queue_age_proof=age_proof,
+        mech_queue_page_size=250,
+        mech_queue_delay_status=0,
+        max_discover=None,
+    )
+
+
+def test_cmd_discover_mech_queues_does_not_enable_age_proof_by_default(tmp_path):
+    runtime = _runtime(tmp_path)
+    runtime.fallback_mech_addresses = [TEST_MECH]
+    args = _discover_args(tmp_path)
+    w3 = MagicMock()
+    mech_contract = MagicMock()
+    mech_contract.functions.paymentType.return_value.call.return_value = b"\x11" * 32
+    w3.eth.contract.return_value = mech_contract
+
+    with (
+        patch("recover_open_requests._rpc_list", return_value=["http://fake"]),
+        patch("recover_open_requests._connect", return_value=(w3, "http://fake")) as connect,
+        patch("recover_open_requests.discover_open_requests_from_mech_queues", return_value=[]) as discover,
+    ):
+        rec.cmd_discover(args, runtime)
+
+    connect.assert_called_once()
+    assert discover.call_args.kwargs["cutoff_block"] is None
+
+
+def test_cmd_discover_mech_queues_passes_cutoff_when_age_proof_enabled(tmp_path):
+    runtime = _runtime(tmp_path)
+    runtime.fallback_mech_addresses = [TEST_MECH]
+    args = _discover_args(tmp_path, age_proof=True)
+    w3 = MagicMock()
+    w3.eth.block_number = rec.MARKETPLACE_DEPLOY_BLOCK + rec.BLOCKS_24H + 123
+    mech_contract = MagicMock()
+    mech_contract.functions.paymentType.return_value.call.return_value = b"\x11" * 32
+    w3.eth.contract.return_value = mech_contract
+
+    with (
+        patch("recover_open_requests._rpc_list", return_value=["http://fake"]),
+        patch("recover_open_requests._connect", return_value=(w3, "http://fake")) as connect,
+        patch("recover_open_requests.discover_open_requests_from_mech_queues", return_value=[]) as discover,
+    ):
+        rec.cmd_discover(args, runtime)
+
+    connect.assert_called_once()
+    assert discover.call_args.kwargs["cutoff_block"] == rec.MARKETPLACE_DEPLOY_BLOCK + 123
 
 
 # ── b32_to_hex / hex_to_b32 ────────────────────────────────────────────────────
@@ -519,9 +611,9 @@ class TestDiscoverOpenRequests:
         def request_info(rid):
             fn = MagicMock()
             fn.call.return_value = (
+                TEST_MECH,
+                TEST_MECH,
                 TEST_SAFE,
-                TEST_MECH,
-                TEST_MECH,
                 1,
                 1,
                 good_payment if rid == _rid(1) else bad_payment,
@@ -563,7 +655,7 @@ class TestDiscoverOpenRequests:
 
         def request_info(rid):
             fn = MagicMock()
-            fn.call.return_value = (TEST_SAFE, TEST_MECH, TEST_MECH, 1, 20, bad_payment)
+            fn.call.return_value = (TEST_MECH, TEST_MECH, TEST_SAFE, 1, 20, bad_payment)
             return fn
 
         marketplace.functions.mapRequestIdInfos.side_effect = request_info
@@ -593,20 +685,61 @@ class TestDiscoverOpenRequests:
         marketplace.functions.getRequestStatus.assert_not_called()
         assert q.counts() == {"skipped": 1}
 
-    def test_mech_queue_discovery_does_not_persist_young_request(self, tmp_path):
+    def test_mech_queue_discovery_does_not_use_response_timeout_as_age(self, tmp_path):
         q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
         marketplace = MagicMock()
         mech = MagicMock()
         payment = b"\x11" * 32
 
+        marketplace.functions.getRequestStatus.return_value.call.return_value = 2
         marketplace.functions.mapRequestIdInfos.return_value.call.return_value = (
+            TEST_MECH,
+            TEST_MECH,
             TEST_SAFE,
-            TEST_MECH,
-            TEST_MECH,
             200,
             20,
             payment,
         )
+        marketplace.events.MarketplaceRequest.get_logs.return_value = [
+            {
+                "blockNumber": rec.MARKETPLACE_DEPLOY_BLOCK,
+                "args": {"requestIds": [_rid(1)]},
+            }
+        ]
+        mech.functions.numUndeliveredRequests.return_value.call.return_value = 1
+        mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [_rid(1)]
+        w3 = MagicMock()
+        w3.to_checksum_address.side_effect = lambda x: x
+        w3.eth.contract.side_effect = lambda address, abi: (
+            marketplace if address == TEST_MARKETPLACE else mech
+        )
+
+        with (
+            patch("recover_open_requests.Web3.HTTPProvider"),
+            patch("recover_open_requests.Web3", return_value=w3),
+            patch("time.sleep"),
+        ):
+            result = rec.discover_open_requests_from_mech_queues(
+                ["http://fake"],
+                TEST_MARKETPLACE,
+                [TEST_MECH],
+                delay_status=0,
+                queue=q,
+                payment_type=payment,
+                cutoff_block=rec.MARKETPLACE_DEPLOY_BLOCK + 100,
+            )
+
+        assert result == [_rid(1)]
+        marketplace.functions.getRequestStatus.assert_called_once()
+        assert q.get_open(10) == [_rid(1)]
+
+    def test_mech_queue_discovery_skips_without_age_proof(self, tmp_path):
+        q = rec.RequestQueue(tmp_path / "recover_queue.sqlite")
+        marketplace = MagicMock()
+        mech = MagicMock()
+        payment = b"\x11" * 32
+
+        marketplace.events.MarketplaceRequest.get_logs.return_value = []
         mech.functions.numUndeliveredRequests.return_value.call.return_value = 1
         mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [_rid(1)]
         w3 = MagicMock()
@@ -631,6 +764,7 @@ class TestDiscoverOpenRequests:
             )
 
         assert result == []
+        marketplace.functions.mapRequestIdInfos.assert_not_called()
         marketplace.functions.getRequestStatus.assert_not_called()
         assert q.counts() == {}
 
@@ -643,9 +777,9 @@ class TestDiscoverOpenRequests:
         def request_info(rid):
             fn = MagicMock()
             fn.call.return_value = (
+                TEST_MECH,
+                TEST_MECH,
                 TEST_SAFE,
-                TEST_MECH,
-                TEST_MECH,
                 1,
                 20 if rid == _rid(1) else 5,
                 payment,

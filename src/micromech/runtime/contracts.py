@@ -18,6 +18,32 @@ except ImportError:
 # Minimal ABI for deliverToMarketplace (used when iwa ABIs not available)
 MECH_DELIVER_ABI = [
     {
+        "inputs": [],
+        "name": "paymentType",
+        "outputs": [{"internalType": "bytes32", "name": "", "type": "bytes32"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [],
+        "name": "numUndeliveredRequests",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"internalType": "uint256", "name": "size", "type": "uint256"},
+            {"internalType": "uint256", "name": "offset", "type": "uint256"},
+        ],
+        "name": "getUndeliveredRequestIds",
+        "outputs": [
+            {"internalType": "bytes32[]", "name": "requestIds", "type": "bytes32[]"},
+        ],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
         "inputs": [
             {"internalType": "bytes32[]", "name": "requestIds", "type": "bytes32[]"},
             {"internalType": "bytes[]", "name": "datas", "type": "bytes[]"},
@@ -68,6 +94,22 @@ MARKETPLACE_REQUEST_ABI = [
             {"internalType": "bytes32", "name": "requestId", "type": "bytes32"},
         ],
         "stateMutability": "payable",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"internalType": "bytes32", "name": "requestId", "type": "bytes32"},
+        ],
+        "name": "mapRequestIdInfos",
+        "outputs": [
+            {"internalType": "address", "name": "priorityMech", "type": "address"},
+            {"internalType": "address", "name": "deliveryMech", "type": "address"},
+            {"internalType": "address", "name": "requester", "type": "address"},
+            {"internalType": "uint256", "name": "responseTimeout", "type": "uint256"},
+            {"internalType": "uint256", "name": "deliveryRate", "type": "uint256"},
+            {"internalType": "bytes32", "name": "paymentType", "type": "bytes32"},
+        ],
+        "stateMutability": "view",
         "type": "function",
     },
     {
