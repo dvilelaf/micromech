@@ -65,6 +65,24 @@ class RequestRow(pw.Model):
         )
 
 
+class QueueScannerCursorRow(pw.Model):
+    """Persistent cursor for chain/mech queue scanner pagination."""
+
+    id = pw.AutoField()
+    chain = pw.CharField(index=True)
+    mech_address = pw.CharField(index=True)
+    mode = pw.CharField(default="fallback", index=True)
+    next_offset = pw.IntegerField(default=0)
+    last_count = pw.IntegerField(default=0)
+    updated_at = pw.DateTimeField(index=True)
+
+    class Meta:
+        table_name = "queue_scanner_cursors"
+        indexes = (
+            (("chain", "mech_address", "mode"), True),
+        )
+
+
 def _chain_filter(query: pw.ModelSelect, chain: Optional[str]) -> pw.ModelSelect:
     """Apply chain filter if specified. None means all chains."""
     if chain is not None:
@@ -91,8 +109,9 @@ class PersistentQueue:
             },
         )
         RequestRow.bind(self._db)
+        QueueScannerCursorRow.bind(self._db)
         self._db.connect()
-        self._db.create_tables([RequestRow])
+        self._db.create_tables([RequestRow, QueueScannerCursorRow])
         self._migrate()
         logger.info("Database initialized at {}", db_path)
 
@@ -107,9 +126,65 @@ class PersistentQueue:
             self._db.execute_sql("CREATE INDEX IF NOT EXISTS idx_requests_chain ON requests(chain)")
             logger.info("Migrated database: added chain column")
 
+        self._db.create_tables([QueueScannerCursorRow], safe=True)
+
     def close(self) -> None:
         if not self._db.is_closed():
             self._db.close()
+
+    def get_queue_scanner_cursor(
+        self,
+        *,
+        chain: str,
+        mech_address: str,
+        mode: str,
+    ) -> int:
+        """Return the next queue offset for a mech scanner, or 0 if unseen."""
+        try:
+            row = QueueScannerCursorRow.get(
+                QueueScannerCursorRow.chain == chain,
+                QueueScannerCursorRow.mech_address == mech_address.lower(),
+                QueueScannerCursorRow.mode == mode,
+            )
+            return max(0, int(row.next_offset))
+        except QueueScannerCursorRow.DoesNotExist:
+            return 0
+
+    def set_queue_scanner_cursor(
+        self,
+        *,
+        chain: str,
+        mech_address: str,
+        mode: str,
+        next_offset: int,
+        last_count: int,
+    ) -> None:
+        """Persist the next queue offset for a mech scanner."""
+        now = datetime.now(timezone.utc)
+        data = {
+            "chain": chain,
+            "mech_address": mech_address.lower(),
+            "mode": mode,
+            "next_offset": max(0, int(next_offset)),
+            "last_count": max(0, int(last_count)),
+            "updated_at": now,
+        }
+        (
+            QueueScannerCursorRow.insert(data)
+            .on_conflict(
+                conflict_target=[
+                    QueueScannerCursorRow.chain,
+                    QueueScannerCursorRow.mech_address,
+                    QueueScannerCursorRow.mode,
+                ],
+                update={
+                    QueueScannerCursorRow.next_offset: data["next_offset"],
+                    QueueScannerCursorRow.last_count: data["last_count"],
+                    QueueScannerCursorRow.updated_at: now,
+                },
+            )
+            .execute()
+        )
 
     def add_request(self, request: MechRequest) -> None:
         """Insert a new request. Idempotent — skips if request_id exists."""

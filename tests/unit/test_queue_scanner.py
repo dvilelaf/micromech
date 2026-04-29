@@ -198,6 +198,171 @@ async def test_fallback_scanner_short_circuits_before_payload_resolution(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_fallback_scanner_uses_persistent_cursor(tmp_path):
+    """Fallback scans a bounded number of pages and resumes next cycle."""
+    cfg = _make_config(
+        fallback_mode_enabled=True,
+        fallback_mech_addresses=[OTHER_MECH],
+        queue_scanner_fallback_pages_per_cycle=1,
+    )
+    scanner, _enqueue, _queued = _scanner(tmp_path, cfg)
+    mech = MagicMock()
+    mech.functions.numUndeliveredRequests.return_value.call.return_value = 5
+    page_calls: list[tuple[int, int]] = []
+
+    def get_ids(size, offset):
+        page_calls.append((size, offset))
+        call = MagicMock()
+        call.call.return_value = [_request_id(offset + 1), _request_id(offset + 2)]
+        return call
+
+    mech.functions.getUndeliveredRequestIds.side_effect = get_ids
+    scanner._mech_contracts[OTHER_MECH.lower()] = mech
+
+    with patch.object(scanner, "_handle_candidate", new=AsyncMock()):
+        await scanner._scan_mech(OTHER_MECH, mode="fallback")
+        await scanner._scan_mech(OTHER_MECH, mode="fallback")
+
+    assert page_calls == [(2, 0), (2, 2)]
+    assert scanner.queue.get_queue_scanner_cursor(
+        chain="gnosis",
+        mech_address=OTHER_MECH,
+        mode="fallback",
+    ) == 4
+
+
+@pytest.mark.asyncio
+async def test_fallback_scanner_cursor_wraps_at_end(tmp_path):
+    cfg = _make_config(
+        fallback_mode_enabled=True,
+        fallback_mech_addresses=[OTHER_MECH],
+        queue_scanner_fallback_pages_per_cycle=1,
+    )
+    scanner, _enqueue, _queued = _scanner(tmp_path, cfg)
+    scanner.queue.set_queue_scanner_cursor(
+        chain="gnosis",
+        mech_address=OTHER_MECH,
+        mode="fallback",
+        next_offset=4,
+        last_count=5,
+    )
+    mech = MagicMock()
+    mech.functions.numUndeliveredRequests.return_value.call.return_value = 5
+    mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [_request_id(5)]
+    scanner._mech_contracts[OTHER_MECH.lower()] = mech
+
+    with patch.object(scanner, "_handle_candidate", new=AsyncMock()):
+        await scanner._scan_mech(OTHER_MECH, mode="fallback")
+
+    mech.functions.getUndeliveredRequestIds.assert_called_once_with(1, 4)
+    assert scanner.queue.get_queue_scanner_cursor(
+        chain="gnosis",
+        mech_address=OTHER_MECH,
+        mode="fallback",
+    ) == 0
+
+
+@pytest.mark.asyncio
+async def test_fallback_scanner_cursor_advances_on_empty_page(tmp_path):
+    cfg = _make_config(
+        fallback_mode_enabled=True,
+        fallback_mech_addresses=[OTHER_MECH],
+        queue_scanner_fallback_pages_per_cycle=1,
+    )
+    scanner, _enqueue, _queued = _scanner(tmp_path, cfg)
+    mech = MagicMock()
+    mech.functions.numUndeliveredRequests.return_value.call.return_value = 5
+    mech.functions.getUndeliveredRequestIds.return_value.call.return_value = []
+    scanner._mech_contracts[OTHER_MECH.lower()] = mech
+
+    with patch.object(scanner, "_handle_candidate", new=AsyncMock()):
+        await scanner._scan_mech(OTHER_MECH, mode="fallback")
+
+    mech.functions.getUndeliveredRequestIds.assert_called_once_with(2, 0)
+    assert scanner.queue.get_queue_scanner_cursor(
+        chain="gnosis",
+        mech_address=OTHER_MECH,
+        mode="fallback",
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_fallback_scanner_reuses_cursor_after_restart(tmp_path):
+    cfg = _make_config(
+        fallback_mode_enabled=True,
+        fallback_mech_addresses=[OTHER_MECH],
+        queue_scanner_fallback_pages_per_cycle=1,
+    )
+    scanner, _enqueue, _queued = _scanner(tmp_path, cfg)
+    mech = MagicMock()
+    mech.functions.numUndeliveredRequests.return_value.call.return_value = 5
+    mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [
+        _request_id(1),
+        _request_id(2),
+    ]
+    scanner._mech_contracts[OTHER_MECH.lower()] = mech
+
+    with patch.object(scanner, "_handle_candidate", new=AsyncMock()):
+        await scanner._scan_mech(OTHER_MECH, mode="fallback")
+    scanner.queue.close()
+
+    restarted, _enqueue2, _queued2 = _scanner(tmp_path, cfg)
+    restarted_mech = MagicMock()
+    restarted_mech.functions.numUndeliveredRequests.return_value.call.return_value = 5
+    restarted_mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [
+        _request_id(3),
+        _request_id(4),
+    ]
+    restarted._mech_contracts[OTHER_MECH.lower()] = restarted_mech
+
+    with patch.object(restarted, "_handle_candidate", new=AsyncMock()):
+        await restarted._scan_mech(OTHER_MECH, mode="fallback")
+
+    restarted_mech.functions.getUndeliveredRequestIds.assert_called_once_with(2, 2)
+
+
+@pytest.mark.asyncio
+async def test_fallback_scanner_persists_cursor_before_candidate_handling(tmp_path):
+    cfg = _make_config(
+        fallback_mode_enabled=True,
+        fallback_mech_addresses=[OTHER_MECH],
+        queue_scanner_fallback_pages_per_cycle=1,
+    )
+    scanner, _enqueue, _queued = _scanner(tmp_path, cfg)
+    mech = MagicMock()
+    mech.functions.numUndeliveredRequests.return_value.call.return_value = 5
+    mech.functions.getUndeliveredRequestIds.return_value.call.return_value = [_request_id(1)]
+    scanner._mech_contracts[OTHER_MECH.lower()] = mech
+
+    with (
+        patch.object(scanner, "_handle_candidate", new=AsyncMock(side_effect=RuntimeError("boom"))),
+        pytest.raises(RuntimeError, match="boom"),
+    ):
+        await scanner._scan_mech(OTHER_MECH, mode="fallback")
+
+    assert scanner.queue.get_queue_scanner_cursor(
+        chain="gnosis",
+        mech_address=OTHER_MECH,
+        mode="fallback",
+    ) == 2
+
+
+@pytest.mark.asyncio
+async def test_own_scanner_ignores_cursor_budget(tmp_path):
+    cfg = _make_config(queue_scanner_fallback_pages_per_cycle=1)
+    scanner, _enqueue, _queued = _scanner(tmp_path, cfg)
+    mech = _mock_mech(5, [[_request_id(1), _request_id(2)], [_request_id(3), _request_id(4)], [_request_id(5)]])
+    scanner._mech_contracts[MECH_ADDR.lower()] = mech
+
+    with patch.object(scanner, "_handle_candidate", new=AsyncMock()):
+        await scanner._scan_mech(MECH_ADDR, mode="own")
+
+    mech.functions.getUndeliveredRequestIds.assert_any_call(2, 0)
+    mech.functions.getUndeliveredRequestIds.assert_any_call(2, 2)
+    mech.functions.getUndeliveredRequestIds.assert_any_call(1, 4)
+
+
+@pytest.mark.asyncio
 async def test_scanner_reuses_event_lookup_for_candidates_in_same_scan(tmp_path):
     """Two IDs from the same mech share one bounded event lookup."""
     cfg = _make_config(

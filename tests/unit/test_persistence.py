@@ -41,6 +41,45 @@ class TestPersistentQueueBasics:
     def test_get_nonexistent(self, queue: PersistentQueue):
         assert queue.get_by_id("nonexistent") is None
 
+    def test_queue_scanner_cursor_roundtrip(self, queue: PersistentQueue):
+        assert queue.get_queue_scanner_cursor(
+            chain="gnosis",
+            mech_address="0xABC",
+            mode="fallback",
+        ) == 0
+
+        queue.set_queue_scanner_cursor(
+            chain="gnosis",
+            mech_address="0xABC",
+            mode="fallback",
+            next_offset=25,
+            last_count=100,
+        )
+
+        assert queue.get_queue_scanner_cursor(
+            chain="gnosis",
+            mech_address="0xabc",
+            mode="fallback",
+        ) == 25
+
+    def test_queue_scanner_cursor_persists_on_restart(self, queue: PersistentQueue):
+        queue.set_queue_scanner_cursor(
+            chain="gnosis",
+            mech_address="0xABC",
+            mode="fallback",
+            next_offset=50,
+            last_count=100,
+        )
+        queue2 = PersistentQueue(queue.db_path)
+        try:
+            assert queue2.get_queue_scanner_cursor(
+                chain="gnosis",
+                mech_address="0xabc",
+                mode="fallback",
+            ) == 50
+        finally:
+            queue2.close()
+
 
 class TestStatusTransitions:
     def test_pending_to_executing(self, queue: PersistentQueue):

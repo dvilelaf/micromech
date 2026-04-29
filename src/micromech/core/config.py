@@ -101,6 +101,7 @@ class MicromechConfig(BaseModel):
     queue_scanner_enabled: bool = True
     queue_scanner_interval_seconds: int = Field(default=300, ge=30, le=3600)
     queue_scanner_page_size: int = Field(default=50, ge=1, le=200)
+    queue_scanner_fallback_pages_per_cycle: int = Field(default=5, ge=1, le=100)
     queue_scanner_event_lookback_blocks: int = Field(default=7200, ge=100, le=100000)
     fallback_mech_addresses: list[str] = Field(default_factory=list)
 

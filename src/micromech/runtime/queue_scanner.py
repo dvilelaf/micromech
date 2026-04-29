@@ -123,19 +123,30 @@ class MechQueueScanner:
             return
 
         page_size = self.config.queue_scanner_page_size
+        offsets = self._scan_offsets(mech_addr, mode=mode, count=count)
         logger.debug(
-            "Queue scanner {} {} candidate(s) for {}",
+            "Queue scanner {} {} candidate(s) for {} (pages={})",
             mode,
             count,
             mech_addr,
+            len(offsets),
         )
-        for offset in range(0, count, page_size):
+        next_offset = 0
+        for offset in offsets:
+            size = min(page_size, max(count - offset, 0))
             ids = await asyncio.to_thread(
                 self._undelivered_ids,
                 mech_addr,
-                min(page_size, count - offset),
+                size,
                 offset,
             )
+            next_offset = offset + size
+            if mode == "fallback":
+                self._save_fallback_cursor(
+                    mech_addr,
+                    next_offset=next_offset,
+                    count=count,
+                )
             for request_id in ids:
                 candidate = QueueCandidate(
                     request_id=bytes(request_id),
@@ -143,6 +154,40 @@ class MechQueueScanner:
                     mode=mode,
                 )
                 await self._handle_candidate(candidate)
+        if mode == "fallback" and offsets:
+            self._save_fallback_cursor(mech_addr, next_offset=next_offset, count=count)
+
+    def _save_fallback_cursor(self, mech_addr: str, *, next_offset: int, count: int) -> None:
+        if next_offset >= count:
+            next_offset = 0
+        self.queue.set_queue_scanner_cursor(
+            chain=self.chain_config.chain,
+            mech_address=mech_addr,
+            mode="fallback",
+            next_offset=next_offset,
+            last_count=count,
+        )
+
+    def _scan_offsets(self, mech_addr: str, *, mode: ScanMode, count: int) -> list[int]:
+        page_size = self.config.queue_scanner_page_size
+        if mode == "own":
+            return list(range(0, count, page_size))
+
+        start = self.queue.get_queue_scanner_cursor(
+            chain=self.chain_config.chain,
+            mech_address=mech_addr,
+            mode=mode,
+        )
+        if start >= count:
+            start = 0
+
+        max_pages = self.config.queue_scanner_fallback_pages_per_cycle
+        offsets: list[int] = []
+        offset = start
+        while len(offsets) < max_pages and offset < count:
+            offsets.append(offset)
+            offset += page_size
+        return offsets
 
     async def _handle_candidate(self, candidate: QueueCandidate) -> None:
         req_id = candidate.request_id_hex

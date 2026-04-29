@@ -73,6 +73,7 @@ class TestMicromechConfig:
         assert cfg.queue_scanner_enabled is True
         assert cfg.queue_scanner_interval_seconds == 300
         assert cfg.queue_scanner_page_size == 50
+        assert cfg.queue_scanner_fallback_pages_per_cycle == 5
         assert cfg.fallback_mech_addresses == []
 
     def test_save_and_load_fallback(self, tmp_path: Path):
