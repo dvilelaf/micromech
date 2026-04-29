@@ -41,6 +41,22 @@ class TestMechServerInit:
         assert server.deliveries["gnosis"] is not None
         server.shutdown()
 
+    def test_creates_queue_scanner_when_bridge_and_mech_exist(self, server_config):
+        server_config.chains["gnosis"].mech_address = MECH_ADDR
+        bridge = MagicMock()
+        server = MechServer(server_config, bridges={"gnosis": bridge})
+
+        scanner = server.queue_scanners["gnosis"]
+        assert scanner.bridge is bridge
+        assert scanner.queued_ids is server._queued_ids
+        server.shutdown()
+
+    def test_skips_queue_scanner_without_bridge(self, server_config):
+        server = MechServer(server_config)
+
+        assert server.queue_scanners == {}
+        server.shutdown()
+
     def test_load_tools(self, server_config):
         server = MechServer(server_config)
         server._load_tools()
@@ -524,8 +540,8 @@ def _make_fallback_config(tmp_path=None, **kwargs) -> MicromechConfig:
 
 class TestFallbackMode:
     @pytest.mark.asyncio
-    async def test_fallback_request_goes_to_pending(self, tmp_path, monkeypatch):
-        """A request from another priority mech is tracked in _fallback_pending."""
+    async def test_fallback_request_is_not_tracked_from_listener(self, tmp_path, monkeypatch):
+        """Fallback harvesting is queue-scanner owned, not event-listener owned."""
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
 
@@ -545,7 +561,7 @@ class TestFallbackMode:
 
         await server._on_new_request(req)
 
-        assert "aa" * 32 in server._fallback_pending
+        assert "aa" * 32 not in server._fallback_pending
         assert "aa" * 32 not in server._queued_ids
         server.shutdown()
 
@@ -573,8 +589,8 @@ class TestFallbackMode:
         server.shutdown()
 
     @pytest.mark.asyncio
-    async def test_fallback_skipped_if_tool_not_available(self, tmp_path, monkeypatch):
-        """Fallback request is silently dropped when we don't have the tool."""
+    async def test_fallback_event_ignored_even_if_tool_not_available(self, tmp_path, monkeypatch):
+        """Non-own fallback events are ignored before tool checks."""
         monkeypatch.setattr("micromech.runtime.server.DB_PATH", tmp_path / "test.db")
         monkeypatch.setattr("micromech.core.constants.DB_PATH", tmp_path / "test.db")
 
@@ -619,6 +635,7 @@ class TestFallbackMode:
 
         cfg = _make_fallback_config()
         server = MechServer(cfg)
+        server.registry._tools = {"echo": object()}
         server._running = True
         req_id = "dd" * 32
         req = MechRequest(

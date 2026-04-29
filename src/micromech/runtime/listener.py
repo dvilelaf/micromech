@@ -217,12 +217,9 @@ class EventListener:
 
         try:
             contract = self._get_marketplace_contract()
-            if self.config.fallback_mode_enabled:
-                filter_args: dict = {}
-            else:
-                filter_args = {
-                    "priorityMech": self.bridge.web3.to_checksum_address(mech_addr),
-                }
+            filter_args = {
+                "priorityMech": self.bridge.web3.to_checksum_address(mech_addr),
+            }
             # Chunk requests to stay within RPC provider limits.
             # Start with 500-block chunks; if that fails (e.g. Alchemy Free
             # tier = 10 blocks), retry with 10-block mini-chunks.
@@ -284,7 +281,7 @@ class EventListener:
         priority_mech = str(args.get("priorityMech", ""))
 
         is_our_request = not mech_addr or priority_mech.lower() == mech_addr.lower()
-        if not is_our_request and not self.config.fallback_mode_enabled:
+        if not is_our_request:
             return []
 
         request_ids = args.get("requestIds", [])

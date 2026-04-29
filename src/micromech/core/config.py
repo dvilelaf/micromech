@@ -98,6 +98,11 @@ class MicromechConfig(BaseModel):
     fallback_check_interval: int = Field(default=30, ge=5, le=300)
     fallback_ttl_seconds: int = Field(default=3600, ge=60)
     fallback_poll_delay: int = Field(default=300, ge=0, le=600)
+    queue_scanner_enabled: bool = True
+    queue_scanner_interval_seconds: int = Field(default=300, ge=30, le=3600)
+    queue_scanner_page_size: int = Field(default=50, ge=1, le=200)
+    queue_scanner_event_lookback_blocks: int = Field(default=7200, ge=100, le=100000)
+    fallback_mech_addresses: list[str] = Field(default_factory=list)
 
     # Metadata state (set by MetadataManager after publish)
     metadata_ipfs_cid: Optional[str] = None
@@ -113,6 +118,11 @@ class MicromechConfig(BaseModel):
             )
             raise ValueError(msg)
         return self
+
+    @field_validator("fallback_mech_addresses")
+    @classmethod
+    def validate_fallback_mechs(cls, values: list[str]) -> list[str]:
+        return [validate_eth_address(v) or v for v in values]
 
     @property
     def enabled_chains(self) -> dict[str, ChainConfig]:

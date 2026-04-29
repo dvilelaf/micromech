@@ -70,6 +70,10 @@ class TestMicromechConfig:
         cfg = MicromechConfig()
         assert cfg.chains == {}
         assert cfg.checkpoint_interval_minutes == 10
+        assert cfg.queue_scanner_enabled is True
+        assert cfg.queue_scanner_interval_seconds == 300
+        assert cfg.queue_scanner_page_size == 50
+        assert cfg.fallback_mech_addresses == []
 
     def test_save_and_load_fallback(self, tmp_path: Path):
         """Save/load via fallback path (no iwa)."""
@@ -109,12 +113,19 @@ class TestMicromechConfig:
         assert cfg.chains["base"].chain == "base"
 
     def test_roundtrip_json(self):
+        fallback_mech = "0x" + "d" * 40
         cfg = MicromechConfig(
             chains={"base": _chain_cfg(chain="base")},
+            fallback_mech_addresses=[fallback_mech],
         )
         data = cfg.model_dump(mode="json")
         restored = MicromechConfig.model_validate(data)
         assert restored.chains["base"].chain == "base"
+        assert restored.fallback_mech_addresses == [fallback_mech]
+
+    def test_invalid_fallback_mech_address(self):
+        with pytest.raises(ValidationError):
+            MicromechConfig(fallback_mech_addresses=["not_an_address"])
 
     def test_enabled_chains_property(self):
         cfg = MicromechConfig(
