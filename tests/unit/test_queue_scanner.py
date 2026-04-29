@@ -170,6 +170,37 @@ async def test_fallback_scanner_validates_status_payment_and_tool(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_fallback_scanner_logs_named_mech_label(tmp_path):
+    """Fallback scanner includes configured human labels in scan logs."""
+    cfg = _make_config(
+        fallback_mode_enabled=True,
+        fallback_mechs=[{"name": "named-fallback", "address": OTHER_MECH}],
+        queue_scanner_fallback_pages_per_cycle=1,
+    )
+    scanner, _enqueue, _queued = _scanner(tmp_path, cfg)
+    scanner._mech_contracts[MECH_ADDR.lower()] = _mock_mech(0, [])
+    scanner._mech_contracts[OTHER_MECH.lower()] = _mock_mech(1, [[_request_id(1)]])
+
+    with (
+        patch.object(scanner, "_handle_candidate", new=AsyncMock()),
+        patch("micromech.runtime.queue_scanner.logger.debug") as debug,
+    ):
+        await scanner.scan_once()
+
+    assert any(
+        call.args[:5]
+        == (
+            "Queue scanner {} {} candidate(s) for {} {} (pages={})",
+            "fallback",
+            1,
+            "named-fallback",
+            OTHER_MECH,
+        )
+        for call in debug.call_args_list
+    )
+
+
+@pytest.mark.asyncio
 async def test_fallback_scanner_short_circuits_before_payload_resolution(tmp_path):
     """Rejected fallback candidates do not trigger event/IPFS payload work."""
     cfg = _make_config(

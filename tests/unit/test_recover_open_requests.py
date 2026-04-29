@@ -47,13 +47,58 @@ def _runtime(tmp_path: Path | None = None) -> rec.RuntimeConfig:
     )
 
 
-def test_runtime_config_loads_fallback_mechs_from_config(tmp_path):
+@pytest.mark.parametrize(
+    "fallback_config",
+    [
+        'fallback_mechs:\n      - name: "test fallback"\n        address: "{fallback}"',
+        'fallback_mech_addresses:\n      - "{fallback}"',
+    ],
+)
+def test_runtime_config_loads_fallback_mechs_from_config(tmp_path, fallback_config):
     config = tmp_path / "config.yaml"
     fallback = "0x" + "a" * 40
     config.write_text(
         f"""
 plugins:
   micromech:
+    {fallback_config.format(fallback=fallback)}
+    chains:
+      gnosis:
+        mech_address: "{TEST_MECH}"
+        marketplace_address: "{TEST_MARKETPLACE}"
+  olas:
+    services:
+      mech:
+        chain_name: "gnosis"
+        multisig_address: "{TEST_SAFE}"
+"""
+    )
+    args = SimpleNamespace(
+        config=str(config),
+        wallet=str(tmp_path / "wallet.json"),
+        anvil_test=True,
+        chain="gnosis",
+        mech=None,
+        marketplace=None,
+        safe=None,
+        service_key=None,
+    )
+
+    runtime = rec._resolve_runtime_config(args)
+
+    assert runtime.fallback_mech_addresses == [rec.Web3.to_checksum_address(fallback)]
+
+
+def test_runtime_config_dedupes_named_and_legacy_fallback_mechs(tmp_path):
+    config = tmp_path / "config.yaml"
+    fallback = "0x" + "a" * 40
+    config.write_text(
+        f"""
+plugins:
+  micromech:
+    fallback_mechs:
+      - name: "test fallback"
+        address: "{fallback}"
     fallback_mech_addresses:
       - "{fallback}"
     chains:
@@ -81,6 +126,40 @@ plugins:
     runtime = rec._resolve_runtime_config(args)
 
     assert runtime.fallback_mech_addresses == [rec.Web3.to_checksum_address(fallback)]
+
+
+def test_runtime_config_rejects_malformed_named_fallback_mech(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"""
+plugins:
+  micromech:
+    fallback_mechs:
+      - name: "missing address"
+    chains:
+      gnosis:
+        mech_address: "{TEST_MECH}"
+        marketplace_address: "{TEST_MARKETPLACE}"
+  olas:
+    services:
+      mech:
+        chain_name: "gnosis"
+        multisig_address: "{TEST_SAFE}"
+"""
+    )
+    args = SimpleNamespace(
+        config=str(config),
+        wallet=str(tmp_path / "wallet.json"),
+        anvil_test=True,
+        chain="gnosis",
+        mech=None,
+        marketplace=None,
+        safe=None,
+        service_key=None,
+    )
+
+    with pytest.raises(ValueError, match=r"fallback_mechs\[0\]\.address"):
+        rec._resolve_runtime_config(args)
 
 
 def _discover_args(tmp_path: Path, *, age_proof: bool = False) -> SimpleNamespace:

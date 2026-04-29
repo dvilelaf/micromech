@@ -89,10 +89,11 @@ class MechQueueScanner:
         if not self.config.fallback_mode_enabled:
             return
 
-        for mech_addr in self.config.fallback_mech_addresses:
+        for fallback_mech in self.config.fallback_mechs:
+            mech_addr = fallback_mech.address
             if mech_addr.lower() == self.chain_config.mech_address.lower():
                 continue
-            await self._scan_mech(mech_addr, mode="fallback")
+            await self._scan_mech(mech_addr, mode="fallback", name=fallback_mech.name)
 
     async def run(self) -> None:
         """Run scanner forever until cancelled by MechServer."""
@@ -116,8 +117,15 @@ class MechQueueScanner:
                 )
             await asyncio.sleep(interval)
 
-    async def _scan_mech(self, mech_addr: str, *, mode: ScanMode) -> None:
+    async def _scan_mech(
+        self,
+        mech_addr: str,
+        *,
+        mode: ScanMode,
+        name: str | None = None,
+    ) -> None:
         mech_addr = self.bridge.web3.to_checksum_address(mech_addr)
+        label = name or ("own" if mode == "own" else self.config.fallback_mech_name(mech_addr))
         count = await asyncio.to_thread(self._undelivered_count, mech_addr)
         if count <= 0:
             return
@@ -125,9 +133,10 @@ class MechQueueScanner:
         page_size = self.config.queue_scanner_page_size
         offsets = self._scan_offsets(mech_addr, mode=mode, count=count)
         logger.debug(
-            "Queue scanner {} {} candidate(s) for {} (pages={})",
+            "Queue scanner {} {} candidate(s) for {} {} (pages={})",
             mode,
             count,
+            label,
             mech_addr,
             len(offsets),
         )

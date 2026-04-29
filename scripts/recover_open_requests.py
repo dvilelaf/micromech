@@ -436,6 +436,29 @@ def _resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
     if not safe_addr:
         raise ValueError("Safe multisig not found in config/wallet; pass --safe")
 
+    fallback_mech_addresses: list[str] = []
+    for index, mech in enumerate(micromech.get("fallback_mechs", []) or []):
+        if isinstance(mech, str):
+            address = mech
+        elif isinstance(mech, dict):
+            address = mech.get("address")
+            if not address:
+                raise ValueError(f"fallback_mechs[{index}].address is required")
+        else:
+            raise ValueError(f"fallback_mechs[{index}] must be an address or mapping")
+        fallback_mech_addresses.append(address)
+    fallback_mech_addresses.extend(micromech.get("fallback_mech_addresses", []) or [])
+
+    deduped_fallback_mech_addresses = []
+    seen_fallback_mechs = set()
+    for mech in fallback_mech_addresses:
+        checksum = Web3.to_checksum_address(mech)
+        key = checksum.lower()
+        if key in seen_fallback_mechs:
+            continue
+        seen_fallback_mechs.add(key)
+        deduped_fallback_mech_addresses.append(checksum)
+
     return RuntimeConfig(
         chain=args.chain,
         mech_addr=Web3.to_checksum_address(mech_addr),
@@ -444,10 +467,7 @@ def _resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config_path=config_path,
         wallet_path=wallet_path,
         delivery_rate=chain_cfg.get("delivery_rate"),
-        fallback_mech_addresses=[
-            Web3.to_checksum_address(mech)
-            for mech in micromech.get("fallback_mech_addresses", []) or []
-        ],
+        fallback_mech_addresses=deduped_fallback_mech_addresses,
     )
 
 
@@ -1930,8 +1950,9 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
             sys.exit(1)
         if not mechs:
             log(
-                "No priority mechs configured; set fallback_mech_addresses in config "
-                "or pass --priority-mechs/--priority-mechs-file",
+                "No priority mechs configured; set fallback_mechs in config "
+                "(legacy fallback_mech_addresses is still supported) or pass "
+                "--priority-mechs/--priority-mechs-file",
                 level=logging.ERROR,
             )
             sys.exit(1)

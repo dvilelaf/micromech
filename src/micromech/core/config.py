@@ -1,5 +1,6 @@
 """Configuration models for micromech (all Pydantic-validated)."""
 
+import unicodedata
 from pathlib import Path
 from typing import Optional
 
@@ -13,6 +14,79 @@ from micromech.core.constants import (
     DEFAULT_DELIVERY_RATE,
     validate_eth_address,
 )
+
+
+class FallbackMechConfig(BaseModel):
+    """Named fallback priority mech config."""
+
+    name: str
+    address: str
+
+    @field_validator("name")
+    @classmethod
+    def check_name(cls, v: str) -> str:
+        name = v.strip()
+        if not name:
+            raise ValueError("fallback mech name cannot be empty")
+        if len(name) > 80:
+            raise ValueError("fallback mech name cannot exceed 80 characters")
+        if any(
+            ord(char) < 32
+            or ord(char) == 127
+            or unicodedata.category(char) in {"Cc", "Cf", "Zl", "Zp"}
+            for char in name
+        ):
+            raise ValueError("fallback mech name cannot contain control characters")
+        return name
+
+    @field_validator("address")
+    @classmethod
+    def check_eth_address(cls, v: str) -> str:
+        return validate_eth_address(v) or v
+
+
+KNOWN_FALLBACK_MECHS: tuple[dict[str, str], ...] = (
+    {
+        "name": "service-2675",
+        "address": "0x1b5891Ba18DEcE123Cc73FC8b800B03C56aCE135",
+    },
+    {
+        "name": "valory-priority-service-2182",
+        "address": "0xC05e7412439bD7e91730a6880E18d5D5873F632C",
+    },
+    {
+        "name": "service-3066",
+        "address": "0x154E5F443d4f1E0745F91283Fc3Ce69AFede3311",
+    },
+    {
+        "name": "service-2685",
+        "address": "0xAa4Eb6F0F72f28d27C40aba1cBa2A3A3E4b2d79f",
+    },
+    {
+        "name": "valory-priority-service-2198",
+        "address": "0x601024E27f1C67B28209E24272CED8A31fc8151F",
+    },
+)
+# The legacy/direct OLAS mech (0x77af31De935740567Cf4fF1986D04B2c964A786a)
+# is intentionally not listed: fallback queue scanning only supports marketplace mechs.
+
+
+def known_fallback_mechs() -> list[FallbackMechConfig]:
+    """Return named known fallback priority mechs."""
+    return [FallbackMechConfig.model_validate(mech) for mech in KNOWN_FALLBACK_MECHS]
+
+
+def _fallback_mechs_from_addresses(addresses: list[str]) -> list[FallbackMechConfig]:
+    """Build named fallback mech configs from legacy address entries."""
+    merged = []
+    seen = set()
+    for addr in addresses:
+        key = addr.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(FallbackMechConfig(name=addr, address=addr))
+    return merged
 
 
 class ChainConfig(BaseModel):
@@ -104,6 +178,7 @@ class MicromechConfig(BaseModel):
     queue_scanner_fallback_pages_per_cycle: int = Field(default=5, ge=1, le=100)
     queue_scanner_event_lookback_blocks: int = Field(default=7200, ge=100, le=100000)
     fallback_mech_addresses: list[str] = Field(default_factory=list)
+    fallback_mechs: list[FallbackMechConfig] = Field(default_factory=list)
 
     # Metadata state (set by MetadataManager after publish)
     metadata_ipfs_cid: Optional[str] = None
@@ -124,6 +199,60 @@ class MicromechConfig(BaseModel):
     @classmethod
     def validate_fallback_mechs(cls, values: list[str]) -> list[str]:
         return [validate_eth_address(v) or v for v in values]
+
+    @field_validator("fallback_mechs", mode="before")
+    @classmethod
+    def normalize_fallback_mechs(cls, values):
+        if not values:
+            return []
+        normalized = []
+        for value in values:
+            if isinstance(value, str):
+                normalized.append({"name": value, "address": value})
+            else:
+                normalized.append(value)
+        return normalized
+
+    @model_validator(mode="after")
+    def sync_fallback_mech_fields(self) -> "MicromechConfig":
+        """Keep named mechs and legacy address list in sync."""
+        fields_set = self.model_fields_set
+        if "fallback_mech_addresses" in fields_set and "fallback_mechs" not in fields_set:
+            merged = _fallback_mechs_from_addresses(self.fallback_mech_addresses)
+            self.fallback_mech_addresses = [mech.address for mech in merged]
+            self.fallback_mechs = merged
+            return self
+
+        if self.fallback_mechs:
+            merged = []
+            seen = set()
+            for mech in self.fallback_mechs:
+                key = mech.address.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(mech)
+            for addr in self.fallback_mech_addresses:
+                key = addr.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged.append(FallbackMechConfig(name=addr, address=addr))
+            self.fallback_mechs = merged
+            self.fallback_mech_addresses = [mech.address for mech in merged]
+        elif self.fallback_mech_addresses:
+            merged = _fallback_mechs_from_addresses(self.fallback_mech_addresses)
+            self.fallback_mech_addresses = [mech.address for mech in merged]
+            self.fallback_mechs = merged
+        return self
+
+    def fallback_mech_name(self, address: str) -> str:
+        """Return configured display name for a fallback mech address."""
+        address_lower = address.lower()
+        for mech in self.fallback_mechs:
+            if mech.address.lower() == address_lower:
+                return mech.name
+        return address
 
     @property
     def enabled_chains(self) -> dict[str, ChainConfig]:

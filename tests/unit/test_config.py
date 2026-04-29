@@ -7,7 +7,10 @@ from pydantic import ValidationError
 
 from micromech.core.config import (
     ChainConfig,
+    FallbackMechConfig,
+    KNOWN_FALLBACK_MECHS,
     MicromechConfig,
+    known_fallback_mechs,
 )
 
 STUB_MARKETPLACE = "0x" + "a" * 40
@@ -75,6 +78,17 @@ class TestMicromechConfig:
         assert cfg.queue_scanner_page_size == 50
         assert cfg.queue_scanner_fallback_pages_per_cycle == 5
         assert cfg.fallback_mech_addresses == []
+        assert cfg.fallback_mechs == []
+
+    def test_known_fallback_mech_preset(self):
+        mechs = known_fallback_mechs()
+
+        assert [mech.address for mech in mechs] == [
+            mech["address"] for mech in KNOWN_FALLBACK_MECHS
+        ]
+        assert [mech.name for mech in mechs] == [
+            mech["name"] for mech in KNOWN_FALLBACK_MECHS
+        ]
 
     def test_save_and_load_fallback(self, tmp_path: Path):
         """Save/load via fallback path (no iwa)."""
@@ -117,16 +131,71 @@ class TestMicromechConfig:
         fallback_mech = "0x" + "d" * 40
         cfg = MicromechConfig(
             chains={"base": _chain_cfg(chain="base")},
-            fallback_mech_addresses=[fallback_mech],
+            fallback_mechs=[FallbackMechConfig(name="test mech", address=fallback_mech)],
         )
         data = cfg.model_dump(mode="json")
         restored = MicromechConfig.model_validate(data)
         assert restored.chains["base"].chain == "base"
         assert restored.fallback_mech_addresses == [fallback_mech]
+        assert restored.fallback_mechs[0].name == "test mech"
+        assert restored.fallback_mechs[0].address == fallback_mech
+
+    def test_legacy_fallback_mech_addresses_populate_named_mechs(self):
+        fallback_mech = "0x" + "d" * 40
+        cfg = MicromechConfig(fallback_mech_addresses=[fallback_mech, fallback_mech])
+
+        assert cfg.fallback_mech_addresses == [fallback_mech]
+        assert cfg.fallback_mechs[0].name == fallback_mech
+        assert cfg.fallback_mechs[0].address == fallback_mech
+
+    def test_explicit_empty_named_mechs_dedupes_legacy_addresses(self):
+        fallback_mech = "0x" + "d" * 40
+        cfg = MicromechConfig(
+            fallback_mechs=[],
+            fallback_mech_addresses=[fallback_mech, fallback_mech],
+        )
+
+        assert cfg.fallback_mech_addresses == [fallback_mech]
+        assert [mech.address for mech in cfg.fallback_mechs] == [fallback_mech]
+
+    def test_named_fallback_mechs_populate_legacy_addresses(self):
+        fallback_mech = "0x" + "d" * 40
+        cfg = MicromechConfig(
+            fallback_mechs=[{"name": "olas priority", "address": fallback_mech}]
+        )
+
+        assert cfg.fallback_mech_addresses == [fallback_mech]
+        assert cfg.fallback_mech_name(fallback_mech) == "olas priority"
+
+    def test_named_and_legacy_fallback_mechs_merge(self):
+        named_mech = "0x" + "d" * 40
+        legacy_mech = "0x" + "e" * 40
+        cfg = MicromechConfig(
+            fallback_mechs=[{"name": "named", "address": named_mech}],
+            fallback_mech_addresses=[named_mech, legacy_mech, legacy_mech],
+        )
+
+        assert cfg.fallback_mech_addresses == [named_mech, legacy_mech]
+        assert [mech.name for mech in cfg.fallback_mechs] == ["named", legacy_mech]
 
     def test_invalid_fallback_mech_address(self):
         with pytest.raises(ValidationError):
             MicromechConfig(fallback_mech_addresses=["not_an_address"])
+
+    def test_invalid_named_fallback_mech_address(self):
+        with pytest.raises(ValidationError):
+            MicromechConfig(fallback_mechs=[{"name": "bad", "address": "not_an_address"}])
+
+    def test_invalid_named_fallback_mech_name(self):
+        fallback_mech = "0x" + "d" * 40
+        with pytest.raises(ValidationError):
+            MicromechConfig(
+                fallback_mechs=[{"name": "bad\nname", "address": fallback_mech}]
+            )
+        with pytest.raises(ValidationError):
+            MicromechConfig(
+                fallback_mechs=[{"name": "bad\u202ename", "address": fallback_mech}]
+            )
 
     def test_enabled_chains_property(self):
         cfg = MicromechConfig(
