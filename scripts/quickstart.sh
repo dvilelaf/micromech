@@ -8,21 +8,92 @@ NC='\033[0m' # No Color
 
 MICROMECH_IMAGE="dvilela/micromech:latest"
 
-# --- docker-compose.yml generator (also used by 'just update-config') ---
-generate_compose() {
-    local user_uid user_gid
-
-    # Read UID:GID from existing compose (reliable even inside containers)
+detect_micromech_image() {
+    local image=""
     if [ -f docker-compose.yml ]; then
-        local existing_user
-        existing_user=$(sed -n 's/.*user: *"\([^"]*\)".*/\1/p' docker-compose.yml | head -1)
+        image=$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(dvilela\/micromech[^[:space:]]*:latest\)[[:space:]]*$/\1/p' docker-compose.yml | head -1)
+    fi
+    echo "${image:-$MICROMECH_IMAGE}"
+}
+
+resolve_install_user() {
+    local existing_user user_uid user_gid
+    if [ -f docker-compose.yml ]; then
+        existing_user=$(sed -n 's/^[[:space:]]*user:[[:space:]]*//p' docker-compose.yml | head -1)
         if [ -n "$existing_user" ]; then
-            user_uid=$(echo "$existing_user" | cut -d: -f1)
-            user_gid=$(echo "$existing_user" | cut -d: -f2)
+            existing_user=$(printf '%s' "$existing_user" | sed 's/[[:space:]]*$//; s/^"//; s/"$//')
+            if [[ ! "$existing_user" =~ ^[0-9]+:[0-9]+$ ]]; then
+                echo "ERROR: invalid user in docker-compose.yml: $existing_user" >&2
+                return 1
+            fi
+            echo "$existing_user"
+            return 0
         fi
     fi
-    user_uid=${user_uid:-$(id -u)}
-    user_gid=${user_gid:-$(id -g)}
+
+    if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER:-}" != "root" ]; then
+        user_uid=$(id -u "$SUDO_USER" 2>/dev/null || true)
+        user_gid=$(id -g "$SUDO_USER" 2>/dev/null || true)
+        if [ -n "$user_uid" ] && [ -n "$user_gid" ]; then
+            echo "$user_uid:$user_gid"
+            return 0
+        fi
+        echo "ERROR: could not resolve sudo user '$SUDO_USER'" >&2
+        return 1
+    fi
+
+    echo "$(id -u):$(id -g)"
+}
+
+resolve_human_user() {
+    local user_uid user_gid
+    if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER:-}" != "root" ]; then
+        user_uid=$(id -u "$SUDO_USER" 2>/dev/null || true)
+        user_gid=$(id -g "$SUDO_USER" 2>/dev/null || true)
+        if [ -n "$user_uid" ] && [ -n "$user_gid" ]; then
+            echo "$user_uid:$user_gid"
+            return 0
+        fi
+        echo "ERROR: could not resolve sudo user '$SUDO_USER'" >&2
+        return 1
+    fi
+
+    echo "$(id -u):$(id -g)"
+}
+
+chown_install_dir_if_needed() {
+    local install_dir="$1"
+    local owner="$2"
+    [ "$(id -u)" -eq 0 ] || return 0
+    [ -n "$owner" ] || return 0
+    if [ -L "$install_dir" ]; then
+        echo "ERROR: refusing to chown symlinked install directory: $install_dir" >&2
+        return 1
+    fi
+    chown -R -- "$owner" "$install_dir"
+}
+
+chown_generated_artifacts_if_needed() {
+    local owner="$1"
+    [ "$(id -u)" -eq 0 ] || return 0
+    [ -n "$owner" ] || return 0
+    for artifact in docker-compose.yml Justfile updater.sh; do
+        if [ -e "$artifact" ] && [ ! -L "$artifact" ]; then
+            chown -- "$owner" "$artifact" || return 1
+        fi
+    done
+}
+
+# --- docker-compose.yml generator (also used by 'just update-config') ---
+generate_compose() {
+    local user_uid user_gid user_ids
+    if [ -n "${1:-}" ]; then
+        user_ids="$1"
+    else
+        user_ids=$(resolve_install_user) || return 1
+    fi
+    user_uid=$(echo "$user_ids" | cut -d: -f1)
+    user_gid=$(echo "$user_ids" | cut -d: -f2)
 
     # Preserve existing host volume paths before overwriting
     local _vol_preserve=""
@@ -30,13 +101,19 @@ generate_compose() {
         _vol_preserve=$(grep -E '^\s*-\s+.+:/' docker-compose.yml || true)
     fi
 
-    docker run --rm --entrypoint cat "$MICROMECH_IMAGE" /app/docker-compose.yml > docker-compose.yml.tmp
+    local image
+    image=$(detect_micromech_image)
+    if ! docker run --rm --entrypoint cat "$image" /app/docker-compose.yml > docker-compose.yml.tmp || [ ! -s docker-compose.yml.tmp ]; then
+        rm -f docker-compose.yml.tmp
+        echo "ERROR: Could not extract a valid docker-compose.yml from $image" >&2
+        return 1
+    fi
 
     # Portable sed -i (works on both GNU and BSD/macOS)
     _sed_i() { if [ "$(uname)" = "Darwin" ]; then sed -i '' "$@"; else sed -i "$@"; fi; }
 
     # Transform for end-user deployment:
-    _sed_i "s|    build:|    image: $MICROMECH_IMAGE|" docker-compose.yml.tmp
+    _sed_i "s|    build:|    image: $image|" docker-compose.yml.tmp
     _sed_i '/context: \./d' docker-compose.yml.tmp
     _sed_i '/dockerfile: Dockerfile/d' docker-compose.yml.tmp
     _sed_i '/# Mount source/d' docker-compose.yml.tmp
@@ -54,21 +131,73 @@ generate_compose() {
         done
     fi
 
+    local host_project_dir host_project_dir_compose host_project_dir_yaml host_project_dir_sed
+    host_project_dir="${HOST_PROJECT_DIR:-$(pwd)}"
+    case "$host_project_dir" in
+        *$'\n'*|*$'\r'*)
+            echo "ERROR: Project directory contains a newline; cannot generate docker-compose.yml safely." >&2
+            exit 1
+            ;;
+    esac
+    host_project_dir_compose=$(printf '%s' "$host_project_dir" | sed 's/\$/$$/g')
+    host_project_dir_yaml=$(printf '%s' "$host_project_dir_compose" | sed "s/'/''/g")
+    host_project_dir_sed=$(printf '%s' "$host_project_dir_yaml" | sed 's/[&|\\]/\\&/g')
+
     # Add updater sidecar service (if not already present)
     if ! grep -q 'updater:' docker-compose.yml.tmp; then
     cat >> docker-compose.yml.tmp << 'UPDATER_COMPOSE'
+  dockerproxy:
+    image: tecnativa/docker-socket-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - PING=1
+      - VERSION=1
+      - INFO=1
+      - DELETE=1
+      - CONTAINERS=1
+      - POST=1
+      - ALLOW_START=1
+      - ALLOW_STOP=1
+      - ALLOW_RESTARTS=1
+      - IMAGES=1
+      - NETWORKS=1
+      - VOLUMES=1
+    restart: unless-stopped
+    networks:
+      - updater_net
+
   updater:
     image: docker:cli
     environment:
       - TZ=${TZ:-Europe/Madrid}
+      - DOCKER_HOST=tcp://dockerproxy:2375
+      - 'HOST_PROJECT_DIR=__HOST_PROJECT_DIR__'
+      - "UPDATER_RUN_AS=__USER_UID_GID__"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - ./:/host
     working_dir: /host
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
     restart: unless-stopped
-    command: ["sh", "-c", "while [ ! -f ./updater.sh ]; do sleep 5; done; exec sh ./updater.sh"]
+    command: ["sh", "-c", "while [ ! -f ./updater.sh ]; do sleep 5; done; apk add --no-cache bash su-exec >/dev/null && exec su-exec \"$${UPDATER_RUN_AS}\" bash ./updater.sh"]
+    depends_on:
+      - dockerproxy
+    networks:
+      - updater_net
+
+networks:
+  updater_net:
+    driver: bridge
 UPDATER_COMPOSE
     fi
+    _sed_i "s|__USER_UID_GID__|${user_uid}:${user_gid}|" docker-compose.yml.tmp
+    _sed_i "s|__HOST_PROJECT_DIR__|${host_project_dir_sed}|" docker-compose.yml.tmp
 
     # Set fixed project name if not already present
     if ! grep -q '^name:' docker-compose.yml.tmp; then
@@ -76,24 +205,30 @@ UPDATER_COMPOSE
         mv docker-compose.yml.tmp2 docker-compose.yml.tmp
     fi
 
+    if ! docker compose -f docker-compose.yml.tmp config -q \
+        || ! docker compose -f docker-compose.yml.tmp config --services | grep -qx micromech \
+        || ! docker compose -f docker-compose.yml.tmp config --services | grep -qx dockerproxy \
+        || ! docker compose -f docker-compose.yml.tmp config --services | grep -qx updater; then
+        rm -f docker-compose.yml.tmp
+        echo "ERROR: generated docker-compose.yml is invalid" >&2
+        return 1
+    fi
+
     mv docker-compose.yml.tmp docker-compose.yml
 }
 
 # --- Justfile generator (also used by 'just update-config') ---
 generate_justfile() {
-    local user_uid user_gid
-
-    # Read UID:GID from existing compose (reliable even inside containers)
-    if [ -f docker-compose.yml ]; then
-        local existing_user
-        existing_user=$(sed -n 's/.*user: *"\([^"]*\)".*/\1/p' docker-compose.yml | head -1)
-        if [ -n "$existing_user" ]; then
-            user_uid=$(echo "$existing_user" | cut -d: -f1)
-            user_gid=$(echo "$existing_user" | cut -d: -f2)
-        fi
+    local user_uid user_gid user_ids
+    if [ -n "${1:-}" ]; then
+        user_ids="$1"
+    else
+        user_ids=$(resolve_install_user) || return 1
     fi
-    user_uid=${user_uid:-$(id -u)}
-    user_gid=${user_gid:-$(id -g)}
+    user_uid=$(echo "$user_ids" | cut -d: -f1)
+    user_gid=$(echo "$user_ids" | cut -d: -f2)
+    local image
+    image=$(detect_micromech_image)
 
     cat <<JUSTEOF > Justfile
 set shell := ["bash", "-uc"]
@@ -114,7 +249,7 @@ update:
     #!/usr/bin/env bash
     set -e
     MICROMECH_IMAGE=\$(sed -n 's/.*image: *\(dvilela\/micromech[^:]*:latest\).*/\1/p' docker-compose.yml | head -1)
-    MICROMECH_IMAGE=\${MICROMECH_IMAGE:-$MICROMECH_IMAGE}
+    MICROMECH_IMAGE=\${MICROMECH_IMAGE:-$image}
     current=\$(docker inspect --format '{{{{index .Config.Labels "version"}}' "\$MICROMECH_IMAGE" 2>/dev/null || echo "unknown")
     current_digest=\$(docker inspect --format '{{{{.Id}}' "\$MICROMECH_IMAGE" 2>/dev/null || echo "none")
     docker compose pull
@@ -123,9 +258,12 @@ update:
     if [ "\$current" != "\$new" ] || [ "\$current_digest" != "\$new_digest" ]; then
         echo "🔄 Updated v\$current -> v\$new"
         echo "📝 Updating config files..."
-        docker run --rm --entrypoint cat "\$MICROMECH_IMAGE" /app/scripts/quickstart.sh > /tmp/micromech-qs.sh
-        UPDATE_CONFIG=1 bash /tmp/micromech-qs.sh
-        rm -f /tmp/micromech-qs.sh
+        qs_tmp=\$(mktemp /tmp/micromech-qs-XXXXXX)
+        trap 'rm -f "\$qs_tmp"' EXIT
+        docker run --rm --entrypoint cat "\$MICROMECH_IMAGE" /app/scripts/quickstart.sh > "\$qs_tmp"
+        UPDATE_CONFIG=1 bash "\$qs_tmp"
+        rm -f "\$qs_tmp"
+        trap - EXIT
         docker compose up -d
     else
         echo "✅ Already at latest version (v\$current)"
@@ -141,10 +279,13 @@ update-config:
     set -e
     echo "📝 Updating Justfile and docker-compose.yml from latest Docker image..."
     MICROMECH_IMAGE=\$(sed -n 's/.*image: *\(dvilela\/micromech[^:]*:latest\).*/\1/p' docker-compose.yml | head -1)
-    MICROMECH_IMAGE=\${MICROMECH_IMAGE:-$MICROMECH_IMAGE}
-    docker run --rm --entrypoint cat "\$MICROMECH_IMAGE" /app/scripts/quickstart.sh > /tmp/micromech-qs.sh
-    UPDATE_CONFIG=1 bash /tmp/micromech-qs.sh
-    rm -f /tmp/micromech-qs.sh
+    MICROMECH_IMAGE=\${MICROMECH_IMAGE:-$image}
+    qs_tmp=\$(mktemp /tmp/micromech-qs-XXXXXX)
+    trap 'rm -f "\$qs_tmp"' EXIT
+    docker run --rm --entrypoint cat "\$MICROMECH_IMAGE" /app/scripts/quickstart.sh > "\$qs_tmp"
+    UPDATE_CONFIG=1 bash "\$qs_tmp"
+    rm -f "\$qs_tmp"
+    trap - EXIT
     echo "✅ Config files updated!"
 
 status:
@@ -157,7 +298,7 @@ init:
         --user "$user_uid:$user_gid" \\
         --volume "\$(pwd)/data:/app/data" \\
         --env-file "\$(pwd)/secrets.env" \\
-        $MICROMECH_IMAGE \\
+        $image \\
         python -m micromech init
 
 doctor:
@@ -167,145 +308,68 @@ doctor:
         --user "$user_uid:$user_gid" \\
         --volume "\$(pwd)/data:/app/data" \\
         --env-file "\$(pwd)/secrets.env" \\
-        $MICROMECH_IMAGE \\
+        $image \\
         python -m micromech doctor
 JUSTEOF
 }
 
 # --- Updater sidecar script generator ---
 generate_updater_script() {
-    cat << 'UPDATEREOF' > updater.sh
-#!/bin/sh
-# Micromech Updater Sidecar
-# Watches for update requests and handles image pull + config regen + restart
-
-# Install bash (required by quickstart.sh config generator)
-if ! command -v bash >/dev/null 2>&1; then
-    apk add --no-cache bash >/dev/null 2>&1
-fi
-
-UPDATER_LOG="data/updater.log"
-
-# Simple rotation: move to .1 if >1MB
-rotate_log() {
-    if [ -f "$UPDATER_LOG" ] && [ "$(wc -c < "$UPDATER_LOG")" -gt 1048576 ]; then
-        mv "$UPDATER_LOG" "${UPDATER_LOG}.1"
+    local image tmp
+    image=$(detect_micromech_image)
+    tmp=$(mktemp updater.XXXXXX)
+    if ! docker run --rm --entrypoint cat "$image" /app/scripts/updater.sh > "$tmp" || [ ! -s "$tmp" ] || ! bash -n "$tmp"; then
+        rm -f "$tmp"
+        echo "ERROR: Could not extract a valid updater.sh from $image" >&2
+        return 1
     fi
-}
-
-log() {
-    msg="$(date -u '+%Y-%m-%d %H:%M:%S') - [updater] $1"
-    echo "$msg"
-    rotate_log
-    echo "$msg" >> "$UPDATER_LOG"
-}
-
-cd /host
-
-# Detect absolute project directory on host (from our own mount)
-PROJECT_DIR=$(docker inspect $(hostname) --format '{{range .Mounts}}{{if eq .Destination "/host"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
-if [ -z "$PROJECT_DIR" ]; then
-    log "ERROR: Cannot detect project directory"
-    exit 1
-fi
-
-# Detect Micromech image from docker-compose.yml
-MICROMECH_IMAGE=$(sed -n 's/.*image: *\(dvilela\/micromech[^:]*:latest\).*/\1/p' docker-compose.yml | head -1)
-MICROMECH_IMAGE=${MICROMECH_IMAGE:-dvilela/micromech:latest}
-
-log "Project directory: $PROJECT_DIR"
-log "Micromech image: $MICROMECH_IMAGE"
-log "Ready — watching for update requests"
-
-while true; do
-    if [ -f data/.update-request ]; then
-        ACTION=$(cat data/.update-request)
-        rm -f data/.update-request
-        log "Received request: $ACTION"
-
-        if [ "$ACTION" = "restart" ]; then
-            log "Restarting micromech..."
-            docker compose restart micromech
-        else
-            # Full update — pull, config regen, restart
-            OLD=$(docker inspect --format '{{index .Config.Labels "version"}}' "$MICROMECH_IMAGE" 2>/dev/null || echo "unknown")
-            OLD_DIGEST=$(docker inspect --format '{{.Id}}' "$MICROMECH_IMAGE" 2>/dev/null || echo "none")
-
-            if docker compose pull micromech 2>&1; then
-                NEW=$(docker inspect --format '{{index .Config.Labels "version"}}' "$MICROMECH_IMAGE" 2>/dev/null || echo "unknown")
-                NEW_DIGEST=$(docker inspect --format '{{.Id}}' "$MICROMECH_IMAGE" 2>/dev/null || echo "none")
-
-                if [ "$OLD" != "$NEW" ] || [ "$OLD_DIGEST" != "$NEW_DIGEST" ]; then
-                    # Only regenerate configs if not using symlinks (managed installation)
-                    if [ ! -L "Justfile" ] && [ ! -L "docker-compose.yml" ]; then
-                        log "Regenerating config files from new image..."
-                        docker run --rm --entrypoint cat "$MICROMECH_IMAGE" /app/scripts/quickstart.sh > /tmp/qs.sh
-                        UPDATE_CONFIG=1 bash /tmp/qs.sh
-                        rm -f /tmp/qs.sh
-                    else
-                        log "Skipping config regeneration (symlinks detected - managed installation)"
-                    fi
-
-                    echo "updated:$OLD:$NEW" > data/.update-result
-
-                    # Wait for Micromech to acknowledge (delete result file)
-                    for i in $(seq 1 12); do [ ! -f data/.update-result ] && break; sleep 5; done
-
-                    # Graceful shutdown before restart to prevent file lock issues
-                    log "Stopping micromech gracefully..."
-                    docker compose stop micromech
-
-                    # Wait for complete shutdown
-                    sleep 2
-
-                    # Ensure data directory has correct permissions for container user
-                    chown -R ${user_uid}:${user_gid} data/ 2>/dev/null || true
-
-                    # Generate temporary docker-compose.yml with absolute paths for volumes
-                    sed "s|- \\./data|- $PROJECT_DIR/data|g; s|- \\./secrets\\.env|- $PROJECT_DIR/secrets.env|g" docker-compose.yml > /tmp/docker-compose-abs.yml
-
-                    # Start Micromech with new image using absolute paths
-                    log "Starting micromech with new image..."
-                    docker compose -f /tmp/docker-compose-abs.yml --project-directory . up -d micromech
-
-                    # Cleanup
-                    rm -f /tmp/docker-compose-abs.yml
-
-                    # Re-exec to pick up any script changes (only if updater.sh is not a symlink)
-                    [ ! -L "./updater.sh" ] && exec sh ./updater.sh
-                else
-                    echo "current:$OLD" > data/.update-result
-                fi
-            else
-                echo "error:pull_failed" > data/.update-result
-            fi
-
-            # Warn if Docker has significant reclaimable space
-            waste_gb=$(if command -v timeout >/dev/null 2>&1; then timeout 5 docker system df 2>/dev/null || true; fi | tail -n +2 | awk '{v=$NF; if (v ~ /^\(/) v=$(NF-1); n=v; gsub(/[^0-9.]/, "", n); u=toupper(v); gsub(/[0-9.]/, "", u); if (u ~ /^TB/) t+=n*1024; else if (u ~ /^GB/) t+=n; else if (u ~ /^MB/) t+=n/1024; else if (u ~ /^KB/) t+=n/1048576; else if (u ~ /^B/) t+=n/1073741824} END {printf "%.0f", t}')
-            if [ "${waste_gb:-0}" -ge 5 ]; then
-                echo "$waste_gb" > data/.disk-warning
-                log "WARNING: Docker has ~${waste_gb}GB of reclaimable space"
-            else
-                rm -f data/.disk-warning
-            fi
-        fi
-    fi
-    sleep 10
-done
-UPDATEREOF
+    mv "$tmp" updater.sh
     chmod +x updater.sh
+}
+
+is_managed_install() {
+    [ -L "Justfile" ] || [ -L "docker-compose.yml" ] || [ -L "updater.sh" ]
 }
 
 # Self-update mode: regenerate config files, then exit
 if [ "${UPDATE_CONFIG:-}" = "1" ]; then
-    # Managed installation: Justfile is a symlink → all configs are repo-managed
-    if [ -L "Justfile" ]; then
+    # Managed installation: generated artifacts are symlinked and repo-managed.
+    if is_managed_install; then
         echo "📝 Managed installation detected — skipping config regeneration"
         exit 0
     fi
-    generate_compose
-    generate_justfile
-    generate_updater_script
+    UPDATE_BACKUP_DIR=$(mktemp -d /tmp/micromech-update-config-XXXXXX) || exit 1
+    for artifact in docker-compose.yml Justfile updater.sh; do
+        if [ -e "$artifact" ] && ! cp -p "$artifact" "$UPDATE_BACKUP_DIR/$artifact"; then
+            rm -rf "$UPDATE_BACKUP_DIR"
+            exit 1
+        fi
+    done
+    restore_update_config_artifacts() {
+        local artifact
+        for artifact in docker-compose.yml Justfile updater.sh; do
+            if [ -e "$UPDATE_BACKUP_DIR/$artifact" ]; then
+                cp -p "$UPDATE_BACKUP_DIR/$artifact" "$artifact"
+            else
+                rm -f "$artifact"
+            fi
+        done
+        [ ! -L updater.sh ] && [ -f updater.sh ] && chmod +x updater.sh
+        rm -rf "$UPDATE_BACKUP_DIR"
+    }
+    if ! generate_compose || ! generate_justfile || ! generate_updater_script; then
+        restore_update_config_artifacts
+        exit 1
+    fi
+    if ! INSTALL_OWNER=$(resolve_install_user); then
+        restore_update_config_artifacts
+        exit 1
+    fi
+    if ! chown_generated_artifacts_if_needed "$INSTALL_OWNER"; then
+        restore_update_config_artifacts
+        exit 1
+    fi
+    rm -rf "$UPDATE_BACKUP_DIR"
     exit 0
 fi
 
@@ -337,6 +401,17 @@ echo
 # 2. Setup Directory
 INSTALL_DIR="$(pwd)/micromech"
 
+if [ -L "$INSTALL_DIR" ]; then
+    echo -e "${RED}❌ Refusing to use symlinked install directory '$INSTALL_DIR'.${NC}"
+    exit 1
+fi
+
+if [ -d "$INSTALL_DIR" ] \
+    && { [ -L "$INSTALL_DIR/Justfile" ] || [ -L "$INSTALL_DIR/docker-compose.yml" ] || [ -L "$INSTALL_DIR/updater.sh" ]; }; then
+    echo -e "${RED}❌ Managed installation detected — refusing to overwrite symlinked artifacts.${NC}"
+    exit 1
+fi
+
 if ! mkdir -p "$INSTALL_DIR/data" 2>/dev/null; then
     echo -e "${RED}❌ Cannot create directory '$INSTALL_DIR'. Permission denied.${NC}"
     if [ "$(id -u)" -ne 0 ]; then
@@ -355,6 +430,11 @@ if [ -d "$INSTALL_DIR" ] && [ "$(ls -A "$INSTALL_DIR" 2>/dev/null)" ]; then
     echo -e "(Your data/ and secrets.env are preserved.)"
 fi
 cd "$INSTALL_DIR"
+
+if is_managed_install; then
+    echo -e "${RED}❌ Managed installation detected — refusing to overwrite symlinked artifacts.${NC}"
+    exit 1
+fi
 
 # Extract artifacts from Docker image
 IMAGE="$MICROMECH_IMAGE"
@@ -380,24 +460,22 @@ fi
 
 # 2. docker-compose.yml (Transformed from repo version)
 echo -e "   - docker-compose.yml..."
-generate_compose
+INSTALL_OWNER=$(resolve_human_user) || exit 1
+generate_compose "$INSTALL_OWNER" || exit 1
 
 # 3. Justfile (Generated minimal version for end-users)
 echo -e "   - Justfile..."
-generate_justfile
+generate_justfile "$INSTALL_OWNER" || exit 1
 
 # 4. updater.sh (Sidecar script for remote updates)
 echo -e "   - updater.sh..."
-generate_updater_script
+generate_updater_script || exit 1
 
 # Explicit cleanup for non-error exit
 cleanup
 trap - EXIT
 
-# If running as root via sudo, give ownership to the invoking user
-if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
-    chown -R "$SUDO_USER:$(id -gn "$SUDO_USER")" "$INSTALL_DIR"
-fi
+chown_install_dir_if_needed "$INSTALL_DIR" "$INSTALL_OWNER" || exit 1
 
 # Start micromech
 echo
