@@ -6,9 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from micromech.core.config import (
+    KNOWN_FALLBACK_MECHS,
     ChainConfig,
     FallbackMechConfig,
-    KNOWN_FALLBACK_MECHS,
     MicromechConfig,
     known_fallback_mechs,
 )
