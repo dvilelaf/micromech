@@ -1512,6 +1512,10 @@ def create_web_app(
             )
         return start, end
 
+    def _profits_is_xdai(tx: Any) -> bool:
+        token = getattr(tx, "token", "") or ""
+        return token.lower() == "xdai"
+
     @protected_router.get("/profits/summary")
     async def profits_summary(
         year: int = Query(default=0, ge=0, le=9999),
@@ -1556,14 +1560,14 @@ def create_web_app(
                 ]
             withdrawals = [
                 tx for tx in multisig_txs
-                if (tx.value_eur or 0) > 0.001
+                if _profits_is_xdai(tx) and (tx.value_eur or 0) > 0.001
             ]
 
             total_xdai = sum(
                 int(tx.amount_wei or 0) / 1e18 for tx in withdrawals
             )
             total_eur = sum(tx.value_eur or 0 for tx in withdrawals)
-            total_gas = sum(tx.gas_value_eur or 0 for tx in multisig_txs)
+            total_gas = sum(tx.gas_value_eur or 0 for tx in withdrawals)
 
             pre_tax = total_eur - total_gas
             tax, effective_rate = _profits_savings_tax(pre_tax)
@@ -1577,7 +1581,7 @@ def create_web_app(
                 monthly[m]["xdai"] += int(tx.amount_wei or 0) / 1e18
                 monthly[m]["eur"] += tx.value_eur or 0
                 monthly[m]["count"] += 1
-            for tx in multisig_txs:
+            for tx in withdrawals:
                 monthly[tx.timestamp.month]["gas"] += tx.gas_value_eur or 0
 
             months = []
@@ -1647,13 +1651,16 @@ def create_web_app(
             if use_tag_filter:
                 withdrawals = [
                     tx for tx in txs
-                    if tx.to_tag == "master" and (tx.value_eur or 0) > 0.001
+                    if tx.to_tag == "master"
+                    and _profits_is_xdai(tx)
+                    and (tx.value_eur or 0) > 0.001
                 ]
             else:
                 withdrawals = [
                     tx for tx in txs
                     if tx.from_address
                     and tx.from_address.lower() in multisig_set
+                    and _profits_is_xdai(tx)
                     and (tx.value_eur or 0) > 0.001
                 ]
 
