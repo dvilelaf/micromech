@@ -514,6 +514,24 @@ _validate-docker-lock:
 
     echo "Docker dependency lock OK"
 
+# Validate Docker build cache exists before publish starts expensive builds
+_validate-docker-cache:
+    #!/usr/bin/env bash
+    set -e
+
+    CACHE_REF="dvilela/micromech:buildcache"
+    INSPECT_ERROR=$(mktemp)
+    trap 'rm -f "$INSPECT_ERROR"' EXIT
+    if ! docker buildx imagetools inspect "$CACHE_REF" >/dev/null 2>"$INSPECT_ERROR"; then
+        echo "Error: Docker build cache not found or not readable: $CACHE_REF"
+        cat "$INSPECT_ERROR"
+        echo "This would force expensive dependencies such as llama-cpp-python to rebuild."
+        echo "Fix: run just publish-cache once to seed the registry cache."
+        exit 1
+    fi
+
+    echo "Docker build cache OK ($CACHE_REF)"
+
 # Run checks, create and push release tag
 release: release-check
     #!/usr/bin/env bash
@@ -529,8 +547,25 @@ release: release-check
     echo "Release $TAG created and pushed!"
     echo "Next: wait for CI to go green, then run: just publish"
 
+# Build and push the registry cache used by publish
+publish-cache: _validate-git-state _validate-docker-lock
+    #!/usr/bin/env bash
+    set -e
+
+    VERSION=$(grep -m1 'version = ' pyproject.toml | cut -d '"' -f2)
+    CACHE_REF="dvilela/micromech:buildcache"
+
+    echo "Warming Docker build cache at $CACHE_REF (multi-arch)..."
+    echo "The first run may compile heavy dependencies; later publishes should reuse this cache."
+    docker buildx build --platform linux/amd64,linux/arm64 \
+        --cache-from type=registry,ref=$CACHE_REF \
+        --cache-to type=registry,ref=$CACHE_REF,mode=max \
+        --build-arg VERSION=$VERSION \
+        -f Dockerfile .
+    echo "Docker build cache published to $CACHE_REF"
+
 # Build and publish docker image (requires tag at HEAD)
-publish: _validate-git-state _validate-tag-at-head _validate-docker-lock
+publish: _validate-git-state _validate-tag-at-head _validate-docker-lock _validate-docker-cache
     #!/usr/bin/env bash
     set -e
 
