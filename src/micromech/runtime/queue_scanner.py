@@ -75,6 +75,7 @@ class MechQueueScanner:
         self._mech_contracts: dict[str, Any] = {}
         self._our_payment_type: bytes | None = None
         self._event_cache: dict[tuple[str, int, int], dict[str, dict]] = {}
+        self._event_lookup_bounds_for_scan: tuple[int, int] | None = None
 
     async def scan_once(self) -> None:
         """Scan our own queue and, when enabled, configured fallback queues."""
@@ -82,6 +83,7 @@ class MechQueueScanner:
             return
 
         self._event_cache = {}
+        self._event_lookup_bounds_for_scan = None
         await self._scan_mech(self.chain_config.mech_address, mode="own")
 
         if not self.config.fallback_mode_enabled:
@@ -167,11 +169,10 @@ class MechQueueScanner:
             logger.debug("Queue scanner could not resolve {}", req_id[:16])
             return
 
-        if candidate.mode == "fallback" and (
-            not request.tool or not self.registry.has(request.tool)
-        ):
+        if not request.tool or not self.registry.has(request.tool):
             logger.debug(
-                "Queue scanner skipping fallback {}: unavailable tool '{}'",
+                "Queue scanner skipping {} {}: unavailable tool '{}'",
+                candidate.mode,
                 req_id[:16],
                 request.tool,
             )
@@ -240,9 +241,9 @@ class MechQueueScanner:
             info = self.bridge.with_retry(
                 lambda: marketplace.functions.mapRequestIdInfos(request_id).call()
             )
-            max_delivery_rate = int(info[4])
+            delivery_rate = int(info[4])
             payment_type = bytes(info[5])
-            if max_delivery_rate < int(self.chain_config.delivery_rate):
+            if delivery_rate < int(self.chain_config.delivery_rate):
                 return False
             return payment_type == self._our_mech_payment_type()
         except Exception as e:  # noqa: BLE001
@@ -281,8 +282,7 @@ class MechQueueScanner:
     def _find_request_event(self, candidate: QueueCandidate) -> dict | None:
         web3 = self.bridge.web3
         marketplace = self._marketplace_contract()
-        current = self.bridge.with_retry(lambda: web3.eth.block_number)
-        from_block, to_block = self._event_lookup_bounds(candidate.request_id, int(current))
+        from_block, to_block = self._get_event_lookup_bounds_for_scan()
         cache_key = (candidate.priority_mech.lower(), from_block, to_block)
         if cache_key not in self._event_cache:
             self._event_cache[cache_key] = {}
@@ -304,22 +304,17 @@ class MechQueueScanner:
 
         return self._event_cache[cache_key].get(candidate.request_id_hex)
 
-    def _event_lookup_bounds(self, request_id: bytes, current_block: int) -> tuple[int, int]:
-        marker: int | None = None
-        try:
-            marketplace = self._marketplace_contract()
-            info = self.bridge.with_retry(
-                lambda: marketplace.functions.mapRequestIdInfos(request_id).call()
-            )
-            marker = int(info[3])
-        except Exception:
-            marker = None
-
-        if marker is not None and 0 <= marker <= current_block:
-            return marker, marker
-
+    def _event_lookup_bounds(self, current_block: int) -> tuple[int, int]:
+        # mapRequestIdInfos()[3] is responseTimeout on the deployed marketplace,
+        # not the request block. Keep payload lookup bounded by configuration.
         lookback = self.config.queue_scanner_event_lookback_blocks
         return max(0, current_block - lookback), current_block
+
+    def _get_event_lookup_bounds_for_scan(self) -> tuple[int, int]:
+        if self._event_lookup_bounds_for_scan is None:
+            current = self.bridge.with_retry(lambda: self.bridge.web3.eth.block_number)
+            self._event_lookup_bounds_for_scan = self._event_lookup_bounds(int(current))
+        return self._event_lookup_bounds_for_scan
 
     async def _resolve_ipfs_request(
         self,
@@ -335,7 +330,7 @@ class MechQueueScanner:
             payload = await fetch_json_from_ipfs(multihash_to_cid(multihash))
         except Exception as e:  # noqa: BLE001
             logger.debug("Queue scanner IPFS fetch failed for {}: {}", request.request_id[:16], e)
-            return request
+            return request.model_copy(update={"tool": "(decode_error)"})
 
         return request.model_copy(
             update={

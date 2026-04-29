@@ -197,20 +197,83 @@ async def test_fallback_scanner_short_circuits_before_payload_resolution(tmp_pat
     enqueue.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_scanner_reuses_event_lookup_for_candidates_in_same_scan(tmp_path):
+    """Two IDs from the same mech share one bounded event lookup."""
+    cfg = _make_config(
+        fallback_mode_enabled=True,
+        fallback_mech_addresses=[OTHER_MECH],
+        queue_scanner_event_lookback_blocks=100,
+    )
+    scanner, enqueue, _queued = _scanner(tmp_path, cfg)
+    scanner.bridge.web3.eth.block_number = 1000
+    own_mech = _mock_mech(0, [])
+    own_mech.functions.paymentType.return_value.call.return_value = b"\xba" * 32
+    scanner._mech_contracts[MECH_ADDR.lower()] = own_mech
+    scanner._mech_contracts[OTHER_MECH.lower()] = _mock_mech(
+        2,
+        [[_request_id(1), _request_id(2)]],
+    )
+    marketplace = MagicMock()
+    marketplace.functions.getRequestStatus.return_value.call.return_value = 2
+    marketplace.functions.mapRequestIdInfos.return_value.call.return_value = (
+        OTHER_MECH,
+        "0x" + "00" * 20,
+        "0x" + "11" * 20,
+        1,
+        10**18,
+        b"\xba" * 32,
+    )
+    event = {
+        "args": {
+            "priorityMech": OTHER_MECH,
+            "requester": "0x" + "11" * 20,
+            "requestIds": [_request_id(1), _request_id(2)],
+            "requestDatas": [
+                b'{"prompt":"p1","tool":"echo"}',
+                b'{"prompt":"p2","tool":"echo"}',
+            ],
+        }
+    }
+    marketplace.events.MarketplaceRequest.get_logs.return_value = [event]
+    scanner._marketplace = marketplace
+
+    await scanner.scan_once()
+
+    assert enqueue.await_count == 2
+    marketplace.events.MarketplaceRequest.get_logs.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_scanner_skips_resolved_requests_without_known_tool(tmp_path):
+    """Queue reconciliation fails closed instead of falling back to echo."""
+    cfg = _make_config()
+    scanner, enqueue, _queued = _scanner(tmp_path, cfg)
+    scanner._mech_contracts[MECH_ADDR.lower()] = _mock_mech(1, [[_request_id(1)]])
+    marketplace = MagicMock()
+    marketplace.functions.getRequestStatus.return_value.call.return_value = 1
+    scanner._marketplace = marketplace
+
+    async def resolve(candidate):
+        return MechRequest(
+            request_id=candidate.request_id_hex,
+            chain="gnosis",
+            tool="",
+            priority_mech=MECH_ADDR,
+        )
+
+    with patch.object(scanner, "_resolve_request_payload", side_effect=resolve):
+        await scanner.scan_once()
+
+    enqueue.assert_not_awaited()
+
+
 def test_find_request_event_uses_priority_mech_filter(tmp_path):
     """Payload lookup is targeted by priorityMech, never an unfiltered log scan."""
-    cfg = _make_config()
+    cfg = _make_config(queue_scanner_event_lookback_blocks=100)
     scanner, _enqueue, _queued = _scanner(tmp_path, cfg)
     scanner.bridge.web3.eth.block_number = 1000
     marketplace = MagicMock()
-    marketplace.functions.mapRequestIdInfos.return_value.call.return_value = [
-        "0x" + "11" * 20,
-        OTHER_MECH,
-        "0x" + "00" * 20,
-        900,
-        10**16,
-        b"\xba" * 32,
-    ]
     event = {
         "args": {
             "priorityMech": OTHER_MECH,
@@ -228,5 +291,28 @@ def test_find_request_event_uses_priority_mech_filter(tmp_path):
 
     assert found is event
     kwargs = marketplace.events.MarketplaceRequest.get_logs.call_args.kwargs
+    assert kwargs["from_block"] == 900
+    assert kwargs["to_block"] == 1000
     assert kwargs["argument_filters"] == {"priorityMech": OTHER_MECH}
     assert kwargs["argument_filters"] != {}
+    marketplace.functions.mapRequestIdInfos.assert_not_called()
+
+
+def test_payment_compatibility_uses_onchain_info_order(tmp_path):
+    """mapRequestIdInfos()[3] is responseTimeout; rate/payment are [4]/[5]."""
+    cfg = _make_config()
+    cfg.enabled_chains["gnosis"].delivery_rate = 10
+    scanner, _enqueue, _queued = _scanner(tmp_path, cfg)
+    marketplace = MagicMock()
+    marketplace.functions.mapRequestIdInfos.return_value.call.return_value = (
+        OTHER_MECH,
+        "0x" + "00" * 20,
+        "0x" + "11" * 20,
+        1,
+        10,
+        b"\xba" * 32,
+    )
+    scanner._marketplace = marketplace
+
+    with patch.object(scanner, "_our_mech_payment_type", return_value=b"\xba" * 32):
+        assert scanner._payment_is_compatible(_request_id(1)) is True

@@ -31,6 +31,18 @@ class TestABIConstants:
         assert "MarketplaceDelivery" in names
         assert "getRequestStatus" in names
         assert "mapRequestIdInfos" in names
+        request_info = next(
+            entry for entry in MARKETPLACE_REQUEST_ABI
+            if entry.get("name") == "mapRequestIdInfos"
+        )
+        assert [out["name"] for out in request_info["outputs"]] == [
+            "priorityMech",
+            "deliveryMech",
+            "requester",
+            "responseTimeout",
+            "deliveryRate",
+            "paymentType",
+        ]
 
     def test_metadata_abi_has_change_hash(self):
         assert isinstance(COMPLEMENTARY_SERVICE_METADATA_ABI, list)

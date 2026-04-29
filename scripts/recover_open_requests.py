@@ -112,11 +112,11 @@ MARKETPLACE_ABI = [
         "inputs": [{"name": "requestId", "type": "bytes32"}],
         "name": "mapRequestIdInfos",
         "outputs": [
-            {"name": "requester", "type": "address"},
             {"name": "priorityMech", "type": "address"},
             {"name": "deliveryMech", "type": "address"},
-            {"name": "requestBlockNumber", "type": "uint256"},
-            {"name": "maxDeliveryRate", "type": "uint256"},
+            {"name": "requester", "type": "address"},
+            {"name": "responseTimeout", "type": "uint256"},
+            {"name": "deliveryRate", "type": "uint256"},
             {"name": "paymentType", "type": "bytes32"},
         ],
         "stateMutability": "view",
@@ -222,6 +222,7 @@ class RuntimeConfig:
         config_path: Path,
         wallet_path: Path,
         delivery_rate: int | None = None,
+        fallback_mech_addresses: list[str] | None = None,
     ) -> None:
         self.chain = chain
         self.mech_addr = mech_addr
@@ -230,6 +231,7 @@ class RuntimeConfig:
         self.config_path = config_path
         self.wallet_path = wallet_path
         self.delivery_rate = delivery_rate
+        self.fallback_mech_addresses = fallback_mech_addresses or []
 
 
 def b32_to_hex(b: bytes) -> str:
@@ -442,6 +444,10 @@ def _resolve_runtime_config(args: argparse.Namespace) -> RuntimeConfig:
         config_path=config_path,
         wallet_path=wallet_path,
         delivery_rate=chain_cfg.get("delivery_rate"),
+        fallback_mech_addresses=[
+            Web3.to_checksum_address(mech)
+            for mech in micromech.get("fallback_mech_addresses", []) or []
+        ],
     )
 
 
@@ -758,12 +764,12 @@ def _revalidate_open(
     cutoff_block: int | None = None,
     cutoff_timestamp: int | None = None,
 ) -> list[bytes]:
-    """Check status/age on-chain. Returns only still-status=2 and old enough.
+    """Check status on-chain. Returns only requests still at marketplace status=2.
 
     If rpc_urls is provided, rotates to the next RPC on failure.
     """
     rpc_idx = 0
-    still_open, skipped_status, skipped_age = [], 0, 0
+    still_open, skipped_status = [], 0
     for rid in request_ids:
         n_attempts = len(rpc_urls) if rpc_urls else 1
         for _ in range(n_attempts):
@@ -774,19 +780,6 @@ def _revalidate_open(
                     name=f"revalidate {b32_to_hex(rid)[:18]}",
                 )
                 if status == 2:
-                    if cutoff_block is not None:
-                        info = _rpc_call(
-                            lambda: marketplace.functions.mapRequestIdInfos(rid).call(),
-                            name=f"revalidate info {b32_to_hex(rid)[:18]}",
-                        )
-                        request_block = int(info[3])
-                        if not _request_marker_is_old_enough(
-                            request_block,
-                            cutoff_block=cutoff_block,
-                            cutoff_timestamp=cutoff_timestamp,
-                        ):
-                            skipped_age += 1
-                            break
                     still_open.append(rid)
                 else:
                     skipped_status += 1
@@ -800,30 +793,7 @@ def _revalidate_open(
         time.sleep(delay)
     if skipped_status:
         log("Re-validation: %s no longer status=2 — filtered out", skipped_status)
-    if skipped_age:
-        log("Re-validation: %s younger than 24h cutoff — filtered out", skipped_age)
     return still_open
-
-
-def _request_marker_is_old_enough(
-    request_marker: int,
-    *,
-    cutoff_block: int | None,
-    cutoff_timestamp: int | None,
-) -> bool:
-    """Return whether a request marker is older than the 24h cutoff.
-
-    Some deployed Marketplace versions expose a field named requestBlockNumber
-    that contains a Unix timestamp. Treat large values as timestamps and normal
-    chain-height-sized values as block numbers.
-    """
-    if request_marker >= 1_000_000_000:
-        if cutoff_timestamp is None:
-            return True
-        return request_marker <= cutoff_timestamp
-    if cutoff_block is None:
-        return True
-    return request_marker <= cutoff_block
 
 
 # ── Discovery ─────────────────────────────────────────────────────────────────
@@ -1345,6 +1315,21 @@ def discover_open_requests_from_mech_queues(
             continue
 
         log("mech %s: %s undelivered candidate(s)", mech_addr, n_undelivered)
+        age_proofs: dict[str, int] | None = None
+        if cutoff_block is not None:
+            age_proofs = _request_blocks_from_priority_mech_events(
+                web3,
+                marketplace,
+                mech_addr,
+                from_block=MARKETPLACE_DEPLOY_BLOCK,
+                to_block=cutoff_block,
+            )
+            log(
+                "mech %s: %s request age proof(s) found before cutoff block %s",
+                mech_addr,
+                len(age_proofs),
+                cutoff_block,
+            )
         offset = 0
         while offset < n_undelivered:
             size = min(page_size, n_undelivered - offset)
@@ -1379,6 +1364,14 @@ def discover_open_requests_from_mech_queues(
                     continue
 
                 request_block: int | None = None
+                if age_proofs is not None:
+                    request_block = age_proofs.get(h)
+                    if request_block is None:
+                        log("skip no >24h age proof: %s...", h[:18], level=logging.DEBUG)
+                        known_set.add(h)
+                        page_skipped += 1
+                        time.sleep(delay_status)
+                        continue
                 if payment_type is not None:
                     try:
                         info = _rpc_call(
@@ -1391,7 +1384,6 @@ def discover_open_requests_from_mech_queues(
                         continue
 
                     request_payment_type = bytes(info[-1])
-                    request_block = int(info[3])
                     if request_payment_type != payment_type:
                         log("skip paymentType mismatch: %s...", h[:18], level=logging.DEBUG)
                         known_set.add(h)
@@ -1400,26 +1392,11 @@ def discover_open_requests_from_mech_queues(
                             queue.remember_skipped(h, request_block, "payment_type_mismatch")
                         time.sleep(delay_status)
                         continue
-                    if not _request_marker_is_old_enough(
-                        request_block,
-                        cutoff_block=cutoff_block,
-                        cutoff_timestamp=cutoff_timestamp,
-                    ):
+                    request_delivery_rate = int(info[4])
+                    if delivery_rate is not None and request_delivery_rate < delivery_rate:
                         log(
-                            "skip younger than 24h cutoff marker %s: %s...",
-                            request_block,
-                            h[:18],
-                            level=logging.DEBUG,
-                        )
-                        known_set.add(h)
-                        page_skipped += 1
-                        time.sleep(delay_status)
-                        continue
-                    max_delivery_rate = int(info[4])
-                    if delivery_rate is not None and max_delivery_rate < delivery_rate:
-                        log(
-                            "skip maxDeliveryRate %s < %s: %s...",
-                            max_delivery_rate,
+                            "skip deliveryRate %s < %s: %s...",
+                            request_delivery_rate,
                             delivery_rate,
                             h[:18],
                             level=logging.DEBUG,
@@ -1490,6 +1467,38 @@ def discover_open_requests_from_mech_queues(
         total_candidates,
     )
     return result
+
+
+def _request_blocks_from_priority_mech_events(
+    web3,
+    marketplace,
+    priority_mech: str,
+    *,
+    from_block: int,
+    to_block: int,
+) -> dict[str, int]:
+    """Return request IDs observed in old MarketplaceRequest logs for one mech."""
+    if to_block < from_block:
+        return {}
+
+    request_blocks: dict[str, int] = {}
+    priority_mech = web3.to_checksum_address(priority_mech)
+    for start in range(from_block, to_block + 1, LOG_WINDOW):
+        end = min(start + LOG_WINDOW - 1, to_block)
+        logs = _rpc_call(
+            lambda _s=start, _e=end: marketplace.events.MarketplaceRequest.get_logs(
+                from_block=_s,
+                to_block=_e,
+                argument_filters={"priorityMech": priority_mech},
+            ),
+            name=f"age proof logs {priority_mech[:10]} {start}-{end}",
+        )
+        for event_log in logs:
+            block_number = int(event_log.get("blockNumber", start))
+            for rid in event_log.get("args", {}).get("requestIds", []):
+                request_blocks.setdefault(b32_to_hex(bytes(rid)), block_number)
+        time.sleep(DELAY_LOGS)
+    return request_blocks
 
 
 # ── Delivery (Anvil impersonation) ─────────────────────────────────────────────
@@ -1915,58 +1924,31 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
         try:
             mechs = _load_mech_sources(args)
             if not mechs:
-                w3, _ = _connect(rpc_list)
-                current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
-                if args.lookback_days is not None:
-                    mech_from_block = current - int(args.lookback_days * 24 * 3600 / GNOSIS_BLOCK_TIME)
-                else:
-                    mech_from_block = MARKETPLACE_DEPLOY_BLOCK
-                if args.mech_discovery_provider in ("rpc", "auto"):
-                    try:
-                        mechs = discover_priority_mechs(
-                            rpc_list,
-                            runtime.marketplace_addr,
-                            cache_path=Path(args.mechs_cache),
-                            from_block=mech_from_block,
-                            to_block=current,
-                            window=args.mech_discovery_window,
-                            refresh=args.refresh_mechs,
-                        )
-                    except Exception as exc:
-                        if args.mech_discovery_provider == "rpc":
-                            raise
-                        log(
-                            "RPC mech discovery failed (%s); falling back to Blockscout",
-                            type(exc).__name__,
-                            level=logging.WARNING,
-                        )
-                        mechs = []
-                if not mechs and args.mech_discovery_provider in ("blockscout", "auto"):
-                    mechs = discover_priority_mechs_blockscout(
-                        runtime.marketplace_addr,
-                        cache_path=Path(args.mechs_cache),
-                        from_block=mech_from_block,
-                        to_block=current,
-                        api_base=args.blockscout_api,
-                        refresh=args.refresh_mechs,
-                        max_pages=args.blockscout_max_pages,
-                    )
+                mechs = runtime.fallback_mech_addresses
         except Exception as exc:
             log("priority mech source: %s", exc, level=logging.ERROR)
             sys.exit(1)
         if not mechs:
-            log("No priority mechs found; cannot use mech-queues discovery", level=logging.ERROR)
+            log(
+                "No priority mechs configured; set fallback_mech_addresses in config "
+                "or pass --priority-mechs/--priority-mechs-file",
+                level=logging.ERROR,
+            )
             sys.exit(1)
+        cutoff_block = None
         w3, _ = _connect(rpc_list)
-        current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
-        latest_ts = int(_rpc_call(lambda: _rpc_web3(w3).eth.get_block(current)["timestamp"], name="latest timestamp"))
-        cutoff_block = current - BLOCKS_24H
-        cutoff_timestamp = latest_ts - 24 * 3600
-        log(
-            "Filtering mech queues by request marker older than 24h: block <= %s or timestamp <= %s",
-            cutoff_block,
-            cutoff_timestamp,
-        )
+        if args.mech_queue_age_proof:
+            current = _rpc_call(lambda: _rpc_web3(w3).eth.block_number, name="current block")
+            cutoff_block = current - BLOCKS_24H
+            log(
+                "Filtering mech queues by MarketplaceRequest log proof older than 24h: block <= %s",
+                cutoff_block,
+            )
+        else:
+            log(
+                "Mech queue discovery uses status=2 plus payment/rate filters; "
+                "pass --mech-queue-age-proof to require >24h event proof"
+            )
         mech_contract = _rpc_web3(w3).eth.contract(
             address=_rpc_web3(w3).to_checksum_address(runtime.mech_addr),
             abi=MECH_ABI,
@@ -1977,7 +1959,7 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
         )
         log("Filtering mech queues by paymentType=%s", "0x" + bytes(payment_type).hex())
         if runtime.delivery_rate is not None:
-            log("Filtering mech queues by maxDeliveryRate >= %s", runtime.delivery_rate)
+            log("Filtering mech queues by deliveryRate >= %s", runtime.delivery_rate)
         open_requests = discover_open_requests_from_mech_queues(
             rpc_list,
             runtime.marketplace_addr,
@@ -1990,7 +1972,6 @@ def cmd_discover(args: argparse.Namespace, runtime: RuntimeConfig) -> None:
             payment_type=bytes(payment_type),
             delivery_rate=runtime.delivery_rate,
             cutoff_block=cutoff_block,
-            cutoff_timestamp=cutoff_timestamp,
         )
         log("Found %s open request(s). Checkpoint: %s", len(open_requests), checkpoint)
         log("Queue: %s counts=%s", queue.path, queue.counts())
@@ -2263,6 +2244,11 @@ def main() -> None:
         type=float,
         default=0.05,
         help="Delay between per-request mech-queue checks; iwa handles RPC retry/rotation",
+    )
+    parser.add_argument(
+        "--mech-queue-age-proof",
+        action="store_true",
+        help="For mech-queues discovery, require MarketplaceRequest log proof older than 24h",
     )
     parser.add_argument(
         "--mech-discovery-window",
