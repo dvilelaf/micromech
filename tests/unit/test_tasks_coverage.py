@@ -347,6 +347,7 @@ class TestUpdateCheckTask:
 
         notification = NotificationService()
         notification.send = AsyncMock()
+        notification.send_message = AsyncMock()
         config = make_test_config()
         config.update_check_enabled = False
 
@@ -361,6 +362,7 @@ class TestUpdateCheckTask:
 
         notification = NotificationService()
         notification.send = AsyncMock()
+        notification.send_message = AsyncMock()
 
         with (
             patch("micromech.tasks.update_check.check_dockerhub_latest", return_value=None),
@@ -369,6 +371,7 @@ class TestUpdateCheckTask:
             await update_check_task(notification)
 
         notification.send.assert_not_called()
+        notification.send_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_up_to_date_no_notification(self):
@@ -378,6 +381,7 @@ class TestUpdateCheckTask:
         uc._notified_version = None
         notification = NotificationService()
         notification.send = AsyncMock()
+        notification.send_message = AsyncMock()
 
         with (
             patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.16"),
@@ -386,6 +390,7 @@ class TestUpdateCheckTask:
             await update_check_task(notification)
 
         notification.send.assert_not_called()
+        notification.send_message.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_new_version_sends_notification(self):
@@ -395,6 +400,7 @@ class TestUpdateCheckTask:
         uc._notified_version = None
         notification = NotificationService()
         notification.send = AsyncMock()
+        notification.send_message = AsyncMock()
 
         with (
             patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.17"),
@@ -402,8 +408,14 @@ class TestUpdateCheckTask:
         ):
             await update_check_task(notification)
 
-        notification.send.assert_called_once()
-        assert "0.0.17" in notification.send.call_args[0][1]
+        notification.send_message.assert_called_once()
+        message = notification.send_message.call_args.args[0]
+        assert "*Update Available*" in message
+        assert "Current: `0.0.16`" in message
+        assert "Latest: `0.0.17`" in message
+        assert "Use /update here or `just update` from terminal\\." in message
+        assert notification.send_message.call_args.kwargs["parse_mode"] == "MarkdownV2"
+        notification.send.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_already_notified_skips(self):
@@ -413,6 +425,7 @@ class TestUpdateCheckTask:
         uc._notified_version = "0.0.17"  # already notified
         notification = NotificationService()
         notification.send = AsyncMock()
+        notification.send_message = AsyncMock()
 
         with (
             patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.17"),
@@ -421,6 +434,7 @@ class TestUpdateCheckTask:
             await update_check_task(notification)
 
         notification.send.assert_not_called()
+        notification.send_message.assert_not_called()
         uc._notified_version = None  # cleanup
 
     @pytest.mark.asyncio

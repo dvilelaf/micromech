@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 import httpx
 from loguru import logger
 
+from micromech.bot.formatting import bold_md, code_md
+
 if TYPE_CHECKING:
     from micromech.tasks.notifications import NotificationService
 
@@ -174,8 +176,11 @@ async def update_check_task(
         await _trigger_update(latest, notification_service)
     else:
         logger.info(f"New micromech version available: {latest} (current: {current})")
-        await notification_service.send(
-            "Update Available",
-            f"Current: {current}\nLatest: {latest}",
+        msg = (
+            f"{bold_md('Update Available')}\n\n"
+            f"Current: {code_md(current)}\n"
+            f"Latest: {code_md(latest)}\n\n"
+            f"Use /update here or {code_md('just update')} from terminal\\."
         )
+        await notification_service.send_message(msg, parse_mode="MarkdownV2")
         _notified_version = latest
