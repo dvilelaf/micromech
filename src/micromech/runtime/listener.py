@@ -141,20 +141,24 @@ class EventListener:
                 mech_addr = (self.chain_config.mech_address or "").lower()
                 for req in resolved:
                     is_ours = req.priority_mech.lower() == mech_addr
-                    target = "<green>→ us</green>" if is_ours else f"<yellow>→ {req.priority_mech[:10]}...</yellow>"
+                    target_template = (
+                        "<green>→ us</green>" if is_ours else "<yellow>→ {}...</yellow>"
+                    )
+                    target_args = () if is_ours else (req.priority_mech[:10],)
                     if req.tool:
+                        prompt = (req.prompt[:60] + "...") if len(req.prompt) > 60 else req.prompt or "(empty)"
                         logger.opt(colors=True).info(
-                            "  Event {} <cyan>tool={}</cyan> {} prompt={}",
+                            f"  Event {{}} <cyan>tool={{}}</cyan> {target_template} prompt={{}}",
                             req.request_id[:16] + "...",
                             req.tool,
-                            target,
-                            (req.prompt[:60] + "...") if len(req.prompt) > 60 else req.prompt or "(empty)",
+                            *target_args,
+                            prompt,
                         )
                     else:
                         logger.opt(colors=True).warning(
-                            "  Event {} <red>DECODE_ERROR</red> {} — IPFS content unreadable",
+                            f"  Event {{}} <red>DECODE_ERROR</red> {target_template} — IPFS content unreadable",
                             req.request_id[:16] + "...",
-                            target,
+                            *target_args,
                         )
             return resolved
 
