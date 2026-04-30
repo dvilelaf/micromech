@@ -73,7 +73,7 @@ class TestMicromechConfig:
         cfg = MicromechConfig()
         assert cfg.chains == {}
         assert cfg.checkpoint_interval_minutes == 10
-        assert cfg.queue_scanner_enabled is True
+        assert cfg.queue_scanner_enabled is False
         assert cfg.queue_scanner_interval_seconds == 300
         assert cfg.queue_scanner_page_size == 50
         assert cfg.queue_scanner_fallback_pages_per_cycle == 5
