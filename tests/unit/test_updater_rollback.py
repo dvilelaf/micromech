@@ -19,7 +19,8 @@ def _docker_mock(tmp_bin: Path, scenario: str) -> Path:
     """Mock docker binary: 'rollback_prev_exists' or 'rollback_prev_missing'."""
     inspect_exit = 0 if scenario == "rollback_prev_exists" else 1
     docker_path = tmp_bin / "docker"
-    docker_path.write_text(textwrap.dedent(f"""\
+    docker_path.write_text(
+        textwrap.dedent(f"""\
         #!/bin/bash
         echo "$@" >> "${{TMP_DOCKER_LOG:-/tmp/docker-calls.log}}"
         case "$1 $2" in
@@ -29,7 +30,8 @@ def _docker_mock(tmp_bin: Path, scenario: str) -> Path:
             "inspect "*)       echo "running"; exit 0 ;;
             *)                 exit 0 ;;
         esac
-    """))
+    """)
+    )
     docker_path.chmod(0o755)
     return docker_path
 
@@ -114,14 +116,14 @@ def sandbox(tmp_path):
 
 
 class TestRollbackBehavior:
-
     def test_marker_uses_error_rolled_back_to_v_prefix(self, sandbox):
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
+            sandbox,
+            rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backup/pre-update"'
+            '_pre_dir="data/backup/pre-update"',
         )
         result = subprocess.run([str(runner)], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
@@ -131,9 +133,9 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
-            'OLD=""; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backup/pre-update"'
+            sandbox,
+            rollback,
+            'OLD=""; NEW="0.5.2"; _pre_ts="20260424T120000Z"; _pre_dir="data/backup/pre-update"',
         )
         result = subprocess.run([str(runner)], capture_output=True, text=True)
         assert "MARKER:error:rolled_back_to_vunknown" in result.stdout
@@ -142,9 +144,10 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
+            sandbox,
+            rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backup/pre-update"'
+            '_pre_dir="data/backup/pre-update"',
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         log = (sandbox / "docker-calls.log").read_text()
@@ -158,9 +161,10 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_missing")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
+            sandbox,
+            rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backup/pre-update"'
+            '_pre_dir="data/backup/pre-update"',
         )
         result = subprocess.run([str(runner)], capture_output=True, text=True)
         log = (sandbox / "docker-calls.log").read_text()
@@ -175,9 +179,9 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
-            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; '
-            f'_pre_dir="data/backup/pre-update"'
+            sandbox,
+            rollback,
+            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; _pre_dir="data/backup/pre-update"',
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert (sandbox / "data" / "config.yaml").read_text() == "snapshot-cfg\n"
@@ -192,9 +196,9 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
-            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; '
-            f'_pre_dir="data/backup/pre-update"'
+            sandbox,
+            rollback,
+            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; _pre_dir="data/backup/pre-update"',
         )
         result = subprocess.run([str(runner)], capture_output=True, text=True)
 
@@ -210,9 +214,9 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
-            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; '
-            f'_pre_dir="data/backup/pre-update"'
+            sandbox,
+            rollback,
+            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; _pre_dir="data/backup/pre-update"',
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert (sandbox / "data" / "wallet.json").read_text() == '{"snapshot": true}\n'
@@ -225,9 +229,9 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
-            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; '
-            f'_pre_dir="data/backup/pre-update"'
+            sandbox,
+            rollback,
+            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; _pre_dir="data/backup/pre-update"',
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert list((sandbox / "data").glob("*.tmp")) == []
@@ -238,9 +242,10 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
+            sandbox,
+            rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backup/pre-update"'
+            '_pre_dir="data/backup/pre-update"',
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert (sandbox / "data" / "config.yaml").read_text() == "new-broken\n"
@@ -254,9 +259,10 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
+            sandbox,
+            rollback,
             'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="20260424T120000Z"; '
-            '_pre_dir="data/backup/pre-update"'
+            '_pre_dir="data/backup/pre-update"',
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         assert (sandbox / "data" / "config.yaml").read_text() != "PLANTED\n"
@@ -267,9 +273,9 @@ class TestRollbackBehavior:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
-            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; '
-            f'_pre_dir="data/backup/pre-update"'
+            sandbox,
+            rollback,
+            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{ts}"; _pre_dir="data/backup/pre-update"',
         )
         subprocess.run([str(runner)], capture_output=True, text=True)
         log = (sandbox / "docker-calls.log").read_text()
@@ -281,7 +287,6 @@ class TestRollbackBehavior:
 
 
 class TestUpdaterStructuralGuards:
-
     def test_uses_cp_dash_p_for_snapshots(self):
         src = UPDATER_SH.read_text()
         assert "cp -p data/config.yaml" in src
@@ -299,8 +304,14 @@ class TestUpdaterStructuralGuards:
 
     def test_glob_uses_iso_timestamp_pattern(self):
         src = UPDATER_SH.read_text()
-        assert "config.yaml.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.bak" in src
-        assert "wallet.json.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.bak" in src
+        assert (
+            "config.yaml.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.bak"
+            in src
+        )
+        assert (
+            "wallet.json.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z.bak"
+            in src
+        )
 
     def test_atomic_restore_uses_tmp_plus_mv(self):
         src = UPDATER_SH.read_text()
@@ -382,11 +393,13 @@ class TestUpdaterStructuralGuards:
         block = src[start:end]
         docker_log = tmp_path / "docker-calls.log"
         docker = tmp_path / "docker"
-        docker.write_text(textwrap.dedent(f"""\
+        docker.write_text(
+            textwrap.dedent(f"""\
             #!/bin/sh
             echo "$@" >> "{docker_log}"
             exit 0
-        """))
+        """)
+        )
         docker.chmod(0o755)
         managed_compose = tmp_path / "managed-compose.yml"
         managed_content = (
@@ -401,7 +414,8 @@ class TestUpdaterStructuralGuards:
         (tmp_path / "data").mkdir()
 
         runner = tmp_path / "run-managed-compose.sh"
-        runner.write_text(textwrap.dedent(f"""\
+        runner.write_text(
+            textwrap.dedent(f"""\
             #!/usr/bin/env bash
             set -u
             export PATH="{tmp_path}:$PATH"
@@ -422,7 +436,8 @@ class TestUpdaterStructuralGuards:
             {block}
             break
             done
-        """))
+        """)
+        )
         runner.chmod(0o755)
 
         result = subprocess.run([str(runner)], capture_output=True, text=True)
@@ -489,9 +504,15 @@ class TestUpdaterStructuralGuards:
     def test_recreates_updater_sidecar_when_compose_changes(self):
         src = UPDATER_SH.read_text()
         assert "compose_changed=0" in src
-        assert 'cmp -s "$host_backup_dir/docker-compose.yml" docker-compose.yml || compose_changed=1' in src
+        assert (
+            'cmp -s "$host_backup_dir/docker-compose.yml" docker-compose.yml || compose_changed=1'
+            in src
+        )
         assert 'if [ "$compose_changed" -eq 1 ]; then' in src
-        assert "up -d --force-recreate dockerproxy updater" in src
+        assert 'updater_services=""' in src
+        assert 'updater_services="updater"' in src
+        assert 'updater_services="dockerproxy updater"' in src
+        assert "up -d --force-recreate $updater_services" in src
 
     def _extract_success_tail(self) -> str:
         src = UPDATER_SH.read_text()
@@ -500,37 +521,51 @@ class TestUpdaterStructuralGuards:
         return src[start + len("else\n") : end] + "\n"
 
     def _write_success_runner(
-        self, tmp_path: Path, *, docker_recreate_succeeds: bool, updater_changed: bool
+        self,
+        tmp_path: Path,
+        *,
+        docker_recreate_succeeds: bool,
+        updater_changed: bool,
+        compose_has_dockerproxy: bool = True,
+        safe_host_bind: bool = True,
+        initial_updater_services: str = "",
     ) -> Path:
         captured_compose = tmp_path / "captured-updater-compose.yml"
         docker_log = tmp_path / "docker-calls.log"
         docker = tmp_path / "docker"
-        docker.write_text(textwrap.dedent(f"""\
+        docker.write_text(
+            textwrap.dedent(f"""\
             #!/bin/sh
             echo "$@" >> "{docker_log}"
+            if [ "$1 $2" = "compose -f" ] && [ "$6 $7" = "config --services" ]; then
+                printf 'updater\\n'
+                {"printf 'dockerproxy\\n'" if compose_has_dockerproxy else ""}
+                exit 0
+            fi
             if [ "$1 $2" = "compose -f" ]; then
                 cp "$3" "{captured_compose}"
-                {'exit 0' if docker_recreate_succeeds else 'exit 1'}
+                {"exit 0" if docker_recreate_succeeds else "exit 1"}
             fi
             exit 0
-        """))
+        """)
+        )
         docker.chmod(0o755)
+        updater_volume = "      - ./:/host\n" if safe_host_bind else "      - ./data:/host/data\n"
         (tmp_path / "docker-compose.yml").write_text(
             "services:\n"
             "  updater:\n"
             "    volumes:\n"
-            "      - ./:/host\n"
+            f"{updater_volume}"
             "  dockerproxy:\n"
             "    image: tecnativa/docker-socket-proxy\n"
         )
         (tmp_path / "updater.sh").write_text(
-            "#!/usr/bin/env bash\n"
-            "echo reloaded > reload-marker\n"
-            "exit 42\n"
+            "#!/usr/bin/env bash\necho reloaded > reload-marker\nexit 42\n"
         )
         (tmp_path / "updater.sh").chmod(0o755)
         runner = tmp_path / "run-success-tail.sh"
-        runner.write_text(textwrap.dedent(f"""\
+        runner.write_text(
+            textwrap.dedent(f"""\
             #!/usr/bin/env bash
             set -u
             export PATH="{tmp_path}:$PATH"
@@ -542,8 +577,10 @@ class TestUpdaterStructuralGuards:
             compose_changed=1
             updater_changed={1 if updater_changed else 0}
             host_backup_dir=""
+            updater_services="{initial_updater_services}"
             {self._extract_success_tail()}
-        """))
+        """)
+        )
         runner.chmod(0o755)
         return runner
 
@@ -561,6 +598,36 @@ class TestUpdaterStructuralGuards:
         assert f"- {tmp_path}:/host" in captured
         assert "- ./:/host" not in captured
 
+    def test_updater_sidecar_recreate_handles_legacy_compose_without_dockerproxy(self, tmp_path):
+        runner = self._write_success_runner(
+            tmp_path,
+            docker_recreate_succeeds=True,
+            updater_changed=False,
+            compose_has_dockerproxy=False,
+        )
+        result = subprocess.run([str(runner)], capture_output=True, text=True)
+
+        assert result.returncode == 0, result.stderr
+        docker_log = (tmp_path / "docker-calls.log").read_text()
+        assert " --project-directory . up -d --force-recreate updater" in docker_log
+        assert " --project-directory . up -d --force-recreate dockerproxy updater" not in docker_log
+
+    def test_updater_sidecar_recreate_clears_stale_service_selection(self, tmp_path):
+        runner = self._write_success_runner(
+            tmp_path,
+            docker_recreate_succeeds=True,
+            updater_changed=True,
+            safe_host_bind=False,
+            initial_updater_services="dockerproxy updater",
+        )
+        result = subprocess.run([str(runner)], capture_output=True, text=True)
+
+        assert result.returncode == 42, result.stderr
+        assert (tmp_path / "reload-marker").read_text() == "reloaded\n"
+        docker_log_path = tmp_path / "docker-calls.log"
+        docker_log = docker_log_path.read_text() if docker_log_path.exists() else ""
+        assert "force-recreate" not in docker_log
+
     def test_updater_sidecar_recreate_fallback_reloads_updated_script(self, tmp_path):
         runner = self._write_success_runner(
             tmp_path, docker_recreate_succeeds=False, updater_changed=True
@@ -573,7 +640,7 @@ class TestUpdaterStructuralGuards:
     def test_stop_failure_restores_artifacts_and_rolls_back(self):
         src = UPDATER_SH.read_text()
         stop = src.index("if ! docker compose stop micromech; then")
-        block = src[stop:src.index("sleep 2", stop)]
+        block = src[stop : src.index("sleep 2", stop)]
         assert 'restore_host_artifacts "$host_backup_dir"' in block
         assert "rollback_image" in block
         assert "docker compose up -d micromech" in block
@@ -586,7 +653,7 @@ class TestUpdaterStructuralGuards:
             "PROJECT_DIR contains unsupported characters",
         ):
             start = src.index(marker)
-            block = src[start:src.index("continue", start)]
+            block = src[start : src.index("continue", start)]
             assert 'restore_host_artifacts "$host_backup_dir"' in block
             assert "rollback_image" in block
             assert "docker compose up -d micromech" in block
@@ -596,7 +663,8 @@ class TestUpdaterStructuralGuards:
     ) -> Path:
         docker_log = tmp_path / "docker-calls.log"
         docker = tmp_path / "docker"
-        docker.write_text(textwrap.dedent(f"""\
+        docker.write_text(
+            textwrap.dedent(f"""\
             #!/bin/sh
             echo "$@" >> "{docker_log}"
             case "$1 $2" in
@@ -606,7 +674,8 @@ class TestUpdaterStructuralGuards:
                 "tag "*) exit 0 ;;
                 *) exit 0 ;;
             esac
-        """))
+        """)
+        )
         docker.chmod(0o755)
         backup = tmp_path / "backup"
         backup.mkdir()
@@ -615,7 +684,8 @@ class TestUpdaterStructuralGuards:
             (tmp_path / artifact).write_text(f"new {artifact}\n")
         (tmp_path / "data").mkdir()
         runner = tmp_path / "run-failure.sh"
-        runner.write_text(textwrap.dedent(f"""\
+        runner.write_text(
+            textwrap.dedent(f"""\
             #!/usr/bin/env bash
             set -u
             export PATH="{tmp_path}:$PATH"
@@ -646,7 +716,8 @@ class TestUpdaterStructuralGuards:
             {block}
             break
             done
-        """))
+        """)
+        )
         runner.chmod(0o755)
         return runner
 
@@ -706,9 +777,7 @@ class TestUpdaterStructuralGuards:
         src = UPDATER_SH.read_text()
         start = src.index("if printf '%s' \"$PROJECT_DIR\"")
         end = src.index("                    PROJECT_DIR_COMPOSE=", start)
-        runner = self._write_failure_runner(
-            tmp_path, src[start:end], project_dir=f"{tmp_path}:bad"
-        )
+        runner = self._write_failure_runner(tmp_path, src[start:end], project_dir=f"{tmp_path}:bad")
 
         result = subprocess.run([str(runner)], capture_output=True, text=True)
 
@@ -723,6 +792,11 @@ class TestUpdaterStructuralGuards:
 
 
 class TestQuickstartHostArtifacts:
+    def test_updater_runs_managed_migrations_instead_of_skipping(self):
+        src = UPDATER_SH.read_text()
+        assert "Managed installation detected; applying safe host artifact migrations" in src
+        assert "Skipping config regeneration (symlinks detected - managed installation)" not in src
+
     def test_quickstart_copies_updater_from_image(self):
         src = QUICKSTART_SH.read_text()
         assert "/app/scripts/updater.sh" in src
@@ -763,7 +837,7 @@ class TestQuickstartHostArtifacts:
         src = QUICKSTART_SH.read_text()
         assert "/tmp/micromech-qs.sh" not in src
         assert "mktemp /tmp/micromech-qs-XXXXXX" in src
-        assert 'trap \'rm -f "\\$qs_tmp"\' EXIT' in src
+        assert "trap 'rm -f \"\\$qs_tmp\"' EXIT" in src
 
     def test_quickstart_detects_existing_image_channel(self):
         src = QUICKSTART_SH.read_text()
@@ -790,8 +864,9 @@ class TestRollbackC1MtimeSort:
         _docker_mock(sandbox / "bin", "rollback_prev_exists")
         rollback = _extract_rollback_block(UPDATER_SH)
         runner = _write_runner(
-            sandbox, rollback,
-            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{newer_ts}"; _pre_dir="data/backup/pre-update"'
+            sandbox,
+            rollback,
+            f'OLD="0.5.1"; NEW="0.5.2"; _pre_ts="{newer_ts}"; _pre_dir="data/backup/pre-update"',
         )
         result = subprocess.run([str(runner)], capture_output=True, text=True)
         assert result.returncode == 0, result.stderr
@@ -832,7 +907,8 @@ class TestWaitHealthyBehavior:
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir(exist_ok=True)
         docker = bin_dir / "docker"
-        docker.write_text(textwrap.dedent(f"""\
+        docker.write_text(
+            textwrap.dedent(f"""\
             #!/bin/sh
             case "$*" in
                 "compose ps -q micromech") printf 'micromech-micromech-1\\n' ;;
@@ -841,37 +917,37 @@ class TestWaitHealthyBehavior:
                 *) exit 0 ;;
             esac
             exit 0
-        """))
+        """)
+        )
         docker.chmod(0o755)
 
         runner = tmp_path / "run_wh.sh"
-        header = (
-            f"#!/bin/sh\n"
-            f"export PATH=\"{bin_dir}:$PATH\"\n"
-            "log() { :; }\n"
-            "sleep() { :; }\n\n"
-        )
+        header = f'#!/bin/sh\nexport PATH="{bin_dir}:$PATH"\nlog() {{ :; }}\nsleep() {{ :; }}\n\n'
         runner.write_text(header + fn_src + "\nwait_healthy\n")
         runner.chmod(0o755)
         return runner
 
     def test_healthy_returns_zero(self, tmp_path):
-        result = subprocess.run([str(self._make_runner(tmp_path, "healthy"))],
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            [str(self._make_runner(tmp_path, "healthy"))], capture_output=True, text=True
+        )
         assert result.returncode == 0
 
     def test_none_returns_zero_backward_compat(self, tmp_path):
         """health=none means no HEALTHCHECK on image — must pass for old images."""
-        result = subprocess.run([str(self._make_runner(tmp_path, "none"))],
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            [str(self._make_runner(tmp_path, "none"))], capture_output=True, text=True
+        )
         assert result.returncode == 0
 
     def test_starting_times_out(self, tmp_path):
-        result = subprocess.run([str(self._make_runner(tmp_path, "starting"))],
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            [str(self._make_runner(tmp_path, "starting"))], capture_output=True, text=True
+        )
         assert result.returncode == 1
 
     def test_unhealthy_times_out(self, tmp_path):
-        result = subprocess.run([str(self._make_runner(tmp_path, "unhealthy"))],
-                                capture_output=True, text=True)
+        result = subprocess.run(
+            [str(self._make_runner(tmp_path, "unhealthy"))], capture_output=True, text=True
+        )
         assert result.returncode == 1

@@ -84,6 +84,76 @@ chown_generated_artifacts_if_needed() {
     done
 }
 
+migrate_compose_secrets_mount() {
+    [ -f docker-compose.yml ] || return 0
+    if [ -L docker-compose.yml ]; then
+        echo "📝 docker-compose.yml is managed externally — skipping local compose migration"
+        return 0
+    fi
+    if grep -Eq '^[[:space:]]*-[[:space:]]+.*:/app/secrets\.env:ro[[:space:]]*$' docker-compose.yml; then
+        local tmp status
+        tmp=$(mktemp docker-compose.yml.XXXXXX) || return 1
+        awk '
+            /^[[:space:]]*-[[:space:]]+.*:\/app\/secrets\.env:ro[[:space:]]*$/ {
+                sub(/:\/app\/secrets\.env:ro[[:space:]]*$/, ":/app/secrets.env")
+                changed = 1
+            }
+            { print }
+            END {
+                if (!changed) {
+                    exit 42
+                }
+            }
+        ' docker-compose.yml > "$tmp"
+        status=$?
+        if [ "$status" -ne 0 ]; then
+            rm -f "$tmp"
+            return 1
+        fi
+        chmod --reference=docker-compose.yml "$tmp" 2>/dev/null || true
+        chown --reference=docker-compose.yml "$tmp" 2>/dev/null || true
+        mv "$tmp" docker-compose.yml
+        echo "📝 Made secrets.env bind mount writable in docker-compose.yml"
+        return 0
+    fi
+    if grep -Eq '^[[:space:]]*-[[:space:]]+.*:/app/secrets\.env(:rw)?[[:space:]]*$' docker-compose.yml; then
+        return 0
+    fi
+    if grep -q '/app/secrets\.env' docker-compose.yml; then
+        return 0
+    fi
+
+    local tmp status
+    tmp=$(mktemp docker-compose.yml.XXXXXX) || return 1
+    awk '
+        {
+            print
+            if (!inserted && $0 ~ /^[[:space:]]*-[[:space:]]+.*:\/app\/data(:|[[:space:]]*$)/) {
+                match($0, /^[[:space:]]*/)
+                print substr($0, RSTART, RLENGTH) "- ./secrets.env:/app/secrets.env"
+                inserted = 1
+            }
+        }
+        END {
+            if (!inserted) {
+                exit 42
+            }
+        }
+    ' docker-compose.yml > "$tmp"
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        rm -f "$tmp"
+        if [ "$status" -eq 42 ]; then
+            echo "ERROR: could not find /app/data volume in docker-compose.yml; refusing unsafe secrets.env migration" >&2
+        fi
+        return 1
+    fi
+    chmod --reference=docker-compose.yml "$tmp" 2>/dev/null || true
+    chown --reference=docker-compose.yml "$tmp" 2>/dev/null || true
+    mv "$tmp" docker-compose.yml
+    echo "📝 Added secrets.env bind mount to docker-compose.yml"
+}
+
 # --- docker-compose.yml generator (also used by 'just update-config') ---
 generate_compose() {
     local user_uid user_gid user_ids
@@ -335,7 +405,8 @@ is_managed_install() {
 if [ "${UPDATE_CONFIG:-}" = "1" ]; then
     # Managed installation: generated artifacts are symlinked and repo-managed.
     if is_managed_install; then
-        echo "📝 Managed installation detected — skipping config regeneration"
+        echo "📝 Managed installation detected — applying safe local migrations only"
+        migrate_compose_secrets_mount || exit 1
         exit 0
     fi
     UPDATE_BACKUP_DIR=$(mktemp -d /tmp/micromech-update-config-XXXXXX) || exit 1

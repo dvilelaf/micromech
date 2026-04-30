@@ -182,68 +182,79 @@ while true; do
                     updater_changed=0
                     compose_changed=0
                     host_backup_dir=""
+                    host_backup_dir=$(mktemp -d /tmp/micromech-host-artifacts-XXXXXX)
+                    for artifact in docker-compose.yml Justfile updater.sh; do
+                        [ -f "$artifact" ] && cp -p "$artifact" "$host_backup_dir/$artifact"
+                    done
+                    qs_tmp=$(mktemp /tmp/qs-XXXXXX)
+                    if ! docker run --rm --entrypoint cat "$MICROMECH_IMAGE" /app/scripts/quickstart.sh > "$qs_tmp" \
+                        || [ ! -s "$qs_tmp" ] \
+                        || ! bash -n "$qs_tmp"; then
+                        log "ERROR: Could not extract a valid quickstart.sh from new image"
+                        restore_host_artifacts "$host_backup_dir"
+                        rollback_image
+                        _write_result "error:config_regen_failed"
+                        rm -f "$qs_tmp"
+                        rm -rf "$host_backup_dir"
+                        sleep 60
+                        continue
+                    fi
                     if [ ! -L "Justfile" ] && [ ! -L "docker-compose.yml" ] && [ ! -L "updater.sh" ]; then
                         log "Regenerating host artifacts from new image..."
-                        host_backup_dir=$(mktemp -d /tmp/micromech-host-artifacts-XXXXXX)
-                        for artifact in docker-compose.yml Justfile updater.sh; do
-                            [ -f "$artifact" ] && cp -p "$artifact" "$host_backup_dir/$artifact"
-                        done
-                        qs_tmp=$(mktemp /tmp/qs-XXXXXX)
-                        if ! docker run --rm --entrypoint cat "$MICROMECH_IMAGE" /app/scripts/quickstart.sh > "$qs_tmp" \
-                            || [ ! -s "$qs_tmp" ] \
-                            || ! bash -n "$qs_tmp"; then
-                            log "ERROR: Could not extract a valid quickstart.sh from new image"
-                            restore_host_artifacts "$host_backup_dir"
-                            rollback_image
-                            _write_result "error:config_regen_failed"
-                            rm -f "$qs_tmp"
-                            rm -rf "$host_backup_dir"
-                            sleep 60
-                            continue
-                        fi
-                        if HOST_PROJECT_DIR="$PROJECT_DIR" UPDATE_CONFIG=1 bash "$qs_tmp"; then
-                            if bash -n updater.sh; then
-                                if docker compose -f docker-compose.yml config -q \
-                                    && docker compose -f docker-compose.yml config --services | grep -qx micromech \
-                                    && docker compose -f docker-compose.yml config --services | grep -qx dockerproxy \
-                                    && docker compose -f docker-compose.yml config --services | grep -qx updater; then
-                                    cmp -s "$host_backup_dir/updater.sh" updater.sh || updater_changed=1
-                                    cmp -s "$host_backup_dir/docker-compose.yml" docker-compose.yml || compose_changed=1
-                                    log "Host artifacts refreshed"
-                                else
-                                    log "ERROR: Regenerated compose is invalid — restoring previous host artifacts"
-                                    restore_host_artifacts "$host_backup_dir"
-                                    rollback_image
-                                    _write_result "error:config_regen_failed"
-                                    rm -f "$qs_tmp"
-                                    rm -rf "$host_backup_dir"
-                                    sleep 60
-                                    continue
+                    else
+                        log "Managed installation detected; applying safe host artifact migrations"
+                    fi
+                    if HOST_PROJECT_DIR="$PROJECT_DIR" UPDATE_CONFIG=1 bash "$qs_tmp"; then
+                        if [ -L "updater.sh" ] || bash -n updater.sh; then
+                            if docker compose -f docker-compose.yml config -q; then
+                                if [ ! -L "Justfile" ] && [ ! -L "docker-compose.yml" ] && [ ! -L "updater.sh" ]; then
+                                    if ! docker compose -f docker-compose.yml config --services | grep -qx micromech \
+                                        || ! docker compose -f docker-compose.yml config --services | grep -qx dockerproxy \
+                                        || ! docker compose -f docker-compose.yml config --services | grep -qx updater; then
+                                        log "ERROR: Regenerated compose is missing required services — restoring previous host artifacts"
+                                        restore_host_artifacts "$host_backup_dir"
+                                        rollback_image
+                                        _write_result "error:config_regen_failed"
+                                        rm -f "$qs_tmp"
+                                        rm -rf "$host_backup_dir"
+                                        sleep 60
+                                        continue
+                                    fi
                                 fi
+                                cmp -s "$host_backup_dir/updater.sh" updater.sh || updater_changed=1
+                                cmp -s "$host_backup_dir/docker-compose.yml" docker-compose.yml || compose_changed=1
+                                log "Host artifacts refreshed"
                             else
-                                log "ERROR: New updater.sh failed syntax check — restoring previous host artifacts"
+                                log "ERROR: Refreshed compose is invalid — restoring previous host artifacts"
                                 restore_host_artifacts "$host_backup_dir"
                                 rollback_image
-                                _write_result "error:updater_invalid"
+                                _write_result "error:config_regen_failed"
                                 rm -f "$qs_tmp"
                                 rm -rf "$host_backup_dir"
                                 sleep 60
                                 continue
                             fi
                         else
-                            log "ERROR: Host artifact regeneration failed — restoring previous host artifacts"
+                            log "ERROR: New updater.sh failed syntax check — restoring previous host artifacts"
                             restore_host_artifacts "$host_backup_dir"
                             rollback_image
-                            _write_result "error:config_regen_failed"
+                            _write_result "error:updater_invalid"
                             rm -f "$qs_tmp"
                             rm -rf "$host_backup_dir"
                             sleep 60
                             continue
                         fi
-                        rm -f "$qs_tmp"
                     else
-                        log "Skipping config regeneration (symlinks detected - managed installation)"
+                        log "ERROR: Host artifact refresh failed — restoring previous host artifacts"
+                        restore_host_artifacts "$host_backup_dir"
+                        rollback_image
+                        _write_result "error:config_regen_failed"
+                        rm -f "$qs_tmp"
+                        rm -rf "$host_backup_dir"
+                        sleep 60
+                        continue
                     fi
+                    rm -f "$qs_tmp"
 
                     pre_ts=$(date -u '+%Y%m%dT%H%M%SZ')
                     pre_dir="data/backup/pre-update"
@@ -442,6 +453,7 @@ while true; do
                         [ -n "$host_backup_dir" ] && rm -rf "$host_backup_dir"
                         if [ "$compose_changed" -eq 1 ]; then
                             log "Recreating updater sidecar from refreshed compose"
+                            updater_services=""
                             updater_compose=$(mktemp /tmp/micromech-compose-updater-XXXXXX) || updater_compose=""
                             if [ -z "$updater_compose" ]; then
                                 log "WARNING: could not create updater sidecar compose; reloading script in current container"
@@ -456,7 +468,14 @@ while true; do
                                 || grep -Fq -- "- ./:/host" "$updater_compose" \
                                 || ! grep -Fq -- "- $PROJECT_DIR_COMPOSE:/host" "$updater_compose"; then
                                 log "WARNING: updater sidecar compose still has unsafe /host bind; reloading script in current container"
-                            elif docker compose -f "$updater_compose" --project-directory . up -d --force-recreate dockerproxy updater 2>&1; then
+                            else
+                                updater_services="updater"
+                                if docker compose -f "$updater_compose" --project-directory . config --services | grep -qx dockerproxy; then
+                                    updater_services="dockerproxy updater"
+                                fi
+                            fi
+                            if [ -n "${updater_services:-}" ] \
+                                && docker compose -f "$updater_compose" --project-directory . up -d --force-recreate $updater_services 2>&1; then
                                 rm -f "$updater_compose"
                                 exit 0
                             fi

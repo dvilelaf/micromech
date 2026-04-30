@@ -117,7 +117,7 @@ def test_update_config_uses_installer_owner(tmp_path: Path, sudo_user: str | Non
     _write_fake_id(fake_bin)
     chown_log = tmp_path / "chown.log"
     fake_chown = fake_bin / "chown"
-    fake_chown.write_text(f"#!/bin/sh\necho \"$@\" >> {chown_log}\n")
+    fake_chown.write_text(f'#!/bin/sh\necho "$@" >> {chown_log}\n')
     fake_chown.chmod(0o755)
 
     _run_update_config(deploy_dir, fake_bin, sudo_user=sudo_user)
@@ -139,9 +139,7 @@ def test_update_config_uses_installer_owner(tmp_path: Path, sudo_user: str | Non
 
 def test_update_config_preserves_existing_compose_user(tmp_path: Path) -> None:
     deploy_dir, fake_bin = _make_deploy_dir(tmp_path)
-    (deploy_dir / "docker-compose.yml").write_text(
-        "services:\n  micromech:\n    user: 4444:5555\n"
-    )
+    (deploy_dir / "docker-compose.yml").write_text("services:\n  micromech:\n    user: 4444:5555\n")
 
     _run_update_config(deploy_dir, fake_bin)
 
@@ -154,9 +152,7 @@ def test_update_config_preserves_existing_compose_user(tmp_path: Path) -> None:
 
 def test_update_config_rejects_invalid_existing_compose_user(tmp_path: Path) -> None:
     deploy_dir, fake_bin = _make_deploy_dir(tmp_path)
-    (deploy_dir / "docker-compose.yml").write_text(
-        "services:\n  micromech:\n    user: --bad\n"
-    )
+    (deploy_dir / "docker-compose.yml").write_text("services:\n  micromech:\n    user: --bad\n")
 
     env = os.environ.copy()
     env["PATH"] = f"{fake_bin}:{env['PATH']}"
@@ -302,7 +298,7 @@ def test_full_quickstart_uses_human_owner_over_stale_root_compose(tmp_path: Path
 
     chown_log = tmp_path / "chown.log"
     fake_chown = fake_bin / "chown"
-    fake_chown.write_text(f"#!/bin/sh\necho \"$@\" >> {chown_log}\n")
+    fake_chown.write_text(f'#!/bin/sh\necho "$@" >> {chown_log}\n')
     fake_chown.chmod(0o755)
 
     env = os.environ.copy()
@@ -329,7 +325,7 @@ def test_full_quickstart_normal_install_uses_current_user(tmp_path: Path) -> Non
 
     chown_log = tmp_path / "chown.log"
     fake_chown = fake_bin / "chown"
-    fake_chown.write_text(f"#!/bin/sh\necho \"$@\" >> {chown_log}\n")
+    fake_chown.write_text(f'#!/bin/sh\necho "$@" >> {chown_log}\n')
     fake_chown.chmod(0o755)
 
     env = os.environ.copy()
@@ -346,9 +342,7 @@ def test_full_quickstart_normal_install_uses_current_user(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("artifact", ["Justfile", "docker-compose.yml", "updater.sh"])
-def test_update_config_skips_symlink_managed_artifacts(
-    tmp_path: Path, artifact: str
-) -> None:
+def test_update_config_skips_symlink_managed_artifacts(tmp_path: Path, artifact: str) -> None:
     deploy_dir = tmp_path / "deploy"
     fake_bin = tmp_path / "bin"
     target = tmp_path / f"managed-{artifact}"
@@ -366,6 +360,115 @@ def test_update_config_skips_symlink_managed_artifacts(
 
     assert (deploy_dir / artifact).is_symlink()
     assert target.read_text() == "managed\n"
+
+
+def test_update_config_migrates_managed_compose_secret_mount(tmp_path: Path) -> None:
+    deploy_dir = tmp_path / "deploy"
+    fake_bin = tmp_path / "bin"
+    target = tmp_path / "managed-updater.sh"
+    deploy_dir.mkdir()
+    fake_bin.mkdir()
+    (deploy_dir / "data").mkdir()
+    (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
+    (deploy_dir / "docker-compose.yml").write_text(
+        """name: micromech
+services:
+  micromech:
+    image: dvilela/micromech:latest
+    user: "1000:100"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - path: ./secrets.env
+        required: false
+  updater:
+    image: docker:cli
+"""
+    )
+    target.write_text("#!/bin/sh\necho managed\n")
+    (deploy_dir / "updater.sh").symlink_to(target)
+
+    docker = fake_bin / "docker"
+    docker.write_text("#!/bin/sh\necho should-not-run >&2\nexit 1\n")
+    docker.chmod(0o755)
+
+    secrets_stat = (deploy_dir / "secrets.env").stat()
+    _run_update_config(deploy_dir, fake_bin)
+
+    compose = (deploy_dir / "docker-compose.yml").read_text()
+    assert "- ./data:/app/data\n      - ./secrets.env:/app/secrets.env" in compose
+    assert ":/app/secrets.env:ro" not in compose
+    assert (deploy_dir / "secrets.env").read_text() == "wallet_password=test\n"
+    assert (deploy_dir / "secrets.env").stat().st_ino == secrets_stat.st_ino
+    assert (deploy_dir / "secrets.env").stat().st_mtime_ns == secrets_stat.st_mtime_ns
+    assert (deploy_dir / "updater.sh").is_symlink()
+    assert target.read_text() == "#!/bin/sh\necho managed\n"
+
+
+def test_update_config_makes_managed_micromech_secret_mount_writable(tmp_path: Path) -> None:
+    deploy_dir = tmp_path / "deploy"
+    fake_bin = tmp_path / "bin"
+    target = tmp_path / "managed-updater.sh"
+    deploy_dir.mkdir()
+    fake_bin.mkdir()
+    (deploy_dir / "data").mkdir()
+    (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
+    (deploy_dir / "docker-compose.yml").write_text(
+        """name: micromech
+services:
+  micromech:
+    image: dvilela/micromech:latest
+    volumes:
+      - ./data:/app/data
+      - ./secrets.env:/app/secrets.env:ro
+  updater:
+    image: docker:cli
+"""
+    )
+    target.write_text("#!/bin/sh\necho managed\n")
+    (deploy_dir / "updater.sh").symlink_to(target)
+
+    docker = fake_bin / "docker"
+    docker.write_text("#!/bin/sh\necho should-not-run >&2\nexit 1\n")
+    docker.chmod(0o755)
+
+    _run_update_config(deploy_dir, fake_bin)
+
+    compose = (deploy_dir / "docker-compose.yml").read_text()
+    assert "- ./secrets.env:/app/secrets.env\n" in compose
+    assert ":/app/secrets.env:ro" not in compose
+
+
+def test_update_config_fails_when_managed_compose_cannot_be_migrated(tmp_path: Path) -> None:
+    deploy_dir = tmp_path / "deploy"
+    fake_bin = tmp_path / "bin"
+    target = tmp_path / "managed-updater.sh"
+    deploy_dir.mkdir()
+    fake_bin.mkdir()
+    (deploy_dir / "docker-compose.yml").write_text(
+        "name: micromech\nservices:\n  micromech:\n    image: dvilela/micromech:latest\n"
+    )
+    target.write_text("#!/bin/sh\necho managed\n")
+    (deploy_dir / "updater.sh").symlink_to(target)
+
+    docker = fake_bin / "docker"
+    docker.write_text("#!/bin/sh\necho should-not-run >&2\nexit 1\n")
+    docker.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["UPDATE_CONFIG"] = "1"
+    result = subprocess.run(
+        ["bash", str(QUICKSTART_SH)],
+        cwd=deploy_dir,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 1
+    assert "could not find /app/data volume" in result.stderr
 
 
 @pytest.mark.parametrize("artifact", ["Justfile", "docker-compose.yml", "updater.sh"])
@@ -408,3 +511,119 @@ esac
     assert (deploy_dir / artifact).is_symlink()
     assert not (deploy_dir / "data").exists()
     assert target.read_text() == "managed\n"
+
+
+def test_updater_managed_legacy_update_migrates_secret_mount_and_recreates_updater_only(
+    tmp_path: Path,
+) -> None:
+    """Exercise updater.sh -> extracted quickstart.sh -> legacy sidecar recreate."""
+    repo_root = Path(__file__).parent.parent.parent
+    deploy_dir = tmp_path / "deploy"
+    managed_dir = tmp_path / "managed"
+    fake_bin = tmp_path / "bin"
+    deploy_dir.mkdir()
+    managed_dir.mkdir()
+    fake_bin.mkdir()
+    (deploy_dir / "data" / "backup" / "pre-update").mkdir(parents=True)
+    (deploy_dir / "data" / "config.yaml").write_text("chains: []\n")
+    (deploy_dir / "data" / "wallet.json").write_text('{"wallet": true}\n')
+    (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
+    secrets_stat = (deploy_dir / "secrets.env").stat()
+    (managed_dir / "Justfile").write_text("managed just\n")
+    (managed_dir / "updater.sh").write_text("#!/bin/sh\necho managed updater\n")
+    (managed_dir / "updater.sh").chmod(0o755)
+    (deploy_dir / "Justfile").symlink_to(managed_dir / "Justfile")
+    (deploy_dir / "updater.sh").symlink_to(managed_dir / "updater.sh")
+    (deploy_dir / "docker-compose.yml").write_text(
+        """name: micromech
+services:
+  micromech:
+    image: dvilela/micromech:latest
+    user: "1000:1000"
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - ./secrets.env
+  updater:
+    image: docker:cli
+    volumes:
+      - ./:/host
+"""
+    )
+    (deploy_dir / "data" / ".update-request").write_text("update")
+
+    fake_sleep = fake_bin / "sleep"
+    fake_sleep.write_text(f"#!/bin/sh\nrm -f {deploy_dir}/data/.update-result\nexit 0\n")
+    fake_sleep.chmod(0o755)
+    fake_chown = fake_bin / "chown"
+    fake_chown.write_text("#!/bin/sh\nexit 0\n")
+    fake_chown.chmod(0o755)
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        f"""#!/bin/sh
+echo "$@" >> "{tmp_path}/docker.log"
+case "$*" in
+  *cid-micromech*)
+    case "$*" in
+      *State.Status*) echo running ;;
+      *State.Health*) echo healthy ;;
+      *) echo unknown ;;
+    esac
+    exit 0
+    ;;
+  *"dvilela/micromech:latest"*)
+    case "$*" in
+      *Labels*) [ -f "{tmp_path}/pulled" ] && echo 0.0.47 || echo 0.0.46; exit 0 ;;
+      *.Id*) [ -f "{tmp_path}/pulled" ] && echo sha256:new || echo sha256:old; exit 0 ;;
+    esac
+    ;;
+esac
+case "$*" in
+  "compose config --images micromech") echo "dvilela/micromech:latest"; exit 0 ;;
+  "compose pull micromech") touch "{tmp_path}/pulled"; exit 0 ;;
+  "run --rm --entrypoint cat dvilela/micromech:latest /app/scripts/quickstart.sh")
+    cat "{repo_root}/scripts/quickstart.sh"; exit 0 ;;
+  "compose -f docker-compose.yml config -q") exit 0 ;;
+  "compose -f docker-compose.yml config --services") printf 'micromech\\nupdater\\n'; exit 0 ;;
+  "compose stop micromech") exit 0 ;;
+  "compose up -d micromech") exit 0 ;;
+  "compose ps -q micromech") echo cid-micromech; exit 0 ;;
+  *" up -d micromech") exit 0 ;;
+  *"config --services") printf 'updater\\n'; exit 0 ;;
+  *"up -d --force-recreate updater") exit 0 ;;
+  *"up -d --force-recreate dockerproxy updater") exit 1 ;;
+esac
+if [ "$1" = "tag" ] || [ "$1 $2" = "image inspect" ]; then exit 0; fi
+echo "unexpected docker invocation: $*" >&2
+exit 1
+"""
+    )
+    fake_docker.chmod(0o755)
+
+    updater = tmp_path / "updater.sh"
+    updater.write_text(
+        (repo_root / "scripts" / "updater.sh")
+        .read_text()
+        .replace('UPDATER_LOG="/host/data/updater.log"', f'UPDATER_LOG="{tmp_path}/updater.log"')
+        .replace("cd /host", f'cd "{deploy_dir}"')
+    )
+    updater.chmod(0o755)
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["HOST_PROJECT_DIR"] = str(deploy_dir)
+    result = subprocess.run(["bash", str(updater)], env=env, capture_output=True, text=True)
+
+    assert result.returncode == 0, result.stderr
+    compose = (deploy_dir / "docker-compose.yml").read_text()
+    assert "- ./secrets.env:/app/secrets.env" in compose
+    assert ":/app/secrets.env:ro" not in compose
+    assert (deploy_dir / "secrets.env").stat().st_ino == secrets_stat.st_ino
+    assert (deploy_dir / "secrets.env").stat().st_mtime_ns == secrets_stat.st_mtime_ns
+    assert (deploy_dir / "Justfile").is_symlink()
+    assert (deploy_dir / "updater.sh").is_symlink()
+    assert (managed_dir / "Justfile").read_text() == "managed just\n"
+    assert (managed_dir / "updater.sh").read_text() == "#!/bin/sh\necho managed updater\n"
+    docker_log = (tmp_path / "docker.log").read_text()
+    assert "up -d --force-recreate updater" in docker_log
+    assert "up -d --force-recreate dockerproxy updater" not in docker_log
