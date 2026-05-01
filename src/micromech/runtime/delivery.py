@@ -19,6 +19,7 @@ Batching strategy:
 import asyncio
 import json
 import re
+import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -76,6 +77,13 @@ def _sanitize_error(exc: BaseException, _depth: int = 0) -> str:
         label = "caused by" if exc.__cause__ is not None else "context"
         msg = f"{msg} ({label}: {chain_msg})"
     return msg
+
+
+def _record_age_seconds(record: RequestRecord) -> float:
+    created = record.request.created_at
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - created).total_seconds()
 
 
 def _wait_and_check_receipt(web3: Any, tx_hash: Any, error_prefix: str) -> str:
@@ -465,12 +473,14 @@ class DeliveryManager:
         failed individually; the rest are batched into a single deliverToMarketplace call.
         """
         # Parallel IPFS uploads
+        prep_started = time.monotonic()
         prepare_results = await asyncio.gather(
             *[self._prepare_onchain(r) for r in records],
             return_exceptions=True,
         )
+        batch_prep_seconds = time.monotonic() - prep_started
 
-        good: list[tuple[RequestRecord, bytes, bytes, Optional[str]]] = []
+        good: list[tuple[RequestRecord, bytes, bytes, Optional[str], float]] = []
         for record, result in zip(records, prepare_results):
             if isinstance(result, Exception):
                 logger.exception(
@@ -487,7 +497,15 @@ class DeliveryManager:
                 self._increment_failure(record.request.request_id, f"ipfs_prep: {result}")
             else:
                 req_id_bytes, delivery_data, ipfs_cid_hex = result  # type: ignore[misc]
-                good.append((record, req_id_bytes, delivery_data, ipfs_cid_hex))
+                good.append(
+                    (
+                        record,
+                        req_id_bytes,
+                        delivery_data,
+                        ipfs_cid_hex,
+                        batch_prep_seconds,
+                    )
+                )
 
         if not good:
             return 0
@@ -496,12 +514,20 @@ class DeliveryManager:
         datas = [item[2] for item in good]
 
         try:
+            submit_started = time.monotonic()
             tx_hash, delivered_flags = await asyncio.to_thread(
                 self._submit_batch_delivery, req_id_bytes_list, datas
             )
+            safe_submit_seconds = time.monotonic() - submit_started
             n_delivered = 0
             n_timed_out = 0
-            for (record, _, _, ipfs_cid_hex), accepted in zip(good, delivered_flags):
+            for (
+                record,
+                _,
+                _,
+                ipfs_cid_hex,
+                prep_seconds,
+            ), accepted in zip(good, delivered_flags):
                 req_id = record.request.request_id
                 self._delivery_failures.pop(req_id, None)
                 if accepted:
@@ -515,6 +541,14 @@ class DeliveryManager:
                     if self._metrics:
                         self._metrics.record_delivery(
                             req_id, chain=self._chain_name
+                        )
+                        self._metrics.record_delivery_timing(
+                            req_id,
+                            chain=self._chain_name,
+                            age_seconds=_record_age_seconds(record),
+                            prep_seconds=prep_seconds,
+                            safe_lock_wait_seconds=0.0,
+                            safe_submit_seconds=safe_submit_seconds,
                         )
                     logger.opt(colors=True).info(
                         "<green>[{}] Delivered {} tool={} tx={}</green>",
@@ -998,7 +1032,9 @@ class DeliveryManager:
                 )
 
             if self.config.parallel_nonce_enabled:
+                lock_wait_started = time.monotonic()
                 async with get_safe_lock(multisig):
+                    safe_lock_wait_seconds = time.monotonic() - lock_wait_started
                     allocator = self._get_nonce_allocator(multisig)
                     try:
                         allocator.check_stuck(len(onchain))
@@ -1012,6 +1048,7 @@ class DeliveryManager:
                     async def _dispatch(r: RequestRecord) -> bool:
                         # H4: prepare before allocating so a prep failure doesn't
                         # orphan a nonce slot and leave a gap in the Safe TX queue.
+                        prep_started = time.monotonic()
                         try:
                             prep_data = await self._prepare_onchain(r)
                         except Exception as e:
@@ -1024,6 +1061,7 @@ class DeliveryManager:
                             # H1: discard here — _deliver_single_onchain never called
                             self._in_flight.discard(r.request.request_id)
                             return False
+                        prep_seconds = time.monotonic() - prep_started
 
                         _ALLOCATE_TIMEOUT = 15  # seconds; prevents indefinite thread-pool hang
                         nonce = None
@@ -1047,7 +1085,11 @@ class DeliveryManager:
                         # unlikely event of a future refactor) raised.
                         try:
                             result = await self._deliver_single_onchain(
-                                r, safe_nonce=nonce, _prep_data=prep_data
+                                r,
+                                safe_nonce=nonce,
+                                _prep_data=prep_data,
+                                _prep_seconds=prep_seconds,
+                                _safe_lock_wait_seconds=safe_lock_wait_seconds,
                             )
                             if not result:
                                 allocator.invalidate("delivery_failed")
@@ -1062,10 +1104,11 @@ class DeliveryManager:
                     )
             else:
                 prepared_onchain: list[
-                    tuple[RequestRecord, tuple[bytes, bytes, Optional[str]]]
+                    tuple[RequestRecord, tuple[bytes, bytes, Optional[str]], float]
                 ] = []
                 try:
                     for r in onchain:
+                        prep_started = time.monotonic()
                         try:
                             prep_data = await self._prepare_onchain(r)
                         except Exception as e:
@@ -1083,17 +1126,24 @@ class DeliveryManager:
                                     r.request.request_id,
                                     err_str,
                                     chain=self._chain_name,
-                                )
+                            )
                             self._in_flight.discard(r.request.request_id)
                         else:
-                            prepared_onchain.append((r, prep_data))
+                            prepared_onchain.append(
+                                (r, prep_data, time.monotonic() - prep_started)
+                            )
 
                     if prepared_onchain:
+                        lock_wait_started = time.monotonic()
                         async with get_safe_lock(multisig):
-                            for r, prep_data in prepared_onchain:
+                            safe_lock_wait_seconds = time.monotonic() - lock_wait_started
+                            for r, prep_data, prep_seconds in prepared_onchain:
                                 onchain_results.append(
                                     await self._deliver_single_onchain(
-                                        r, _prep_data=prep_data
+                                        r,
+                                        _prep_data=prep_data,
+                                        _prep_seconds=prep_seconds,
+                                        _safe_lock_wait_seconds=safe_lock_wait_seconds,
                                     )
                                 )
                 except BaseException:
@@ -1127,28 +1177,33 @@ class DeliveryManager:
         record: RequestRecord,
         safe_nonce: Optional[int] = None,
         _prep_data: Optional[tuple[bytes, bytes, Optional[str]]] = None,
+        _prep_seconds: float = 0.0,
+        _safe_lock_wait_seconds: float = 0.0,
     ) -> bool:
         """Prepare and submit one on-chain request as a single Safe TX.
 
         One delivery = one Safe TX nonce, preserving staking liveness.
         Always removes the record from in-flight in the finally block.
         _prep_data: pre-computed (req_id_bytes, delivery_data, ipfs_cid_hex) tuple.
-        Only set by parallel _dispatch (prep before nonce allocation prevents orphaned
-        nonce slots). Serial path must leave as None (falls back to _prepare_onchain).
+        Set by callers that prepare before entering nonce-sensitive sections.
         """
         try:
             if _prep_data is not None:
                 req_id_bytes, delivery_data, ipfs_cid_hex = _prep_data
             else:
+                prep_started = time.monotonic()
                 req_id_bytes, delivery_data, ipfs_cid_hex = (
                     await self._prepare_onchain(record)
                 )
+                _prep_seconds = time.monotonic() - prep_started
+            submit_started = time.monotonic()
             tx_hash, delivered_flags = await asyncio.to_thread(
                 self._submit_batch_delivery,
                 [req_id_bytes],
                 [delivery_data],
                 safe_nonce,
             )
+            safe_submit_seconds = time.monotonic() - submit_started
             req_id = record.request.request_id
             self._delivery_failures.pop(req_id, None)
             if not delivered_flags:
@@ -1169,12 +1224,30 @@ class DeliveryManager:
                     self._metrics.record_delivery(
                         req_id, chain=self._chain_name
                     )
+                    self._metrics.record_delivery_timing(
+                        req_id,
+                        chain=self._chain_name,
+                        age_seconds=_record_age_seconds(record),
+                        prep_seconds=_prep_seconds,
+                        safe_lock_wait_seconds=_safe_lock_wait_seconds,
+                        safe_submit_seconds=safe_submit_seconds,
+                    )
                 logger.opt(colors=True).info(
                     "<green>[{}] Delivered {} tool={} tx={}</green>",
                     self._chain_name,
                     req_id[:16] + "...",
                     record.request.tool,
                     tx_hash[:18] + "...",
+                )
+                logger.debug(
+                    "[{}] Delivery timing {} age={:.2f}s prep={:.2f}s "
+                    "lock_wait={:.2f}s submit={:.2f}s",
+                    self._chain_name,
+                    req_id[:16] + "...",
+                    _record_age_seconds(record),
+                    _prep_seconds,
+                    _safe_lock_wait_seconds,
+                    safe_submit_seconds,
                 )
             else:
                 reason = self._classify_rejected_delivery(req_id)

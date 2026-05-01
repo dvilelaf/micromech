@@ -55,6 +55,41 @@ class TestMetricsCollector:
         m.record_delivery("req-1")
         assert m.deliveries_completed == 1
 
+    def test_record_delivery_timing(self):
+        m = MetricsCollector()
+        m.record_delivery_timing(
+            "req-1",
+            chain="gnosis",
+            age_seconds=12.5,
+            prep_seconds=0.2,
+            safe_lock_wait_seconds=0.3,
+            safe_submit_seconds=4.0,
+        )
+        m.record_delivery_timing(
+            "req-2",
+            chain="gnosis",
+            age_seconds=20.0,
+            prep_seconds=0.5,
+            safe_lock_wait_seconds=0.7,
+            safe_submit_seconds=6.0,
+        )
+
+        snap = m.get_live_snapshot()
+        assert snap["avg_delivery_age_seconds"] == 16.25
+        assert snap["p95_delivery_age_seconds"] == 20.0
+        assert snap["avg_delivery_prep_seconds"] == 0.35
+        assert snap["p95_delivery_prep_seconds"] == 0.5
+        assert snap["avg_safe_lock_wait_seconds"] == 0.5
+        assert snap["p95_safe_lock_wait_seconds"] == 0.7
+        assert snap["avg_safe_submit_seconds"] == 5.0
+        assert snap["p95_safe_submit_seconds"] == 6.0
+
+        ev = m.get_recent_events(1)[0]
+        assert ev["event"] == "delivery_timing"
+        assert ev["chain"] == "gnosis"
+        assert ev["details"]["age_seconds"] == 20.0
+        assert ev["details"]["safe_submit_seconds"] == 6.0
+
     def test_record_delivery_failed(self):
         m = MetricsCollector()
         m.record_delivery_failed("req-1", "tx reverted")
@@ -71,6 +106,10 @@ class TestMetricsCollector:
         assert snap["executions_completed"] == 1
         assert snap["deliveries_completed"] == 1
         assert snap["avg_execution_time"] == 2.0
+        assert "p95_delivery_age_seconds" in snap
+        assert "p95_delivery_prep_seconds" in snap
+        assert "p95_safe_lock_wait_seconds" in snap
+        assert "p95_safe_submit_seconds" in snap
         assert snap["success_rate"] == 100.0
         assert snap["uptime"] >= 0
 

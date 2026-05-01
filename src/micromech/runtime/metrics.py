@@ -24,6 +24,7 @@ class MetricsEvent:
     is_offchain: bool = False
     execution_time: float = 0.0
     error: str = ""
+    details: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +37,7 @@ class MetricsEvent:
             "is_offchain": self.is_offchain,
             "execution_time": round(self.execution_time, 3) if self.execution_time else 0,
             "error": self.error,
+            "details": self.details,
         }
 
 
@@ -65,6 +67,10 @@ class MetricsCollector:
 
     # Rolling execution times (last 1000)
     _exec_times: deque[float] = field(default_factory=lambda: deque(maxlen=1000))
+    _delivery_age_seconds: deque[float] = field(default_factory=lambda: deque(maxlen=1000))
+    _delivery_prep_seconds: deque[float] = field(default_factory=lambda: deque(maxlen=1000))
+    _safe_lock_wait_seconds: deque[float] = field(default_factory=lambda: deque(maxlen=1000))
+    _safe_submit_seconds: deque[float] = field(default_factory=lambda: deque(maxlen=1000))
 
     # Event log for real-time feed (last 200 events)
     _events: deque[MetricsEvent] = field(default_factory=lambda: deque(maxlen=200))
@@ -81,9 +87,19 @@ class MetricsCollector:
 
     @property
     def p95_execution_time(self) -> float:
-        if not self._exec_times:
+        return self._p95(self._exec_times)
+
+    @staticmethod
+    def _avg(values: deque[float]) -> float:
+        if not values:
             return 0.0
-        sorted_times = sorted(self._exec_times)
+        return sum(values) / len(values)
+
+    @staticmethod
+    def _p95(values: deque[float]) -> float:
+        if not values:
+            return 0.0
+        sorted_times = sorted(values)
         idx = int(len(sorted_times) * 0.95)
         return sorted_times[min(idx, len(sorted_times) - 1)]
 
@@ -171,6 +187,40 @@ class MetricsCollector:
             )
         )
 
+    def record_delivery_timing(
+        self,
+        request_id: str,
+        *,
+        chain: str = "",
+        age_seconds: float = 0.0,
+        prep_seconds: float = 0.0,
+        safe_lock_wait_seconds: float = 0.0,
+        safe_submit_seconds: float = 0.0,
+    ) -> None:
+        """Record delivery latency breakdown for operational diagnosis."""
+        if age_seconds >= 0:
+            self._delivery_age_seconds.append(age_seconds)
+        if prep_seconds >= 0:
+            self._delivery_prep_seconds.append(prep_seconds)
+        if safe_lock_wait_seconds >= 0:
+            self._safe_lock_wait_seconds.append(safe_lock_wait_seconds)
+        if safe_submit_seconds >= 0:
+            self._safe_submit_seconds.append(safe_submit_seconds)
+        self._events.append(
+            MetricsEvent(
+                timestamp=time.time(),
+                event_type="delivery_timing",
+                request_id=request_id,
+                chain=chain,
+                details={
+                    "age_seconds": round(age_seconds, 3),
+                    "prep_seconds": round(prep_seconds, 3),
+                    "safe_lock_wait_seconds": round(safe_lock_wait_seconds, 3),
+                    "safe_submit_seconds": round(safe_submit_seconds, 3),
+                },
+            )
+        )
+
     def record_delivery_failed(self, request_id: str, error: str, chain: str = "") -> None:
         self.deliveries_failed += 1
         self._events.append(
@@ -222,6 +272,14 @@ class MetricsCollector:
             "mech_late_delivery_count": self.mech_late_delivery_count,
             "avg_execution_time": round(self.avg_execution_time, 3),
             "p95_execution_time": round(self.p95_execution_time, 3),
+            "avg_delivery_age_seconds": round(self._avg(self._delivery_age_seconds), 3),
+            "p95_delivery_age_seconds": round(self._p95(self._delivery_age_seconds), 3),
+            "avg_delivery_prep_seconds": round(self._avg(self._delivery_prep_seconds), 3),
+            "p95_delivery_prep_seconds": round(self._p95(self._delivery_prep_seconds), 3),
+            "avg_safe_lock_wait_seconds": round(self._avg(self._safe_lock_wait_seconds), 3),
+            "p95_safe_lock_wait_seconds": round(self._p95(self._safe_lock_wait_seconds), 3),
+            "avg_safe_submit_seconds": round(self._avg(self._safe_submit_seconds), 3),
+            "p95_safe_submit_seconds": round(self._p95(self._safe_submit_seconds), 3),
             "success_rate": round(self.success_rate, 1),
         }
 

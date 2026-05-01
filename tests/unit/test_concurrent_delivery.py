@@ -860,6 +860,36 @@ class TestParallelNonceDispatch:
         assert len(set(received_nonces)) == 3, "Nonces must be distinct"
 
     @pytest.mark.asyncio
+    async def test_parallel_path_records_delivery_timing(self):
+        """Parallel Safe deliveries include prep and lock-wait timing metrics."""
+        record = _make_record(FAST1_ID)
+        q = _make_queue([record])
+        bridge = _make_bridge_with_safe()
+
+        allocator = _make_allocator_mock([10])
+        bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+            dm._metrics = MagicMock()
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_submit_batch_delivery", return_value=("0x" + "ab" * 32, [True])),
+            ):
+                delivered = await dm._deliver_concurrent()
+
+        assert delivered == 1
+        dm._metrics.record_delivery_timing.assert_called_once()
+        kwargs = dm._metrics.record_delivery_timing.call_args.kwargs
+        assert kwargs["chain"] == "gnosis"
+        assert kwargs["prep_seconds"] >= 0
+        assert kwargs["safe_lock_wait_seconds"] >= 0
+        assert kwargs["safe_submit_seconds"] >= 0
+
+    @pytest.mark.asyncio
     async def test_allow_nonce_refresh_false_passed_to_safe(self):
         """_via_safe passes allow_nonce_refresh=False when safe_nonce is pre-assigned."""
         record = _make_record(FAST1_ID)

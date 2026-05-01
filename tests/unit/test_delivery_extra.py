@@ -1305,6 +1305,38 @@ class TestOnchainMetricsCoverage:
         ):
             await dm._deliver_onchain_batch(records)
         assert dm._metrics.record_delivery.call_count == 2
+        assert dm._metrics.record_delivery_timing.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_single_onchain_records_delivery_timing_metric(self, queue):
+        from micromech.core.models import MechRequest, ToolResult
+
+        dm = self._make_dm_with_metrics(queue)
+        req = MechRequest(request_id="a", prompt="p", tool="echo")
+        queue.add_request(req)
+        queue.mark_executing("a")
+        queue.mark_executed("a", ToolResult(output="ok"))
+        record = queue.get_undelivered(limit=1)[0]
+        dm._in_flight.add("a")
+
+        with (
+            self._patch_prepare(dm),
+            patch.object(dm, "_submit_batch_delivery", return_value=(_TX_HASH, [True])),
+        ):
+            await dm._deliver_single_onchain(
+                record,
+                _prep_data=(b"\x00" * 32, b"data", "QmTest"),
+                _prep_seconds=0.2,
+                _safe_lock_wait_seconds=0.3,
+            )
+
+        dm._metrics.record_delivery_timing.assert_called_once()
+        kwargs = dm._metrics.record_delivery_timing.call_args.kwargs
+        assert kwargs["chain"] == "gnosis"
+        assert kwargs["age_seconds"] >= 0
+        assert kwargs["prep_seconds"] == 0.2
+        assert kwargs["safe_lock_wait_seconds"] == 0.3
+        assert kwargs["safe_submit_seconds"] >= 0
 
     @pytest.mark.asyncio
     async def test_batch_records_late_delivery_metric(self, queue):
