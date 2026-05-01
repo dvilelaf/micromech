@@ -425,22 +425,101 @@ class TestRunLoop:
     async def test_run_handles_deliver_batch_exception(self):
         """run() catches exceptions from _deliver_concurrent and keeps looping."""
         dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), _make_bridge())
+        first_error_seen = _real_asyncio.Event()
         call_count = [0]
 
         async def _raise_then_stop():
             call_count[0] += 1
             if call_count[0] == 1:
+                first_error_seen.set()
                 raise RuntimeError("batch error")
             dm.stop()
             return 0
 
-        with (
-            patch.object(dm, "_deliver_concurrent", side_effect=_raise_then_stop),
-            patch("micromech.runtime.delivery.asyncio.sleep", _instant_sleep),
-        ):
-            await _real_asyncio.wait_for(dm.run(), timeout=5.0)
+        with patch.object(dm, "_deliver_concurrent", side_effect=_raise_then_stop):
+            task = _real_asyncio.create_task(dm.run())
+            try:
+                await _real_asyncio.wait_for(first_error_seen.wait(), timeout=1.0)
+                dm.wake()
+                await _real_asyncio.wait_for(task, timeout=5.0)
+            finally:
+                if not task.done():
+                    dm.stop()
+                    await _real_asyncio.wait_for(task, timeout=1.0)
 
         assert call_count[0] == 2  # ran twice: first raised, then stopped
+
+    @pytest.mark.asyncio
+    async def test_wake_interrupts_delivery_interval(self):
+        """wake() triggers the next delivery pass without waiting for the interval."""
+        config = MicromechConfig(delivery_interval=60)
+        dm = DeliveryManager(config, _make_chain_config(), _make_queue(), _make_bridge())
+        first_pass_done = _real_asyncio.Event()
+        second_pass_done = _real_asyncio.Event()
+        call_count = [0]
+
+        async def _deliver_once_then_wait():
+            call_count[0] += 1
+            if call_count[0] == 1:
+                first_pass_done.set()
+            else:
+                second_pass_done.set()
+                dm.stop()
+            return 0
+
+        with patch.object(dm, "_deliver_concurrent", side_effect=_deliver_once_then_wait):
+            task = _real_asyncio.create_task(dm.run())
+            try:
+                await _real_asyncio.wait_for(first_pass_done.wait(), timeout=1.0)
+                dm.wake()
+                await _real_asyncio.wait_for(second_pass_done.wait(), timeout=1.0)
+                await _real_asyncio.wait_for(task, timeout=1.0)
+            finally:
+                if not task.done():
+                    dm.stop()
+                    await _real_asyncio.wait_for(task, timeout=1.0)
+
+        assert call_count[0] == 2
+
+    @pytest.mark.asyncio
+    async def test_stop_wakes_sleeping_run_loop(self):
+        """stop() wakes run() when it is waiting for the next delivery interval."""
+        config = MicromechConfig(delivery_interval=60)
+        dm = DeliveryManager(config, _make_chain_config(), _make_queue(), _make_bridge())
+        first_pass_done = _real_asyncio.Event()
+
+        async def _deliver_once():
+            first_pass_done.set()
+            return 0
+
+        with patch.object(dm, "_deliver_concurrent", side_effect=_deliver_once):
+            task = _real_asyncio.create_task(dm.run())
+            try:
+                await _real_asyncio.wait_for(first_pass_done.wait(), timeout=1.0)
+                dm.stop()
+                await _real_asyncio.wait_for(task, timeout=1.0)
+            finally:
+                if not task.done():
+                    dm.stop()
+                    await _real_asyncio.wait_for(task, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_run_uses_interval_when_not_woken(self):
+        """run() still polls again after the configured interval without wake()."""
+        config = MicromechConfig(delivery_interval=1)
+        dm = DeliveryManager(config, _make_chain_config(), _make_queue(), _make_bridge())
+        call_count = [0]
+
+        async def _deliver_twice():
+            call_count[0] += 1
+            if call_count[0] == 2:
+                dm.stop()
+            return 0
+
+        with patch.object(dm, "_deliver_concurrent", side_effect=_deliver_twice):
+            await _real_asyncio.wait_for(dm.run(), timeout=2.5)
+
+        assert call_count[0] == 2
 
 
 # ---------------------------------------------------------------------------

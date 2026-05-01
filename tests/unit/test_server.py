@@ -316,6 +316,27 @@ class TestMechServerProcessing:
         assert "r1" not in server._queued_ids
         server.shutdown()
 
+    @pytest.mark.asyncio
+    async def test_execute_and_cleanup_wakes_chain_delivery(
+        self,
+        server_config,
+    ):
+        server = MechServer(server_config)
+        server._load_tools()
+        req = MechRequest(
+            request_id="r1",
+            prompt="hello",
+            tool="echo",
+        )
+        await server._on_new_request(req)
+        queued = await server._request_queue.get()
+        server.deliveries[queued.chain].wake = MagicMock()
+
+        await server._execute_and_cleanup(queued)
+
+        server.deliveries[queued.chain].wake.assert_called_once_with()
+        server.shutdown()
+
     def test_stop(self, server_config):
         server = MechServer(server_config)
         server._running = True

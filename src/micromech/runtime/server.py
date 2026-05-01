@@ -378,6 +378,9 @@ class MechServer:
         """Execute a request and remove from dedup set when done."""
         try:
             await self.executor.execute(request)
+            delivery = self.deliveries.get(request.chain)
+            if delivery is not None:
+                delivery.wake()
         finally:
             self._queued_ids.discard(request.request_id)
 

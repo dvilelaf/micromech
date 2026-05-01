@@ -198,6 +198,7 @@ class DeliveryManager:
         self._ipfs_warning_logged = False
         self._delivery_failures: dict[str, int] = {}
         self._in_flight: set[str] = set()
+        self._wake_event = asyncio.Event()
 
     @property
     def delivered_count(self) -> int:
@@ -216,6 +217,10 @@ class DeliveryManager:
     def _chain_name(self) -> str:
         """Chain name from this delivery manager's config."""
         return self.chain_config.chain
+
+    def wake(self) -> None:
+        """Wake the delivery loop after a request becomes deliverable."""
+        self._wake_event.set()
 
     def _get_nonce_allocator(self, multisig: str) -> Any:
         """Return the NonceAllocator for this delivery manager's Safe multisig."""
@@ -1248,6 +1253,7 @@ class DeliveryManager:
             )
 
         while self._running:
+            self._wake_event.clear()
             try:
                 count = await self._deliver_concurrent()
                 if count:
@@ -1255,7 +1261,11 @@ class DeliveryManager:
 
             except Exception as e:
                 logger.exception("Delivery loop error: {}", e)
-            await asyncio.sleep(interval)
+            try:
+                await asyncio.wait_for(self._wake_event.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
 
     def stop(self) -> None:
         self._running = False
+        self._wake_event.set()
