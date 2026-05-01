@@ -997,8 +997,8 @@ class DeliveryManager:
                     " — cannot dispatch on-chain"
                 )
 
-            async with get_safe_lock(multisig):
-                if self.config.parallel_nonce_enabled:
+            if self.config.parallel_nonce_enabled:
+                async with get_safe_lock(multisig):
                     allocator = self._get_nonce_allocator(multisig)
                     try:
                         allocator.check_stuck(len(onchain))
@@ -1060,9 +1060,46 @@ class DeliveryManager:
                             *[_dispatch(r) for r in onchain], return_exceptions=True
                         )
                     )
-                else:
+            else:
+                prepared_onchain: list[
+                    tuple[RequestRecord, tuple[bytes, bytes, Optional[str]]]
+                ] = []
+                try:
                     for r in onchain:
-                        onchain_results.append(await self._deliver_single_onchain(r))
+                        try:
+                            prep_data = await self._prepare_onchain(r)
+                        except Exception as e:
+                            err_str = _sanitize_error(e)
+                            logger.exception(
+                                "Delivery failed for {}: {}",
+                                r.request.request_id[:20] + "...",
+                                err_str,
+                            )
+                            self._increment_failure(
+                                r.request.request_id, f"tx: {err_str}"
+                            )
+                            if self._metrics:
+                                self._metrics.record_delivery_failed(
+                                    r.request.request_id,
+                                    err_str,
+                                    chain=self._chain_name,
+                                )
+                            self._in_flight.discard(r.request.request_id)
+                        else:
+                            prepared_onchain.append((r, prep_data))
+
+                    if prepared_onchain:
+                        async with get_safe_lock(multisig):
+                            for r, prep_data in prepared_onchain:
+                                onchain_results.append(
+                                    await self._deliver_single_onchain(
+                                        r, _prep_data=prep_data
+                                    )
+                                )
+                except BaseException:
+                    for r in selected:
+                        self._in_flight.discard(r.request.request_id)
+                    raise
         elif onchain:
             # No Safe configured — submit directly without lock
             for r in onchain:

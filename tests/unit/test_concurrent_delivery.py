@@ -94,6 +94,12 @@ def _make_record(request_id: str) -> RequestRecord:
     return RequestRecord(request=req, result=result)
 
 
+def _make_offchain_record(request_id: str) -> RequestRecord:
+    record = _make_record(request_id)
+    record.request.is_offchain = True
+    return record
+
+
 def _make_queue(records: list[RequestRecord]) -> MagicMock:
     q = MagicMock()
     q.get_undelivered.return_value = records
@@ -1101,6 +1107,268 @@ class TestParallelNonceDispatch:
         # Serial path: allocator is NOT used (get_allocator not called)
         assert delivered == 2
         bridge.wallet.safe_service.get_allocator.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_serial_safe_prepares_before_safe_lock(self):
+        """Default Safe path prepares payloads before holding the Safe submission lock."""
+        from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+        _SAFE_LOCKS.clear()
+        lock = get_safe_lock(MULTISIG)
+        records = [_make_record(FAST1_ID), _make_record(FAST2_ID)]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+        prepare_locked: list[bool] = []
+        submit_locked: list[bool] = []
+
+        async def _track_prepare(rec):
+            prepare_locked.append(lock.locked())
+            return await _instant_prepare(rec)
+
+        def _track_submit(*_args, **_kwargs):
+            submit_locked.append(lock.locked())
+            return ("0x" + "ab" * 32, [True])
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_track_prepare),
+                patch.object(dm, "_submit_batch_delivery", side_effect=_track_submit),
+            ):
+                delivered = await dm._deliver_concurrent()
+
+        assert delivered == 2
+        assert prepare_locked == [False, False]
+        assert submit_locked == [True, True]
+
+    @pytest.mark.asyncio
+    async def test_serial_safe_prep_failure_does_not_take_safe_lock(self):
+        """A prep failure in the serial Safe path is retried later without locking Safe."""
+        from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+        _SAFE_LOCKS.clear()
+        lock = get_safe_lock(MULTISIG)
+        records = [_make_record(STALL_ID), _make_record(FAST1_ID)]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+        prepare_locked: list[bool] = []
+        submit_locked: list[bool] = []
+
+        async def _prep_fail_for_stall(rec):
+            prepare_locked.append(lock.locked())
+            if rec.request.request_id == STALL_ID:
+                raise RuntimeError("IPFS upload failed")
+            return await _instant_prepare(rec)
+
+        def _track_submit(*_args, **_kwargs):
+            submit_locked.append(lock.locked())
+            return ("0x" + "ab" * 32, [True])
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_prep_fail_for_stall),
+                patch.object(dm, "_submit_batch_delivery", side_effect=_track_submit),
+            ):
+                delivered = await dm._deliver_concurrent()
+
+        assert delivered == 1
+        assert prepare_locked == [False, False]
+        assert submit_locked == [True]
+        assert STALL_ID not in dm._in_flight
+        assert FAST1_ID not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_serial_safe_all_prep_failures_skip_safe_lock(self):
+        """If no serial Safe payload prepares, the Safe lock is never acquired."""
+        from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+        _SAFE_LOCKS.clear()
+        lock = get_safe_lock(MULTISIG)
+        record = _make_record(STALL_ID)
+        q = _make_queue([record])
+        bridge = _make_bridge_with_safe()
+
+        async def _fail_prepare(_rec):
+            assert not lock.locked()
+            raise RuntimeError("IPFS upload failed")
+
+        def _fail_submit(*_args, **_kwargs):
+            raise AssertionError("submit should not run without prepared payloads")
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_fail_prepare),
+                patch.object(dm, "_submit_batch_delivery", side_effect=_fail_submit),
+            ):
+                delivered = await dm._deliver_concurrent()
+
+        assert delivered == 0
+        assert not lock.locked()
+        assert STALL_ID not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_serial_safe_cancelled_prep_cleans_in_flight_before_lock(self):
+        """Cancellation during serial prep does not leak in-flight records."""
+        import asyncio
+
+        from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+        _SAFE_LOCKS.clear()
+        lock = get_safe_lock(MULTISIG)
+        records = [_make_record(STALL_ID), _make_record(FAST1_ID)]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+        prepare_locked: list[bool] = []
+        submit_called = False
+
+        async def _cancel_during_prepare(rec):
+            prepare_locked.append(lock.locked())
+            raise asyncio.CancelledError()
+
+        def _track_submit(*_args, **_kwargs):
+            nonlocal submit_called
+            submit_called = True
+            return ("0x" + "ab" * 32, [True])
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_cancel_during_prepare),
+                patch.object(dm, "_submit_batch_delivery", side_effect=_track_submit),
+            ):
+                with pytest.raises(asyncio.CancelledError):
+                    await dm._deliver_concurrent()
+
+        assert prepare_locked == [False]
+        assert submit_called is False
+        assert not lock.locked()
+        assert STALL_ID not in dm._in_flight
+        assert FAST1_ID not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_serial_safe_cancelled_prep_cleans_mixed_selected_records(self):
+        """Cancellation during serial prep also cleans selected off-chain records."""
+        import asyncio
+
+        from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+        _SAFE_LOCKS.clear()
+        lock = get_safe_lock(MULTISIG)
+        records = [_make_record(STALL_ID), _make_offchain_record(FAST1_ID)]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+
+        async def _cancel_during_prepare(_rec):
+            raise asyncio.CancelledError()
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_cancel_during_prepare),
+                patch.object(dm, "_submit_batch_delivery") as mock_submit,
+                patch.object(dm, "_deliver_single_offchain_concurrent") as mock_offchain,
+            ):
+                with pytest.raises(asyncio.CancelledError):
+                    await dm._deliver_concurrent()
+
+        mock_submit.assert_not_called()
+        mock_offchain.assert_not_called()
+        assert not lock.locked()
+        assert STALL_ID not in dm._in_flight
+        assert FAST1_ID not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_serial_safe_cancelled_after_one_prep_cleans_without_submit(self):
+        """A later prep cancellation drops already-prepared serial records."""
+        import asyncio
+
+        from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+        _SAFE_LOCKS.clear()
+        lock = get_safe_lock(MULTISIG)
+        records = [_make_record(FAST1_ID), _make_record(STALL_ID)]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+
+        async def _prepare_then_cancel(rec):
+            assert not lock.locked()
+            if rec.request.request_id == FAST1_ID:
+                return await _instant_prepare(rec)
+            raise asyncio.CancelledError()
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_prepare_then_cancel),
+                patch.object(dm, "_submit_batch_delivery") as mock_submit,
+            ):
+                with pytest.raises(asyncio.CancelledError):
+                    await dm._deliver_concurrent()
+
+        mock_submit.assert_not_called()
+        assert not lock.locked()
+        assert FAST1_ID not in dm._in_flight
+        assert STALL_ID not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_serial_safe_cancelled_during_submit_cleans_all_selected(self):
+        """Cancellation after prep but during submit cleans later/off-chain records."""
+        import asyncio
+
+        from micromech.core.locks import _SAFE_LOCKS, get_safe_lock
+
+        _SAFE_LOCKS.clear()
+        lock = get_safe_lock(MULTISIG)
+        records = [
+            _make_record(FAST1_ID),
+            _make_record(STALL_ID),
+            _make_offchain_record(FAST2_ID),
+        ]
+        q = _make_queue(records)
+        bridge = _make_bridge_with_safe()
+
+        async def _cancel_submit(_rec, **_kwargs):
+            assert lock.locked()
+            raise asyncio.CancelledError()
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_instant_prepare),
+                patch.object(dm, "_deliver_single_onchain", side_effect=_cancel_submit),
+                patch.object(dm, "_deliver_single_offchain_concurrent") as mock_offchain,
+            ):
+                with pytest.raises(asyncio.CancelledError):
+                    await dm._deliver_concurrent()
+
+        mock_offchain.assert_not_called()
+        assert not lock.locked()
+        assert FAST1_ID not in dm._in_flight
+        assert STALL_ID not in dm._in_flight
+        assert FAST2_ID not in dm._in_flight
 
 
 # ---------------------------------------------------------------------------
