@@ -282,18 +282,33 @@ class PersistentQueue:
     def mark_timed_out(
         self, request_id: str, tx_hash: str, ipfs_hash: Optional[str] = None
     ) -> None:
-        """Mark request as failed due to on-chain timeout.
+        """Mark request as failed due to a confirmed on-chain timeout."""
+        self.mark_delivery_rejected(
+            request_id,
+            error="on_chain_timeout",
+            tx_hash=tx_hash,
+            ipfs_hash=ipfs_hash,
+        )
 
-        The TX was mined successfully but the marketplace contract rejected the
-        delivery because it arrived after responseTimeout. Stored as STATUS_FAILED
-        with error='on_chain_timeout' and the tx_hash for traceability.
+    def mark_delivery_rejected(
+        self,
+        request_id: str,
+        error: str,
+        tx_hash: str,
+        ipfs_hash: Optional[str] = None,
+    ) -> None:
+        """Mark a mined delivery TX whose marketplace flag was false.
+
+        The marketplace can return ``deliveredRequests[i] = false`` for several
+        reasons: already delivered by another mech, delivery-rate mismatch, or
+        priority gating. Store the precise classification plus the TX hash.
         Must be in EXECUTED state.
         """
         now = datetime.now(timezone.utc)
         rows = (
             RequestRow.update(
                 status=STATUS_FAILED,
-                error="on_chain_timeout",
+                error=error,
                 delivery_tx_hash=tx_hash,
                 ipfs_hash=ipfs_hash,
                 updated_at=now,
@@ -306,7 +321,7 @@ class PersistentQueue:
         )
         if rows == 0:
             raise PersistenceError(
-                f"Cannot mark {request_id} as timed out: not found or not in executed state"
+                f"Cannot mark {request_id} as delivery-rejected: not found or not in executed state"
             )
 
     def mark_failed(self, request_id: str, error: str) -> None:

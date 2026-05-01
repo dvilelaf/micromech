@@ -27,7 +27,15 @@ def _mock_service_info():
 
 
 from micromech.core.config import ChainConfig, MicromechConfig
-from micromech.core.constants import STATUS_DELIVERED, STATUS_EXECUTED, STATUS_FAILED
+from micromech.core.constants import (
+    REQUEST_STATUS_DELIVERED,
+    REQUEST_STATUS_DOES_NOT_EXIST,
+    REQUEST_STATUS_REQUESTED_EXPIRED,
+    REQUEST_STATUS_REQUESTED_PRIORITY,
+    STATUS_DELIVERED,
+    STATUS_EXECUTED,
+    STATUS_FAILED,
+)
 from micromech.core.models import MechRequest, ToolResult
 from micromech.core.persistence import PersistentQueue
 from micromech.runtime.delivery import DeliveryManager
@@ -741,6 +749,28 @@ class TestOnchainBatchTimeout:
     def _patch_prepare(self, dm):
         return _patch_prepare_ok(dm)
 
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            (REQUEST_STATUS_DELIVERED, "on_chain_unavailable: delivered"),
+            (REQUEST_STATUS_DOES_NOT_EXIST, "on_chain_unavailable: does_not_exist"),
+            (REQUEST_STATUS_REQUESTED_EXPIRED, "on_chain_timeout"),
+            (REQUEST_STATUS_REQUESTED_PRIORITY, "on_chain_rejected: requested_priority"),
+            (99, "on_chain_rejected: status_99"),
+        ],
+    )
+    def test_classifies_false_delivery_flags_from_marketplace_status(
+        self, dm, status, expected
+    ):
+        with patch.object(dm, "_get_marketplace_status", return_value=status):
+            assert dm._classify_rejected_delivery("a") == expected
+
+    def test_classifies_status_check_failure_without_retrying_tx(self, dm):
+        with patch.object(
+            dm, "_get_marketplace_status", side_effect=RuntimeError("rpc down")
+        ):
+            assert dm._classify_rejected_delivery("a") == "on_chain_rejected: status_unknown"
+
     @pytest.mark.asyncio
     async def test_all_accepted(self, dm, queue):
         _add_executed(queue, "a")
@@ -767,6 +797,7 @@ class TestOnchainBatchTimeout:
             patch.object(
                 dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [False, False])
             ),
+            patch.object(dm, "_classify_rejected_delivery", return_value="on_chain_timeout"),
         ):
             count = await dm._deliver_onchain_batch(records)
         assert count == 0
@@ -787,6 +818,7 @@ class TestOnchainBatchTimeout:
             patch.object(
                 dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [True, False])
             ),
+            patch.object(dm, "_classify_rejected_delivery", return_value="on_chain_timeout"),
         ):
             count = await dm._deliver_onchain_batch(records)
         assert count == 1
@@ -795,6 +827,66 @@ class TestOnchainBatchTimeout:
         assert r_b.request.status == STATUS_FAILED
         assert r_b.request.error == "on_chain_timeout"
         assert r_b.response.delivery_tx_hash == TX_HASH_HEX
+
+    @pytest.mark.asyncio
+    async def test_rejected_because_already_delivered_on_chain(self, dm, queue):
+        _add_executed(queue, "a")
+        records = queue.get_undelivered(limit=10)
+        with (
+            self._patch_prepare(dm),
+            patch.object(dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [False])),
+            patch.object(
+                dm, "_get_marketplace_status", return_value=REQUEST_STATUS_DELIVERED
+            ),
+        ):
+            count = await dm._deliver_onchain_batch(records)
+        assert count == 0
+        r = queue.get_by_id("a")
+        assert r.request.status == STATUS_FAILED
+        assert r.request.error == "on_chain_unavailable: delivered"
+        assert r.response.delivery_tx_hash == TX_HASH_HEX
+
+    @pytest.mark.asyncio
+    async def test_mixed_false_flags_preserve_timeout_accounting(self, dm, queue):
+        _add_executed(queue, "a")
+        _add_executed(queue, "b")
+        records = queue.get_undelivered(limit=10)
+        with (
+            self._patch_prepare(dm),
+            patch.object(dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [False, False])),
+            patch.object(
+                dm,
+                "_get_marketplace_status",
+                side_effect=[REQUEST_STATUS_DELIVERED, REQUEST_STATUS_REQUESTED_EXPIRED],
+            ),
+        ):
+            count = await dm._deliver_onchain_batch(records)
+        assert count == 0
+        assert queue.get_by_id("a").request.error == "on_chain_unavailable: delivered"
+        assert queue.get_by_id("b").request.error == "on_chain_timeout"
+        assert queue.failure_summary()["already_final"] == 1
+        assert queue.failure_summary()["timed_out"] == 1
+        assert queue.failure_summary()["actionable"] == 1
+
+    @pytest.mark.asyncio
+    async def test_status_check_failure_after_mined_false_flag_is_not_retried(
+        self, dm, queue
+    ):
+        _add_executed(queue, "a")
+        records = queue.get_undelivered(limit=10)
+        with (
+            self._patch_prepare(dm),
+            patch.object(dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [False])),
+            patch.object(
+                dm, "_get_marketplace_status", side_effect=RuntimeError("rpc down")
+            ),
+        ):
+            count = await dm._deliver_onchain_batch(records)
+        assert count == 0
+        r = queue.get_by_id("a")
+        assert r.request.status == STATUS_FAILED
+        assert r.request.error == "on_chain_rejected: status_unknown"
+        assert r.response.delivery_tx_hash == TX_HASH_HEX
 
     @pytest.mark.asyncio
     async def test_all_prep_fail_returns_zero(self, dm, queue):
@@ -881,10 +973,31 @@ class TestSingleOnchainTimeout:
             patch.object(
                 dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [False])
             ),
+            patch.object(dm, "_classify_rejected_delivery", return_value="on_chain_timeout"),
         ):
             result = await dm._deliver_single_onchain(record)
         assert result is False
         r = queue.get_by_id("r1")
         assert r.request.status == STATUS_FAILED
         assert r.request.error == "on_chain_timeout"
+        assert r.response.delivery_tx_hash == TX_HASH_HEX
+
+    @pytest.mark.asyncio
+    async def test_status_check_failure_after_single_false_flag_is_not_retried(
+        self, dm, queue
+    ):
+        _add_executed(queue, "r1")
+        record = queue.get_undelivered(limit=1)[0]
+        with (
+            self._patch_prepare(dm),
+            patch.object(dm, "_submit_batch_delivery", return_value=(TX_HASH_HEX, [False])),
+            patch.object(
+                dm, "_get_marketplace_status", side_effect=RuntimeError("rpc down")
+            ),
+        ):
+            result = await dm._deliver_single_onchain(record)
+        assert result is False
+        r = queue.get_by_id("r1")
+        assert r.request.status == STATUS_FAILED
+        assert r.request.error == "on_chain_rejected: status_unknown"
         assert r.response.delivery_tx_hash == TX_HASH_HEX

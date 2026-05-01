@@ -1241,6 +1241,7 @@ class TestOnchainMetricsCoverage:
         with (
             self._patch_prepare(dm),
             patch.object(dm, "_submit_batch_delivery", return_value=(_TX_HASH, [False, False])),
+            patch.object(dm, "_classify_rejected_delivery", return_value="on_chain_timeout"),
         ):
             await dm._deliver_onchain_batch(records)
         assert dm._metrics.record_late_delivery.call_count == 2
@@ -1259,6 +1260,7 @@ class TestOnchainMetricsCoverage:
         with (
             self._patch_prepare(dm),
             patch.object(dm, "_submit_batch_delivery", return_value=(_TX_HASH, [False])),
+            patch.object(dm, "_classify_rejected_delivery", return_value="on_chain_timeout"),
         ):
             result = await dm._deliver_single_onchain(record)
         assert result is False

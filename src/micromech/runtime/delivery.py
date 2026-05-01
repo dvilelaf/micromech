@@ -257,6 +257,26 @@ class DeliveryManager:
             lambda: contract.functions.getRequestStatus(req_id_bytes).call()
         )
 
+    def _classify_rejected_delivery(self, request_id: str) -> str:
+        """Classify a false MarketplaceDelivery flag using current chain state."""
+        try:
+            status = self._get_marketplace_status(request_id)
+        except Exception as e:
+            logger.warning(
+                "Could not classify rejected delivery for {}: {}",
+                request_id[:16] + "...",
+                _sanitize_error(e),
+            )
+            return "on_chain_rejected: status_unknown"
+        label = _REQUEST_STATUS_LABELS.get(status, f"status_{status}")
+        if status in (REQUEST_STATUS_DOES_NOT_EXIST, REQUEST_STATUS_DELIVERED):
+            return f"on_chain_unavailable: {label}"
+        if status == REQUEST_STATUS_REQUESTED_EXPIRED:
+            return "on_chain_timeout"
+        if status == REQUEST_STATUS_REQUESTED_PRIORITY:
+            return "on_chain_rejected: requested_priority"
+        return f"on_chain_rejected: {label}"
+
     def _mark_unavailable_on_chain(
         self,
         record: RequestRecord,
@@ -499,24 +519,26 @@ class DeliveryManager:
                         tx_hash[:18] + "...",
                     )
                 else:
-                    # The TX was mined but the contract rejected this request as
-                    # a late delivery (arrived after responseTimeout). Mark as
-                    # failed so Overview stats reflect the real on-chain outcome.
+                    reason = self._classify_rejected_delivery(req_id)
                     logger.warning(
-                        "Request {} timed out on-chain (tx={})",
+                        "Request {} was not accepted by marketplace (reason={}, tx={})",
                         req_id[:16] + "...",
+                        reason,
                         tx_hash[:18] + "...",
                     )
-                    self.queue.mark_timed_out(
+                    self.queue.mark_delivery_rejected(
                         req_id,
+                        error=reason,
                         tx_hash=tx_hash,
                         ipfs_hash=ipfs_cid_hex,
                     )
-                    n_timed_out += 1
+                    if reason == "on_chain_timeout":
+                        n_timed_out += 1
                     if self._metrics:
-                        self._metrics.record_late_delivery(req_id, chain=self._chain_name)
+                        if reason == "on_chain_timeout":
+                            self._metrics.record_late_delivery(req_id, chain=self._chain_name)
                         self._metrics.record_delivery_failed(
-                            req_id, "on_chain_timeout", chain=self._chain_name
+                            req_id, reason, chain=self._chain_name
                         )
             ids_short = ", ".join(r.request.request_id[:10] for r, *_ in good)
             logger.info(
@@ -711,9 +733,9 @@ class DeliveryManager:
         tx_hash = self._submit_tx(fn_call, from_addr, label, safe_nonce=safe_nonce)
 
         # Parse per-request delivery outcome from the MarketplaceDelivery event.
-        # The contract accepts late deliveries without reverting, but records them
-        # as timeouts (deliveredRequests[i] = False). We must read this to avoid
-        # falsely counting timed-out requests as successful deliveries.
+        # False flags are non-reverting marketplace rejections. They can mean the
+        # request was already delivered by another mech, is still priority-gated,
+        # or did not satisfy the delivery-rate constraints.
         web3 = self.bridge.web3
         try:
             tx_hash_bytes = bytes.fromhex(tx_hash.removeprefix("0x"))
@@ -1113,21 +1135,24 @@ class DeliveryManager:
                     tx_hash[:18] + "...",
                 )
             else:
-                # TX mined but rejected as late by the marketplace contract
+                reason = self._classify_rejected_delivery(req_id)
                 logger.warning(
-                    "Request {} timed out on-chain (tx={})",
+                    "Request {} was not accepted by marketplace (reason={}, tx={})",
                     req_id[:16] + "...",
+                    reason,
                     tx_hash[:18] + "...",
                 )
-                self.queue.mark_timed_out(
+                self.queue.mark_delivery_rejected(
                     req_id,
+                    error=reason,
                     tx_hash=tx_hash,
                     ipfs_hash=ipfs_cid_hex,
                 )
                 if self._metrics:
-                    self._metrics.record_late_delivery(req_id, chain=self._chain_name)
+                    if reason == "on_chain_timeout":
+                        self._metrics.record_late_delivery(req_id, chain=self._chain_name)
                     self._metrics.record_delivery_failed(
-                        req_id, "on_chain_timeout", chain=self._chain_name
+                        req_id, reason, chain=self._chain_name
                     )
             return accepted
         except Exception as e:
