@@ -39,7 +39,7 @@ jobs:
         run: just check
 
       - name: Run Tests
-        run: uv run pytest tests/unit/ -v -m "not forked"
+        run: just test-unit
 
   release:
     name: Build & Release

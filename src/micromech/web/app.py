@@ -187,6 +187,11 @@ def _get_deploy_lock(chain_name: str) -> asyncio.Lock:
     return _deploy_locks[chain_name]
 
 
+def _resolve_staking_enabled(raw_staking: object) -> bool:
+    """Resolve deploy staking preference, failing safe to staking enabled."""
+    return raw_staking if isinstance(raw_staking, bool) else True
+
+
 def _needs_setup() -> bool:
     """Check if micromech needs initial setup (no config or no deployed service).
 
@@ -620,8 +625,7 @@ def create_web_app(
             body = {}
         chain_name = body.get("chain", "gnosis")
         # Explicit bool coercion: only Python True/False accepted; anything else defaults to True (fail-safe)
-        raw_staking = body.get("staking")
-        staking_enabled = raw_staking if isinstance(raw_staking, bool) else True
+        staking_enabled = _resolve_staking_enabled(body.get("staking"))
 
         if not _valid_chain(chain_name):
             return JSONResponse({"error": f"Unknown chain: {chain_name}"}, 400)
