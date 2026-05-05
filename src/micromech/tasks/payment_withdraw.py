@@ -40,6 +40,49 @@ if TYPE_CHECKING:
     from micromech.tasks.notifications import NotificationService
 
 
+async def _notify_withdraw_failure(
+    notification_service: "NotificationService",
+    chain_name: str,
+    error: Exception,
+    *,
+    pending_xdai: float | None = None,
+    mech_balance_wei: int | None = None,
+    stage: str = "unknown",
+) -> None:
+    """Notify operator that the payment withdraw task failed.
+
+    A failure after processPaymentByMultisig can leave xDAI in the mech
+    contract while the balance tracker shows low pending payments. That state
+    requires operator visibility, otherwise /status looks falsely reassuring.
+    """
+    lines = [
+        f"Chain: {chain_name}",
+        f"Stage: {stage}",
+    ]
+    if pending_xdai is not None:
+        lines.append(f"Pending before attempt: {pending_xdai:.6f} xDAI")
+    if mech_balance_wei is not None:
+        lines.append(f"Mech contract balance: {mech_balance_wei / 1e18:.6f} xDAI")
+    lines.extend(
+        [
+            f"Error: {_sanitize_error(error)}",
+            "Action: check mech, Safe and balance-tracker balances before assuming payments are missing.",
+        ]
+    )
+    try:
+        await notification_service.send(
+            "Mech Payment Withdraw Failed",
+            "\n".join(lines),
+            level="error",
+        )
+    except Exception as notify_error:
+        logger.error(
+            "[{}] Payment withdraw failure notification failed: {}",
+            chain_name,
+            _sanitize_error(notify_error),
+        )
+
+
 def _transfer_to_master(
     bridge: "IwaBridge",
     chain_name: str,
@@ -211,6 +254,9 @@ async def payment_withdraw_task(
             continue
 
         try:
+            balance: float | None = None
+            mech_actual_wei: int | None = None
+            stage = "initializing"
             bt_address = await asyncio.to_thread(
                 get_balance_tracker_address,
                 bridge,
@@ -227,18 +273,38 @@ async def payment_withdraw_task(
                 bt_address,
                 chain_config.mech_address,
             )
+            stage = "checking threshold"
             logger.debug(
                 "[{}] Pending mech payment in balance tracker: {:.6f} xDAI",
                 chain_name,
                 balance,
             )
 
-            if balance < threshold:
+            # Also inspect the mech contract itself. If a previous run failed
+            # after processPaymentByMultisig(), the balance tracker will show
+            # low pending payments while xDAI is already sitting on the mech.
+            web3 = bridge.web3
+            stage = "read existing mech balance"
+            existing_mech_wei = await asyncio.to_thread(
+                bridge.with_retry,
+                lambda: web3.eth.get_balance(
+                    web3.to_checksum_address(chain_config.mech_address)
+                ),
+            )
+            existing_mech_xdai = existing_mech_wei / 1e18
+            logger.debug(
+                "[{}] Existing mech contract balance: {:.6f} xDAI",
+                chain_name,
+                existing_mech_xdai,
+            )
+
+            if balance < threshold and existing_mech_xdai < threshold:
                 logger.debug(
-                    "[{}] Pending payment {:.6f} xDAI below threshold"
+                    "[{}] Pending payment {:.6f} xDAI and mech balance {:.6f} xDAI below threshold"
                     " {:.4f} xDAI — skipping",
                     chain_name,
                     balance,
+                    existing_mech_xdai,
                     threshold,
                 )
                 continue
@@ -256,26 +322,36 @@ async def payment_withdraw_task(
                 continue
 
             logger.info(
-                "[{}] Withdrawing {:.6f} xDAI mech payment to multisig {}",
+                "[{}] Withdrawing {:.6f} xDAI mech payment to multisig {}"
+                " (existing mech balance {:.6f} xDAI)",
                 chain_name,
                 balance,
                 multisig,
+                existing_mech_xdai,
             )
 
             # All three steps submit Safe TXs — hold the per-Safe lock so
             # delivery workers cannot submit concurrent TXs during withdrawal.
-            mech_actual_wei: int = 0
             transfer_error: Exception | None = None
             async with get_safe_lock(multisig):
-                # Step 1: processPaymentByMultisig → xDAI lands in mech contract
-                await asyncio.to_thread(
-                    _withdraw,
-                    bridge,
-                    chain_name,
-                    bt_address,
-                    chain_config.mech_address,
-                    multisig,
-                )
+                if balance >= threshold:
+                    # Step 1: processPaymentByMultisig → xDAI lands in mech contract
+                    stage = "processPaymentByMultisig"
+                    await asyncio.to_thread(
+                        _withdraw,
+                        bridge,
+                        chain_name,
+                        bt_address,
+                        chain_config.mech_address,
+                        multisig,
+                    )
+                else:
+                    logger.info(
+                        "[{}] Balance tracker below threshold but mech holds {:.6f} xDAI;"
+                        " draining stranded payment",
+                        chain_name,
+                        existing_mech_xdai,
+                    )
 
                 # Read actual mech balance in exact wei — avoids float round-trip
                 # precision loss and accounts for marketplace fees or concurrent txs.
@@ -284,6 +360,7 @@ async def payment_withdraw_task(
                 # exactly what was deposited, without racing against another
                 # consumer that could also drain the mech between _withdraw and
                 # _drain_mech_to_safe.
+                stage = "read mech balance"
                 web3 = bridge.web3
                 mech_actual_wei = await asyncio.to_thread(
                     bridge.with_retry,
@@ -298,6 +375,7 @@ async def payment_withdraw_task(
                 )
 
                 # Step 2: mech.exec → pull xDAI from mech to Safe
+                stage = "mech.exec drain"
                 await asyncio.to_thread(
                     _drain_mech_to_safe,
                     bridge,
@@ -309,6 +387,7 @@ async def payment_withdraw_task(
 
                 # Step 3: transfer exactly what was drained from mech to master.
                 # Safe keeps its own pre-existing xDAI; only the mech payment forwarded.
+                stage = "safe-to-master transfer"
                 try:
                     await asyncio.to_thread(
                         _transfer_to_master,
@@ -352,4 +431,12 @@ async def payment_withdraw_task(
         except Exception as e:
             logger.error(
                 "[{}] Payment withdraw task error: {}", chain_name, _sanitize_error(e)
+            )
+            await _notify_withdraw_failure(
+                notification_service,
+                chain_name,
+                e,
+                pending_xdai=balance,
+                mech_balance_wei=mech_actual_wei,
+                stage=stage,
             )

@@ -329,6 +329,33 @@ class TestPaymentWithdrawTask:
         assert "0.500000" in msg
 
     @pytest.mark.asyncio
+    async def test_drains_stranded_mech_balance_when_pending_below_threshold(self):
+        """If payment is already on the mech, drain it even with low tracker pending."""
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 1.0
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18))
+        bridge.web3.eth.get_balance.return_value = int(31.44e18)
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        calls = bridge.wallet.safe_service.execute_safe_transaction.call_args_list
+        assert len(calls) == 1
+        assert calls[0].kwargs["to"] == MECH
+        bridge.wallet.send.assert_called_once()
+        assert bridge.wallet.send.call_args[1]["amount_wei"] == int(31.44e18)
+
+    @pytest.mark.asyncio
     async def test_drain_step_targets_mech_not_bt(self):
         """Second execute_safe_transaction targets the mech, first targets the BT."""
         cfg = _make_config()
@@ -509,7 +536,7 @@ class TestPaymentWithdrawTask:
 
     @pytest.mark.asyncio
     async def test_drain_failure_propagates_to_outer_except(self):
-        """If _drain_mech_to_safe raises, outer except catches it (no notification)."""
+        """If _drain_mech_to_safe raises, operator is notified."""
         cfg = _make_config()
         cfg.payment_withdraw_threshold_xdai = 0.01
 
@@ -533,13 +560,17 @@ class TestPaymentWithdrawTask:
         ):
             await payment_withdraw_task(bridges, notification, cfg)
 
-        # Outer except caught the error: no notification, no master transfer
-        notification.send.assert_not_called()
+        # Outer except caught the error: notify operator, no master transfer.
+        notification.send.assert_awaited_once()
+        title, msg = notification.send.call_args[0][:2]
+        assert title == "Mech Payment Withdraw Failed"
+        assert "Stage: mech.exec drain" in msg
+        assert "Mech contract balance: 0.500000 xDAI" in msg
         bridge.wallet.send.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_withdraw_step_failure_propagates_to_outer_except(self):
-        """If _withdraw (step 1) raises, outer except catches it (no notification)."""
+        """If _withdraw (step 1) raises, operator is notified."""
         cfg = _make_config()
         cfg.payment_withdraw_threshold_xdai = 0.01
 
@@ -561,8 +592,12 @@ class TestPaymentWithdrawTask:
         ):
             await payment_withdraw_task(bridges, notification, cfg)
 
-        # Outer except caught the error: no notification, no drain, no master transfer
-        notification.send.assert_not_called()
+        # Outer except caught the error: notify operator, no drain, no master transfer.
+        notification.send.assert_awaited_once()
+        title, msg = notification.send.call_args[0][:2]
+        assert title == "Mech Payment Withdraw Failed"
+        assert "Stage: processPaymentByMultisig" in msg
+        assert "processPayment failed" in msg
         bridge.wallet.send.assert_not_called()
 
     @pytest.mark.asyncio
@@ -575,8 +610,12 @@ class TestPaymentWithdrawTask:
         cfg.chains = {"gnosis": chain_cfg}
 
         bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18))
-        # get_balance raises — only affects the mech_actual_wei read (not receipt waits)
-        bridge.web3.eth.get_balance.side_effect = RuntimeError("RPC timeout")
+        # First get_balance sees no stranded funds; second read after
+        # processPaymentByMultisig fails before mech.exec.
+        bridge.web3.eth.get_balance.side_effect = [
+            int(0.0),
+            RuntimeError("RPC timeout"),
+        ]
         bridges = {"gnosis": bridge}
         notification = NotificationService()
         notification.send = AsyncMock()
@@ -587,8 +626,12 @@ class TestPaymentWithdrawTask:
         ):
             await payment_withdraw_task(bridges, notification, cfg)
 
-        # Outer except caught the error: drain and master transfer never ran
-        notification.send.assert_not_called()
+        # Outer except caught the error: notify operator, drain and master transfer never ran.
+        notification.send.assert_awaited_once()
+        title, msg = notification.send.call_args[0][:2]
+        assert title == "Mech Payment Withdraw Failed"
+        assert "Stage: read mech balance" in msg
+        assert "RPC timeout" in msg
         bridge.wallet.send.assert_not_called()
         # _withdraw succeeded (1 call), drain never ran (only 1 total)
         assert bridge.wallet.safe_service.execute_safe_transaction.call_count == 1
