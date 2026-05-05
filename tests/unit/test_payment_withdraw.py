@@ -9,6 +9,7 @@ from micromech.core.marketplace import get_balance_tracker_address, get_pending_
 from micromech.tasks.notifications import NotificationService
 from micromech.tasks.payment_withdraw import (
     _drain_mech_to_safe,
+    _transfer_to_master,
     _withdraw,
     payment_withdraw_task,
 )
@@ -105,7 +106,7 @@ class TestGetBalanceTrackerAddress:
         assert result == BT_ADDR
 
     def test_returns_none_for_zero_address(self):
-        bridge = _make_bridge(bt_address=ZERO)
+        bridge = _make_bridge(bt_address=ZERO, mech_balance_raw=0)
         result = get_balance_tracker_address(bridge, "gnosis", MECH, MARKETPLACE)
         assert result is None
 
@@ -115,6 +116,19 @@ class TestGetBalanceTrackerAddress:
         bridge.with_retry.side_effect = Exception("RPC timeout")
         result = get_balance_tracker_address(bridge, "gnosis", MECH, MARKETPLACE)
         assert result is None
+
+    def test_raises_when_requested_on_rpc_failure(self):
+        """Strict callers can distinguish tracker lookup failure from no tracker."""
+        bridge = _make_bridge()
+        bridge.with_retry.side_effect = Exception("RPC timeout")
+        with pytest.raises(Exception, match="RPC timeout"):
+            get_balance_tracker_address(
+                bridge,
+                "gnosis",
+                MECH,
+                MARKETPLACE,
+                raise_on_error=True,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +153,13 @@ class TestGetPendingBalance:
         bridge.with_retry.side_effect = Exception("connection refused")
         result = get_pending_balance(bridge, BT_ADDR, MECH)
         assert result == 0.0
+
+    def test_raises_when_requested_on_rpc_failure(self):
+        """Strict callers can distinguish unknown pending from a real zero."""
+        bridge = _make_bridge()
+        bridge.with_retry.side_effect = Exception("connection refused")
+        with pytest.raises(Exception, match="connection refused"):
+            get_pending_balance(bridge, BT_ADDR, MECH, raise_on_error=True)
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +250,23 @@ class TestDrainMechToSafe:
         bridge = _make_bridge()
         _drain_mech_to_safe(bridge, "gnosis", MECH, MULTISIG, 0)
         bridge.wallet.safe_service.execute_safe_transaction.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _transfer_to_master
+# ---------------------------------------------------------------------------
+
+
+class TestTransferToMaster:
+    def test_raises_on_revert(self):
+        """RuntimeError raised if Safe→master receipt status != 1."""
+        bridge = _make_bridge()
+        bad_receipt = MagicMock()
+        bad_receipt.__getitem__ = lambda self, key: 0 if key == "status" else None
+        bridge.with_retry.side_effect = lambda fn, **kw: bad_receipt
+
+        with pytest.raises(RuntimeError, match="transfer to master reverted"):
+            _transfer_to_master(bridge, "gnosis", MULTISIG, int(1e18))
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +394,33 @@ class TestPaymentWithdrawTask:
         assert bridge.wallet.send.call_args[1]["amount_wei"] == int(31.44e18)
 
     @pytest.mark.asyncio
+    async def test_drains_stranded_mech_balance_without_balance_tracker(self):
+        """Already-stranded xDAI can be recovered even if tracker resolution fails."""
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 1.0
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=ZERO, mech_balance_raw=0)
+        bridge.web3.eth.get_balance.return_value = int(31.44e18)
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        calls = bridge.wallet.safe_service.execute_safe_transaction.call_args_list
+        assert len(calls) == 1
+        assert calls[0].kwargs["to"] == MECH
+        bridge.wallet.send.assert_called_once()
+        assert bridge.wallet.send.call_args[1]["amount_wei"] == int(31.44e18)
+
+    @pytest.mark.asyncio
     async def test_drain_step_targets_mech_not_bt(self):
         """Second execute_safe_transaction targets the mech, first targets the BT."""
         cfg = _make_config()
@@ -423,6 +488,130 @@ class TestPaymentWithdrawTask:
         )
 
     @pytest.mark.asyncio
+    async def test_drains_existing_plus_newly_processed_mech_balance(self):
+        """When pending and stranded balances coexist, drain the combined mech balance."""
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 0.01
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        existing_wei = int(0.2e18)
+        combined_wei = int(0.7e18)
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18))
+        bridge.web3.eth.get_balance.side_effect = [existing_wei, combined_wei]
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        mech_contract = bridge.web3.eth.contract(address=MECH)
+        exec_call = mech_contract.functions.exec.call_args
+        assert exec_call.args[1] == combined_wei
+        assert bridge.wallet.send.call_args[1]["amount_wei"] == combined_wei
+
+    @pytest.mark.asyncio
+    async def test_pending_balance_read_failure_notifies_operator(self):
+        """Pending read failures are not silently treated as zero."""
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 0.01
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=0)
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with (
+            patch(
+                "micromech.tasks.payment_withdraw.get_pending_balance",
+                side_effect=RuntimeError("mapMechBalances timeout"),
+            ),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": MULTISIG},
+            ),
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        notification.send.assert_awaited_once()
+        title, msg = notification.send.call_args[0][:2]
+        assert title == "Mech Payment Withdraw Failed"
+        assert "Stage: read pending balance" in msg
+        assert "mapMechBalances timeout" in msg
+        bridge.wallet.safe_service.execute_safe_transaction.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_balance_tracker_resolution_failure_notifies_operator(self):
+        """Tracker lookup failures are not silently treated as no tracker."""
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 0.01
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=0)
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch(
+            "micromech.tasks.payment_withdraw.get_balance_tracker_address",
+            side_effect=RuntimeError("tracker RPC timeout"),
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        notification.send.assert_awaited_once()
+        title, msg = notification.send.call_args[0][:2]
+        assert title == "Mech Payment Withdraw Failed"
+        assert "Stage: resolve balance tracker" in msg
+        assert "tracker RPC timeout" in msg
+        bridge.wallet.safe_service.execute_safe_transaction.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_pending_read_failure_still_drains_existing_mech_balance(self):
+        """If xDAI is already on the mech, recover it even when pending read fails."""
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 1.0
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=0)
+        bridge.web3.eth.get_balance.return_value = int(31.44e18)
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with (
+            patch(
+                "micromech.tasks.payment_withdraw.get_pending_balance",
+                side_effect=RuntimeError("mapMechBalances timeout"),
+            ),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": MULTISIG},
+            ),
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        calls = bridge.wallet.safe_service.execute_safe_transaction.call_args_list
+        assert len(calls) == 1
+        assert calls[0].kwargs["to"] == MECH
+        assert bridge.wallet.send.call_args[1]["amount_wei"] == int(31.44e18)
+        notification.send.assert_awaited_once()
+        msg = notification.send.call_args[0][1]
+        assert "WARNING: pending balance read failed" in msg
+        assert "mapMechBalances timeout" in msg
+
+    @pytest.mark.asyncio
     async def test_transfer_to_master_uses_wallet_send(self):
         """_transfer_to_master uses wallet.send, not execute_safe_transaction."""
         cfg = _make_config()
@@ -460,7 +649,7 @@ class TestPaymentWithdrawTask:
         chain_cfg = _make_chain_config()
         cfg.chains = {"gnosis": chain_cfg}
 
-        bridge = _make_bridge(bt_address=ZERO)
+        bridge = _make_bridge(bt_address=ZERO, mech_balance_raw=0)
         bridges = {"gnosis": bridge}
         notification = NotificationService()
         notification.send = AsyncMock()
@@ -532,7 +721,11 @@ class TestPaymentWithdrawTask:
         # Should not raise
         await payment_withdraw_task(bridges, notification, cfg)
 
-        notification.send.assert_not_called()
+        notification.send.assert_awaited_once()
+        title, msg = notification.send.call_args[0][:2]
+        assert title == "Mech Payment Withdraw Failed"
+        assert "Stage: read existing mech balance" in msg
+        assert "network error" in msg
 
     @pytest.mark.asyncio
     async def test_drain_failure_propagates_to_outer_except(self):

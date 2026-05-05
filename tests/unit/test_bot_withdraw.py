@@ -78,6 +78,23 @@ def _make_callback_update(payload: str):
     return update
 
 
+class _AsyncLockProbe:
+    def __init__(self):
+        self.entered = False
+        self.exited = False
+        self.active = False
+
+    async def __aenter__(self):
+        self.entered = True
+        self.active = True
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self.active = False
+        self.exited = True
+        return False
+
+
 # ---------------------------------------------------------------------------
 # withdraw_command
 # ---------------------------------------------------------------------------
@@ -559,6 +576,96 @@ class TestRunWithdraw:
         transfer_mock.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_stranded_mech_balance_recovers_without_balance_tracker(self):
+        from micromech.bot.commands.withdraw import _run_withdraw
+
+        bridge = _make_bridge()
+        bridge.web3.eth.get_balance.return_value = int(31.44e18)
+        chain_config = _make_config_with_mech().enabled_chains["gnosis"]
+
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "c" * 40},
+            ),
+            patch(
+                "micromech.core.marketplace.get_balance_tracker_address",
+                return_value=None,
+            ),
+            patch(
+                "micromech.bot.commands.withdraw._get_pending_balance",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "micromech.bot.commands.withdraw._get_mech_balance_wei",
+                new=AsyncMock(return_value=int(31.44e18)),
+            ),
+            patch("micromech.tasks.payment_withdraw._withdraw") as withdraw_mock,
+            patch("micromech.tasks.payment_withdraw._drain_mech_to_safe") as drain_mock,
+            patch("micromech.tasks.payment_withdraw._transfer_to_master") as transfer_mock,
+        ):
+            ok, msg = await _run_withdraw(bridge, "gnosis", chain_config)
+
+        assert ok is True
+        assert "31.440000 xDAI" in msg
+        withdraw_mock.assert_not_called()
+        drain_mock.assert_called_once()
+        transfer_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_uses_safe_lock_around_manual_withdraw(self):
+        from micromech.bot.commands.withdraw import _run_withdraw
+
+        bridge = _make_bridge()
+        bridge.web3.eth.get_balance.return_value = int(5e18)
+        chain_config = _make_config_with_mech().enabled_chains["gnosis"]
+        lock = _AsyncLockProbe()
+
+        def assert_locked(*_args, **_kwargs):
+            assert lock.active is True
+
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "c" * 40},
+            ),
+            patch(
+                "micromech.core.marketplace.get_balance_tracker_address",
+                return_value="0x" + "b" * 40,
+            ),
+            patch(
+                "micromech.core.locks.get_safe_lock",
+                return_value=lock,
+            ),
+            patch(
+                "micromech.bot.commands.withdraw._get_pending_balance",
+                new=AsyncMock(return_value=5.0),
+            ),
+            patch(
+                "micromech.bot.commands.withdraw._get_mech_balance_wei",
+                new=AsyncMock(return_value=0),
+            ),
+            patch(
+                "micromech.tasks.payment_withdraw._withdraw",
+                side_effect=assert_locked,
+            ) as withdraw_mock,
+            patch(
+                "micromech.tasks.payment_withdraw._drain_mech_to_safe",
+                side_effect=assert_locked,
+            ),
+            patch(
+                "micromech.tasks.payment_withdraw._transfer_to_master",
+                side_effect=assert_locked,
+            ),
+        ):
+            ok, _msg = await _run_withdraw(bridge, "gnosis", chain_config)
+
+        assert ok is True
+        assert lock.entered is True
+        assert lock.exited is True
+        withdraw_mock.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_no_multisig(self):
         from micromech.bot.commands.withdraw import _run_withdraw
 
@@ -590,11 +697,15 @@ class TestRunWithdraw:
                 "micromech.core.marketplace.get_balance_tracker_address",
                 return_value=None,
             ),
+            patch(
+                "micromech.bot.commands.withdraw._get_mech_balance_wei",
+                new=AsyncMock(return_value=0),
+            ),
         ):
             ok, msg = await _run_withdraw(bridge, "gnosis", chain_config)
 
         assert ok is False
-        assert "balance tracker" in msg
+        assert "pending balance" in msg
 
     @pytest.mark.asyncio
     async def test_transfer_to_master_fails_returns_partial_success(self):
@@ -634,3 +745,4 @@ class TestRunWithdraw:
         assert ok is True
         assert "drained to Safe" in msg
         assert "transfer to master failed" in msg
+        assert "`Safe tx failed`" in msg

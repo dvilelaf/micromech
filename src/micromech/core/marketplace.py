@@ -80,6 +80,8 @@ def get_balance_tracker_address(
     chain_name: str,
     mech_address: str,
     marketplace_address: str,
+    *,
+    raise_on_error: bool = False,
 ) -> str | None:
     """Resolve balance tracker address for the mech's payment type."""
 
@@ -104,6 +106,8 @@ def get_balance_tracker_address(
         logger.warning(
             "[{}] Failed to resolve balance tracker: {}", chain_name, e
         )
+        if raise_on_error:
+            raise
         return None
 
     web3 = bridge.web3
@@ -119,7 +123,11 @@ def get_balance_tracker_address(
 
 
 def get_pending_balance(
-    bridge: IwaBridge, bt_address: str, mech_address: str
+    bridge: IwaBridge,
+    bt_address: str,
+    mech_address: str,
+    *,
+    raise_on_error: bool = False,
 ) -> float:
     """Return pending xDAI balance (ether units) for the mech."""
 
@@ -139,5 +147,7 @@ def get_pending_balance(
         logger.warning(
             "Failed to fetch pending balance for {}: {}", mech_address, e
         )
+        if raise_on_error:
+            raise
         return 0.0
     return raw / 1e18

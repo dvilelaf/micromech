@@ -121,10 +121,8 @@ def _transfer_to_master(
         lambda: web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
     )
     if receipt["status"] != 1:
-        logger.warning(
-            "[{}] xDAI transfer to master reverted: {}",
-            chain_name,
-            tx_hash_str,
+        raise RuntimeError(
+            f"[{chain_name}] xDAI transfer to master reverted: {tx_hash_str}"
         )
 
 
@@ -256,30 +254,8 @@ async def payment_withdraw_task(
         try:
             balance: float | None = None
             mech_actual_wei: int | None = None
+            pending_read_error: Exception | None = None
             stage = "initializing"
-            bt_address = await asyncio.to_thread(
-                get_balance_tracker_address,
-                bridge,
-                chain_name,
-                chain_config.mech_address,
-                chain_config.marketplace_address,
-            )
-            if not bt_address:
-                continue
-
-            balance = await asyncio.to_thread(
-                get_pending_balance,
-                bridge,
-                bt_address,
-                chain_config.mech_address,
-            )
-            stage = "checking threshold"
-            logger.debug(
-                "[{}] Pending mech payment in balance tracker: {:.6f} xDAI",
-                chain_name,
-                balance,
-            )
-
             # Also inspect the mech contract itself. If a previous run failed
             # after processPaymentByMultisig(), the balance tracker will show
             # low pending payments while xDAI is already sitting on the mech.
@@ -298,12 +274,59 @@ async def payment_withdraw_task(
                 existing_mech_xdai,
             )
 
-            if balance < threshold and existing_mech_xdai < threshold:
+            stage = "resolve balance tracker"
+            bt_address = await asyncio.to_thread(
+                get_balance_tracker_address,
+                bridge,
+                chain_name,
+                chain_config.mech_address,
+                chain_config.marketplace_address,
+                raise_on_error=True,
+            )
+            if bt_address:
+                stage = "read pending balance"
+                try:
+                    balance = await asyncio.to_thread(
+                        get_pending_balance,
+                        bridge,
+                        bt_address,
+                        chain_config.mech_address,
+                        raise_on_error=True,
+                    )
+                except Exception as e:
+                    if existing_mech_xdai < threshold:
+                        raise
+                    pending_read_error = e
+                    logger.warning(
+                        "[{}] Pending balance read failed, but mech already holds"
+                        " {:.6f} xDAI; proceeding with stranded drain: {}",
+                        chain_name,
+                        existing_mech_xdai,
+                        _sanitize_error(e),
+                    )
+                stage = "checking threshold"
+                if balance is not None:
+                    logger.debug(
+                        "[{}] Pending mech payment in balance tracker: {:.6f} xDAI",
+                        chain_name,
+                        balance,
+                    )
+            elif existing_mech_xdai < threshold:
+                logger.debug(
+                    "[{}] Balance tracker unavailable and mech balance {:.6f} xDAI below"
+                    " threshold {:.4f} xDAI — skipping",
+                    chain_name,
+                    existing_mech_xdai,
+                    threshold,
+                )
+                continue
+
+            if (balance or 0.0) < threshold and existing_mech_xdai < threshold:
                 logger.debug(
                     "[{}] Pending payment {:.6f} xDAI and mech balance {:.6f} xDAI below threshold"
                     " {:.4f} xDAI — skipping",
                     chain_name,
-                    balance,
+                    balance or 0.0,
                     existing_mech_xdai,
                     threshold,
                 )
@@ -325,7 +348,7 @@ async def payment_withdraw_task(
                 "[{}] Withdrawing {:.6f} xDAI mech payment to multisig {}"
                 " (existing mech balance {:.6f} xDAI)",
                 chain_name,
-                balance,
+                balance or 0.0,
                 multisig,
                 existing_mech_xdai,
             )
@@ -334,7 +357,11 @@ async def payment_withdraw_task(
             # delivery workers cannot submit concurrent TXs during withdrawal.
             transfer_error: Exception | None = None
             async with get_safe_lock(multisig):
-                if balance >= threshold:
+                if (balance or 0.0) >= threshold:
+                    if not bt_address:
+                        raise RuntimeError(
+                            f"[{chain_name}] Cannot process pending payments without balance tracker"
+                        )
                     # Step 1: processPaymentByMultisig → xDAI lands in mech contract
                     stage = "processPaymentByMultisig"
                     await asyncio.to_thread(
@@ -416,6 +443,12 @@ async def payment_withdraw_task(
                     (
                         f"Chain: {chain_name}\nAmount: {mech_actual_xdai:.6f} xDAI"
                         f"\nTransferred to master: {master}"
+                        + (
+                            "\nWARNING: pending balance read failed before drain: "
+                            f"{_sanitize_error(pending_read_error)}"
+                            if pending_read_error is not None
+                            else ""
+                        )
                     ),
                 )
             else:
@@ -425,6 +458,12 @@ async def payment_withdraw_task(
                         f"Chain: {chain_name}\nAmount: {mech_actual_xdai:.6f} xDAI"
                         f"\nTo Safe: {multisig}"
                         f"\nWARNING: transfer to master failed: {_sanitize_error(transfer_error)}"
+                        + (
+                            "\nWARNING: pending balance read failed before drain: "
+                            f"{_sanitize_error(pending_read_error)}"
+                            if pending_read_error is not None
+                            else ""
+                        )
                     ),
                 )
 

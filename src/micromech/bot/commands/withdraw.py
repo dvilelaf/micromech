@@ -64,6 +64,7 @@ async def _get_pending_balance(
             bridge,
             bt_address,
             chain_config.mech_address,
+            raise_on_error=True,
         )
     except Exception:
         return None
@@ -114,6 +115,7 @@ async def _run_withdraw(
     Returns (success, result_message_md).
     """
     from micromech.core.bridge import get_service_info
+    from micromech.core.locks import get_safe_lock
     from micromech.core.marketplace import get_balance_tracker_address
     from micromech.tasks.payment_withdraw import (
         _drain_mech_to_safe,
@@ -126,68 +128,72 @@ async def _run_withdraw(
     if not multisig:
         return False, f"{bold_md(chain_name.upper())}: No multisig address"
 
-    bt_address = await asyncio.to_thread(
-        get_balance_tracker_address,
-        bridge,
-        chain_name,
-        chain_config.mech_address,
-        chain_config.marketplace_address,
-    )
-    if not bt_address:
-        return False, (
-            f"{bold_md(chain_name.upper())}: Could not resolve balance tracker"
-        )
-
     pending = await _get_pending_balance(bridge, chain_name, chain_config)
     mech_wei_before = await _get_mech_balance_wei(bridge, chain_config)
     if pending is None and mech_wei_before is None:
         return False, f"{bold_md(chain_name.upper())}: Could not retrieve balances"
+    if pending is None and (mech_wei_before or 0) <= 0:
+        return False, (
+            f"{bold_md(chain_name.upper())}: Could not retrieve pending balance"
+        )
 
     has_pending = (pending or 0.0) > 0
     has_stranded = (mech_wei_before or 0) > 0
     if not has_pending and not has_stranded:
         return True, f"{bold_md(chain_name.upper())}: No pending payments"
 
-    if has_pending:
-        # Step 1: processPaymentByMultisig → xDAI to mech contract
+    async with get_safe_lock(multisig):
+        if has_pending:
+            bt_address = await asyncio.to_thread(
+                get_balance_tracker_address,
+                bridge,
+                chain_name,
+                chain_config.mech_address,
+                chain_config.marketplace_address,
+            )
+            if not bt_address:
+                return False, (
+                    f"{bold_md(chain_name.upper())}: Could not resolve balance tracker"
+                )
+            # Step 1: processPaymentByMultisig → xDAI to mech contract
+            await asyncio.to_thread(
+                _withdraw,
+                bridge,
+                chain_name,
+                bt_address,
+                chain_config.mech_address,
+                multisig,
+            )
+
+        # Step 2: mech.exec → drain mech to Safe (read exact wei first)
+        web3 = bridge.web3
+        mech_wei = await asyncio.to_thread(
+            bridge.with_retry,
+            lambda: web3.eth.get_balance(
+                web3.to_checksum_address(chain_config.mech_address)
+            ),
+        )
         await asyncio.to_thread(
-            _withdraw,
+            _drain_mech_to_safe,
             bridge,
             chain_name,
-            bt_address,
             chain_config.mech_address,
             multisig,
+            mech_wei,
         )
 
-    # Step 2: mech.exec → drain mech to Safe (read exact wei first)
-    web3 = bridge.web3
-    mech_wei = await asyncio.to_thread(
-        bridge.with_retry,
-        lambda: web3.eth.get_balance(
-            web3.to_checksum_address(chain_config.mech_address)
-        ),
-    )
-    await asyncio.to_thread(
-        _drain_mech_to_safe,
-        bridge,
-        chain_name,
-        chain_config.mech_address,
-        multisig,
-        mech_wei,
-    )
-
-    # Step 3: Safe → master (funds are in Safe if this fails)
-    amount = mech_wei / 1e18
-    try:
-        await asyncio.to_thread(
-            _transfer_to_master, bridge, chain_name, multisig, mech_wei
-        )
-    except Exception as e:
-        return True, (
-            f"{bold_md(chain_name.upper())}: "
-            f"{code_md(f'{amount:.6f} xDAI')} drained to Safe "
-            f"but transfer to master failed: {e}"
-        )
+        # Step 3: Safe → master (funds are in Safe if this fails)
+        amount = mech_wei / 1e18
+        try:
+            await asyncio.to_thread(
+                _transfer_to_master, bridge, chain_name, multisig, mech_wei
+            )
+        except Exception as e:
+            return True, (
+                f"{bold_md(chain_name.upper())}: "
+                f"{code_md(f'{amount:.6f} xDAI')} drained to Safe "
+                f"but transfer to master failed: {code_md(str(e))}"
+            )
 
     return True, (
         f"{bold_md(chain_name.upper())}: "
@@ -261,6 +267,13 @@ async def _show_balance_and_confirm(
         )
         return
 
+    if pending is None and (mech_wei or 0) <= 0:
+        await status_msg.edit_text(
+            "Could not retrieve pending balance\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+        return
+
     if (pending or 0.0) <= 0 and (mech_wei or 0) <= 0:
         await status_msg.edit_text(
             f"{bold_md(chain_name.upper())}: No pending payments\\.",
@@ -326,11 +339,11 @@ async def handle_withdraw_callback(
         )
         pending, mech_wei = await _get_withdraw_balances(bridge, chain_name, chain_config)
         if (pending is None and mech_wei is None) or (
-            (pending or 0.0) <= 0 and (mech_wei or 0) <= 0
-        ):
+            pending is None and (mech_wei or 0) <= 0
+        ) or ((pending or 0.0) <= 0 and (mech_wei or 0) <= 0):
             msg = (
                 "No pending payments\\."
-                if not (pending is None and mech_wei is None)
+                if pending is not None and (pending or 0.0) <= 0
                 else "Could not retrieve balance\\."
             )
             await query.edit_message_text(

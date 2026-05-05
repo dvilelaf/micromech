@@ -1428,6 +1428,23 @@ def test_sanitize_error_redacts_signature():
     assert signature not in result
 
 
+def test_sanitize_error_redacts_rpc_credentials():
+    """RPC URLs and auth fragments should not leak to notifications."""
+    from micromech.runtime.delivery import _sanitize_error
+
+    msg = (
+        "RPC failed https://user:pass@example.invalid/v3/abcdefghijklmnop123456"
+        "?api_key=secret-token Authorization: Bearer abc.def.ghi"
+    )
+    result = _sanitize_error(RuntimeError(msg))
+
+    assert "user:pass" not in result
+    assert "abcdefghijklmnop123456" not in result
+    assert "secret-token" not in result
+    assert "abc.def.ghi" not in result
+    assert "[REDACTED]" in result
+
+
 def test_sanitize_error_traverses_cause_chain():
     """__cause__ chain is traversed and redacted up to depth 5."""
     from micromech.runtime.delivery import _sanitize_error

@@ -60,6 +60,13 @@ _REQUEST_STATUS_LABELS = {
 
 # Redacts 0x-prefixed hex blobs ≥ 64 chars (private keys, tx hashes, sigs).
 _HEX_BLOB_RE = re.compile(r"0x[0-9a-fA-F]{64,}", re.ASCII)
+_URL_USERINFO_RE = re.compile(r"(https?://)([^/@\s:]+):([^/@\s]+)@", re.IGNORECASE)
+_SECRET_QUERY_RE = re.compile(
+    r"([?&](?:api[_-]?key|access[_-]?token|token|auth|authorization|key|secret|password|pass)=)[^&\s]+",
+    re.IGNORECASE,
+)
+_AUTH_HEADER_RE = re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
+_RPC_PATH_KEY_RE = re.compile(r"(/v[23]/)[A-Za-z0-9_-]{16,}")
 
 
 def _sanitize_error(exc: BaseException, _depth: int = 0) -> str:
@@ -71,6 +78,10 @@ def _sanitize_error(exc: BaseException, _depth: int = 0) -> str:
     if _depth > 5:
         return "..."
     msg = _HEX_BLOB_RE.sub("0x[REDACTED]", str(exc))
+    msg = _URL_USERINFO_RE.sub(r"\1[REDACTED]:[REDACTED]@", msg)
+    msg = _SECRET_QUERY_RE.sub(r"\1[REDACTED]", msg)
+    msg = _AUTH_HEADER_RE.sub(r"\1 [REDACTED]", msg)
+    msg = _RPC_PATH_KEY_RE.sub(r"\1[REDACTED]", msg)
     chained = exc.__cause__ if exc.__cause__ is not None else exc.__context__
     if chained is not None:
         chain_msg = _sanitize_error(chained, _depth + 1)
