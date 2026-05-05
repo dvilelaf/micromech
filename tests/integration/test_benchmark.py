@@ -19,6 +19,7 @@ numbers — the tests always pass and just report what they measured.
 """
 
 import asyncio
+import os
 import time
 from unittest.mock import patch
 
@@ -38,6 +39,11 @@ from tests.integration.test_anvil_e2e import (
     _load_abi,
     _mint_olas,
     _setup_iwa_for_anvil,
+)
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_BENCHMARKS") != "1",
+    reason="benchmarks are opt-in; set RUN_BENCHMARKS=1 to run them",
 )
 
 # ---------------------------------------------------------------------------

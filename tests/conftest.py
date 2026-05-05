@@ -10,6 +10,17 @@ from micromech.core.constants import CHAIN_DEFAULTS
 from micromech.core.persistence import PersistentQueue
 
 
+@pytest.fixture(autouse=True)
+def _reset_listener_defaults():
+    """Reset listener module constants mutated by integration tests."""
+    import micromech.runtime.listener as listener_mod
+    from micromech.core import constants
+
+    yield
+    listener_mod.DEFAULT_EVENT_POLL_INTERVAL = constants.DEFAULT_EVENT_POLL_INTERVAL
+    listener_mod.DEFAULT_EVENT_LOOKBACK_BLOCKS = constants.DEFAULT_EVENT_LOOKBACK_BLOCKS
+
+
 def make_test_config(**kwargs) -> MicromechConfig:
     """Create a MicromechConfig with gnosis chain for testing."""
     gnosis = CHAIN_DEFAULTS["gnosis"]

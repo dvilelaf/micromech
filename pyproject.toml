@@ -84,6 +84,7 @@ packages = ["src/micromech"]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
+    "benchmark: opt-in throughput benchmarks",
     "timeout: mark test with a timeout in seconds",
 ]
 addopts = "--cov=src/micromech --cov-report=term-missing"
