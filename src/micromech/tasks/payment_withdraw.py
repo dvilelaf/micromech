@@ -400,6 +400,7 @@ async def payment_withdraw_task(
                     chain_name,
                     mech_actual_wei,
                 )
+                assert mech_actual_wei is not None
 
                 # Step 2: mech.exec → pull xDAI from mech to Safe
                 stage = "mech.exec drain"

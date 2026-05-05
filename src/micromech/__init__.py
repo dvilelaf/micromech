@@ -1,3 +1,3 @@
 """micromech - Lightweight OLAS mech runtime."""
 
-__version__ = "0.0.48"
+__version__ = "0.0.49"
