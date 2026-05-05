@@ -69,6 +69,43 @@ async def _get_pending_balance(
         return None
 
 
+async def _get_mech_balance_wei(bridge, chain_config) -> int | None:
+    """Return native xDAI balance held by the mech contract, or None on error."""
+    try:
+        web3 = bridge.web3
+        return await asyncio.to_thread(
+            bridge.with_retry,
+            lambda: web3.eth.get_balance(
+                web3.to_checksum_address(chain_config.mech_address)
+            ),
+        )
+    except Exception:
+        return None
+
+
+async def _get_withdraw_balances(
+    bridge,
+    chain_name: str,
+    chain_config,
+) -> tuple[float | None, int | None]:
+    """Return (balance-tracker pending xDAI, mech contract wei)."""
+    pending, mech_wei = await asyncio.gather(
+        _get_pending_balance(bridge, chain_name, chain_config),
+        _get_mech_balance_wei(bridge, chain_config),
+    )
+    return pending, mech_wei
+
+
+def _format_available_balance(pending: float | None, mech_wei: int | None) -> str:
+    """Format pending and stranded mech balance for confirmation messages."""
+    parts = []
+    if pending is not None:
+        parts.append(f"Pending: {code_md(f'{pending:.6f} xDAI')}")
+    if mech_wei is not None:
+        parts.append(f"Mech: {code_md(f'{mech_wei / 1e18:.6f} xDAI')}")
+    return "\n".join(parts)
+
+
 async def _run_withdraw(
     bridge, chain_name: str, chain_config
 ) -> tuple[bool, str]:
@@ -101,15 +138,26 @@ async def _run_withdraw(
             f"{bold_md(chain_name.upper())}: Could not resolve balance tracker"
         )
 
-    # Step 1: processPaymentByMultisig → xDAI to mech contract
-    await asyncio.to_thread(
-        _withdraw,
-        bridge,
-        chain_name,
-        bt_address,
-        chain_config.mech_address,
-        multisig,
-    )
+    pending = await _get_pending_balance(bridge, chain_name, chain_config)
+    mech_wei_before = await _get_mech_balance_wei(bridge, chain_config)
+    if pending is None and mech_wei_before is None:
+        return False, f"{bold_md(chain_name.upper())}: Could not retrieve balances"
+
+    has_pending = (pending or 0.0) > 0
+    has_stranded = (mech_wei_before or 0) > 0
+    if not has_pending and not has_stranded:
+        return True, f"{bold_md(chain_name.upper())}: No pending payments"
+
+    if has_pending:
+        # Step 1: processPaymentByMultisig → xDAI to mech contract
+        await asyncio.to_thread(
+            _withdraw,
+            bridge,
+            chain_name,
+            bt_address,
+            chain_config.mech_address,
+            multisig,
+        )
 
     # Step 2: mech.exec → drain mech to Safe (read exact wei first)
     web3 = bridge.web3
@@ -205,15 +253,15 @@ async def _show_balance_and_confirm(
         parse_mode=ParseMode.MARKDOWN_V2,
     )
 
-    balance = await _get_pending_balance(bridge, chain_name, chain_config)
-    if balance is None:
+    pending, mech_wei = await _get_withdraw_balances(bridge, chain_name, chain_config)
+    if pending is None and mech_wei is None:
         await status_msg.edit_text(
-            "Could not retrieve pending balance\\.",
+            "Could not retrieve withdraw balances\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
-    if balance <= 0:
+    if (pending or 0.0) <= 0 and (mech_wei or 0) <= 0:
         await status_msg.edit_text(
             f"{bold_md(chain_name.upper())}: No pending payments\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
@@ -237,7 +285,7 @@ async def _show_balance_and_confirm(
     )
     await status_msg.edit_text(
         f"{bold_md(chain_name.upper())}: "
-        f"{code_md(f'{balance:.6f} xDAI')} pending\n"
+        f"withdrawable balance\n{_format_available_balance(pending, mech_wei)}\n"
         f"Withdraw to master?",
         reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN_V2,
@@ -276,11 +324,13 @@ async def handle_withdraw_callback(
             f"Checking balance for {bold_md(chain_name.upper())}\\.\\.\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
-        balance = await _get_pending_balance(bridge, chain_name, chain_config)
-        if balance is None or balance <= 0:
+        pending, mech_wei = await _get_withdraw_balances(bridge, chain_name, chain_config)
+        if (pending is None and mech_wei is None) or (
+            (pending or 0.0) <= 0 and (mech_wei or 0) <= 0
+        ):
             msg = (
                 "No pending payments\\."
-                if (balance is not None and balance <= 0)
+                if not (pending is None and mech_wei is None)
                 else "Could not retrieve balance\\."
             )
             await query.edit_message_text(
@@ -309,7 +359,7 @@ async def handle_withdraw_callback(
         )
         await query.edit_message_text(
             f"{bold_md(chain_name.upper())}: "
-            f"{code_md(f'{balance:.6f} xDAI')} pending\n"
+            f"withdrawable balance\n{_format_available_balance(pending, mech_wei)}\n"
             f"Withdraw to master?",
             reply_markup=keyboard,
             parse_mode=ParseMode.MARKDOWN_V2,

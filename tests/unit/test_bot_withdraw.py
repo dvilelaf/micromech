@@ -108,8 +108,8 @@ class TestWithdrawCommand:
             _auth_patches()[0],
             _auth_patches()[1],
             patch(
-                "micromech.bot.commands.withdraw._get_pending_balance",
-                new=AsyncMock(return_value=5.0),
+                "micromech.bot.commands.withdraw._get_withdraw_balances",
+                new=AsyncMock(return_value=(5.0, 0)),
             ),
         ):
             await withdraw_command(update, ctx)
@@ -117,7 +117,7 @@ class TestWithdrawCommand:
         update.message.reply_text.assert_called_once()
         sent_msg.edit_text.assert_called_once()
         call_kwargs = sent_msg.edit_text.call_args
-        assert "5.000000 xDAI" in call_kwargs[0][0]
+        assert "Pending: `5.000000 xDAI`" in call_kwargs[0][0]
 
     @pytest.mark.asyncio
     async def test_single_chain_no_pending(self):
@@ -130,8 +130,8 @@ class TestWithdrawCommand:
             _auth_patches()[0],
             _auth_patches()[1],
             patch(
-                "micromech.bot.commands.withdraw._get_pending_balance",
-                new=AsyncMock(return_value=0.0),
+                "micromech.bot.commands.withdraw._get_withdraw_balances",
+                new=AsyncMock(return_value=(0.0, 0)),
             ),
         ):
             await withdraw_command(update, ctx)
@@ -150,14 +150,35 @@ class TestWithdrawCommand:
             _auth_patches()[0],
             _auth_patches()[1],
             patch(
-                "micromech.bot.commands.withdraw._get_pending_balance",
-                new=AsyncMock(return_value=None),
+                "micromech.bot.commands.withdraw._get_withdraw_balances",
+                new=AsyncMock(return_value=(None, None)),
             ),
         ):
             await withdraw_command(update, ctx)
 
         sent_msg.edit_text.assert_called_once()
         assert "retrieve" in sent_msg.edit_text.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_single_chain_shows_stranded_mech_balance(self):
+        from micromech.bot.commands.withdraw import withdraw_command
+
+        update, sent_msg = _make_update()
+        ctx = _make_context()
+
+        with (
+            _auth_patches()[0],
+            _auth_patches()[1],
+            patch(
+                "micromech.bot.commands.withdraw._get_withdraw_balances",
+                new=AsyncMock(return_value=(0.0, int(31.44e18))),
+            ),
+        ):
+            await withdraw_command(update, ctx)
+
+        text = sent_msg.edit_text.call_args[0][0]
+        assert "Mech: `31.440000 xDAI`" in text
+        assert "Withdraw to master" in text
 
     @pytest.mark.asyncio
     async def test_multi_chain_shows_picker(self):
@@ -236,8 +257,8 @@ class TestWithdrawCallback:
         ctx = _make_context()
 
         with patch(
-            "micromech.bot.commands.withdraw._get_pending_balance",
-            new=AsyncMock(return_value=2.5),
+            "micromech.bot.commands.withdraw._get_withdraw_balances",
+            new=AsyncMock(return_value=(2.5, 0)),
         ):
             await handle_withdraw_callback(update, ctx, "gnosis")
 
@@ -253,8 +274,8 @@ class TestWithdrawCallback:
         ctx = _make_context()
 
         with patch(
-            "micromech.bot.commands.withdraw._get_pending_balance",
-            new=AsyncMock(return_value=0.0),
+            "micromech.bot.commands.withdraw._get_withdraw_balances",
+            new=AsyncMock(return_value=(0.0, 0)),
         ):
             await handle_withdraw_callback(update, ctx, "gnosis")
 
@@ -269,8 +290,8 @@ class TestWithdrawCallback:
         ctx = _make_context()
 
         with patch(
-            "micromech.bot.commands.withdraw._get_pending_balance",
-            new=AsyncMock(return_value=None),
+            "micromech.bot.commands.withdraw._get_withdraw_balances",
+            new=AsyncMock(return_value=(None, None)),
         ):
             await handle_withdraw_callback(update, ctx, "gnosis")
 
@@ -483,6 +504,14 @@ class TestRunWithdraw:
                 "micromech.core.marketplace.get_balance_tracker_address",
                 return_value="0x" + "b" * 40,
             ),
+            patch(
+                "micromech.bot.commands.withdraw._get_pending_balance",
+                new=AsyncMock(return_value=5.0),
+            ),
+            patch(
+                "micromech.bot.commands.withdraw._get_mech_balance_wei",
+                new=AsyncMock(return_value=0),
+            ),
             patch("micromech.tasks.payment_withdraw._withdraw"),
             patch("micromech.tasks.payment_withdraw._drain_mech_to_safe"),
             patch("micromech.tasks.payment_withdraw._transfer_to_master"),
@@ -491,6 +520,43 @@ class TestRunWithdraw:
 
         assert ok is True
         assert "5.000000 xDAI" in msg
+
+    @pytest.mark.asyncio
+    async def test_stranded_mech_balance_skips_process_payment(self):
+        from micromech.bot.commands.withdraw import _run_withdraw
+
+        bridge = _make_bridge()
+        bridge.web3.eth.get_balance.return_value = int(31.44e18)
+        chain_config = _make_config_with_mech().enabled_chains["gnosis"]
+
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "c" * 40},
+            ),
+            patch(
+                "micromech.core.marketplace.get_balance_tracker_address",
+                return_value="0x" + "b" * 40,
+            ),
+            patch(
+                "micromech.bot.commands.withdraw._get_pending_balance",
+                new=AsyncMock(return_value=0.0),
+            ),
+            patch(
+                "micromech.bot.commands.withdraw._get_mech_balance_wei",
+                new=AsyncMock(return_value=int(31.44e18)),
+            ),
+            patch("micromech.tasks.payment_withdraw._withdraw") as withdraw_mock,
+            patch("micromech.tasks.payment_withdraw._drain_mech_to_safe") as drain_mock,
+            patch("micromech.tasks.payment_withdraw._transfer_to_master") as transfer_mock,
+        ):
+            ok, msg = await _run_withdraw(bridge, "gnosis", chain_config)
+
+        assert ok is True
+        assert "31.440000 xDAI" in msg
+        withdraw_mock.assert_not_called()
+        drain_mock.assert_called_once()
+        transfer_mock.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_multisig(self):
@@ -547,6 +613,14 @@ class TestRunWithdraw:
             patch(
                 "micromech.core.marketplace.get_balance_tracker_address",
                 return_value="0x" + "b" * 40,
+            ),
+            patch(
+                "micromech.bot.commands.withdraw._get_pending_balance",
+                new=AsyncMock(return_value=3.0),
+            ),
+            patch(
+                "micromech.bot.commands.withdraw._get_mech_balance_wei",
+                new=AsyncMock(return_value=0),
             ),
             patch("micromech.tasks.payment_withdraw._withdraw"),
             patch("micromech.tasks.payment_withdraw._drain_mech_to_safe"),
