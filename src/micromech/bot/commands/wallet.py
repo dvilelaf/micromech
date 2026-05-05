@@ -106,16 +106,18 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         svc_info = get_service_info(chain_name)
         chain_infos.append((chain_name, chain_config, svc_info))
 
-    # R2-L2: build a dict of tasks keyed by (chain, "safe"/"agent") so index
+    # R2-L2: build a dict of tasks keyed by (chain, role) so index
     # arithmetic can't silently corrupt results if a future refactor adds or
     # removes a balance fetch per chain.
     task_keys: list[tuple[str, str]] = []
     tasks = []
-    for chain_name, _, svc_info in chain_infos:
+    for chain_name, chain_config, svc_info in chain_infos:
         task_keys.append((chain_name, "safe"))
         tasks.append(_fetch_address_balance(chain_name, svc_info.get("multisig_address")))
         task_keys.append((chain_name, "agent"))
         tasks.append(_fetch_address_balance(chain_name, svc_info.get("agent_address")))
+        task_keys.append((chain_name, "mech"))
+        tasks.append(_fetch_address_balance(chain_name, chain_config.mech_address))
     all_results = await asyncio.gather(*tasks, return_exceptions=True)
     results_by_key: dict[tuple[str, str], Optional[tuple[float, float]]] = {}
     for key, res in zip(task_keys, all_results):
@@ -131,11 +133,14 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         safe_bal = results_by_key.get((chain_name, "safe"))
         agent_bal = results_by_key.get((chain_name, "agent"))
+        mech_bal = results_by_key.get((chain_name, "mech"))
 
         safe_native = safe_bal[0] if safe_bal else None
         safe_olas = safe_bal[1] if safe_bal else None
         agent_native = agent_bal[0] if agent_bal else None
         agent_olas = agent_bal[1] if agent_bal else None
+        mech_native = mech_bal[0] if mech_bal else None
+        mech_olas = mech_bal[1] if mech_bal else None
 
         # Header emoji reflects funding state. If balance is unknown we can't judge →
         # show ❓ instead of a misleading ✅/⚠️ (security-md M2).
@@ -176,6 +181,17 @@ async def wallet_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     safe_native,
                     safe_olas,
                     balance_known=(safe_bal is not None),
+                )
+            )
+        if chain_config.mech_address:
+            lines.append(
+                _address_line(
+                    "Mech",
+                    chain_config.mech_address,
+                    chain_name,
+                    mech_native,
+                    mech_olas,
+                    balance_known=(mech_bal is not None),
                 )
             )
         if service_id:

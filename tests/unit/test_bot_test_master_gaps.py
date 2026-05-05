@@ -354,7 +354,7 @@ class TestWalletFundEmoji:
 
         chain_cfg = MagicMock()
         chain_cfg.fund_threshold_xdai = threshold
-        chain_cfg.mech_address = None
+        chain_cfg.mech_address = "0x" + "d" * 40
 
         config = MagicMock()
         config.enabled_chains = {"gnosis": chain_cfg}
@@ -418,6 +418,12 @@ class TestWalletFundEmoji:
         text = await self._render(master_bal=None, addr_bal=None, threshold=1.0)
         assert "❓" in text
         assert "balance unknown" in text
+
+    @pytest.mark.asyncio
+    async def test_includes_mech_contract_balance(self):
+        text = await self._render(master_bal=(1.0, 0.0), addr_bal=(31.44, 0.0), threshold=0.5)
+        assert "Mech:" in text
+        assert "31.44 xDAI" in text
 
 
 # ---------------------------------------------------------------------------
