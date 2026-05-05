@@ -703,7 +703,7 @@ class TestWalletCommand:
         status_msg.edit_text.assert_called_once()
         text = status_msg.edit_text.call_args[0][0]
         assert "GNOSIS" in text
-        assert "Mech" not in text  # mech_address removed from wallet display
+        assert "Mech" in text
 
     @pytest.mark.asyncio
     async def test_wallet_chain_not_deployed(self):
