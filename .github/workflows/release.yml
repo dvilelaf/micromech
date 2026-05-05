@@ -25,7 +25,7 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
       - name: Install dependencies
-        run: just install
+        run: just install-ci
 
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
@@ -61,7 +61,7 @@ jobs:
         run: curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
 
       - name: Install dependencies
-        run: just install
+        run: just install-build
 
       - name: Set version from tag
         run: |

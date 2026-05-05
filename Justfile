@@ -4,6 +4,22 @@ set shell := ["bash", "-uc"]
 install:
     uv sync --all-extras
 
+# Install dependencies needed by the release CI job, excluding the local LLM
+# extra because llama-cpp-python is compiled in the Docker dependency layer.
+install-ci:
+    uv sync --locked \
+        --extra dev \
+        --extra telegram \
+        --extra tasks \
+        --extra genai \
+        --extra web \
+        --extra cli \
+        --extra chain
+
+# Install only what is needed to build the Python package in release CI.
+install-build:
+    uv sync --locked --group docker-build --no-install-project
+
 # Format code
 format:
     uv run ruff format src/ tests/
