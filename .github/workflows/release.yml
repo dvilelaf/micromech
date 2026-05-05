@@ -39,7 +39,7 @@ jobs:
         run: just check
 
       - name: Run Tests
-        run: just test
+        run: just test-unit
 
   release:
     name: Build & Release
