@@ -1289,8 +1289,7 @@ def _enqueue_executed(queue, rid="r1"):
 
 
 def _offchain_dm(queue):
-    bridge = MagicMock()
-    bridge.wallet.key_storage = MagicMock()
+    bridge = _make_bridge(has_safe=False)
     return DeliveryManager(
         config=_make_config(), chain_config=_make_chain_config(), queue=queue, bridge=bridge
     )
