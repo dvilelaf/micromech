@@ -99,11 +99,8 @@ class TestDeliveryWithBridge:
         self,
         delivery_with_bridge: DeliveryManager,
         queue: PersistentQueue,
-        monkeypatch,
     ):
         """With bridge and Safe mock, delivery succeeds."""
-        # Force flush regardless of batch size or age
-        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0)
         req = MechRequest(request_id="r1", prompt="test", tool="echo")
         queue.add_request(req)
         queue.mark_executing("r1")
@@ -444,12 +441,9 @@ class TestDeliveryBatchFailure:
     """Test that delivery failures mark request as failed."""
 
     @pytest.mark.asyncio
-    async def test_delivery_tx_failure_leaves_in_executed(
-        self, queue: PersistentQueue, monkeypatch
-    ):
+    async def test_delivery_tx_failure_leaves_in_executed(self, queue: PersistentQueue):
         """TX revert does NOT permanently mark records failed — they stay EXECUTED for retry."""
-        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0)
-        config = MicromechConfig()
+        config = MicromechConfig(delivery_flush_timeout_seconds=0)
         bridge = MagicMock()
         dm = DeliveryManager(
             config=config,

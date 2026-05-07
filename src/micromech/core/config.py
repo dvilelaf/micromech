@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from micromech.core.constants import (
     DEFAULT_CHAIN,
     DEFAULT_CONFIG_DIR,
+    DEFAULT_DELIVERY_BATCH_SIZE,
+    DEFAULT_DELIVERY_FLUSH_TIMEOUT,
     DEFAULT_DELIVERY_INTERVAL,
     DEFAULT_DELIVERY_RATE,
     validate_eth_address,
@@ -136,6 +138,11 @@ class MicromechConfig(BaseModel):
 
     # Delivery
     delivery_interval: int = Field(default=DEFAULT_DELIVERY_INTERVAL, ge=1, le=60)
+    batch_delivery_enabled: bool = False
+    delivery_batch_size: int = Field(default=DEFAULT_DELIVERY_BATCH_SIZE, ge=1, le=100)
+    delivery_flush_timeout_seconds: int = Field(
+        default=DEFAULT_DELIVERY_FLUSH_TIMEOUT, ge=0, le=300
+    )
 
     # Tasks
     checkpoint_interval_minutes: int = Field(default=10, ge=1, le=120)

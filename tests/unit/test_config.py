@@ -1,5 +1,6 @@
 """Tests for configuration models."""
 
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -72,6 +73,9 @@ class TestMicromechConfig:
     def test_defaults(self):
         cfg = MicromechConfig()
         assert cfg.chains == {}
+        assert cfg.batch_delivery_enabled is False
+        assert cfg.delivery_batch_size == 1
+        assert cfg.delivery_flush_timeout_seconds == 60
         assert cfg.checkpoint_interval_minutes == 10
         assert cfg.queue_scanner_enabled is False
         assert cfg.queue_scanner_interval_seconds == 300
@@ -139,6 +143,40 @@ class TestMicromechConfig:
         assert restored.fallback_mech_addresses == [fallback_mech]
         assert restored.fallback_mechs[0].name == "test mech"
         assert restored.fallback_mechs[0].address == fallback_mech
+
+    def test_batch_delivery_config_roundtrip(self):
+        cfg = MicromechConfig(
+            batch_delivery_enabled=True,
+            delivery_batch_size=25,
+            delivery_flush_timeout_seconds=15,
+        )
+        restored = MicromechConfig.model_validate(cfg.model_dump(mode="json"))
+
+        assert restored.batch_delivery_enabled is True
+        assert restored.delivery_batch_size == 25
+        assert restored.delivery_flush_timeout_seconds == 15
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("delivery_batch_size", 0),
+            ("delivery_batch_size", 101),
+            ("delivery_flush_timeout_seconds", -1),
+            ("delivery_flush_timeout_seconds", 301),
+        ],
+    )
+    def test_batch_delivery_config_bounds(self, field, value):
+        with pytest.raises(ValidationError):
+            MicromechConfig(**{field: value})
+
+    def test_release_version_consistency(self):
+        import micromech
+
+        pyproject = Path(__file__).parents[2] / "pyproject.toml"
+        version = tomllib.loads(pyproject.read_text())["project"]["version"]
+
+        assert version == "0.1.1"
+        assert micromech.__version__ == version
 
     def test_legacy_fallback_mech_addresses_populate_named_mechs(self):
         fallback_mech = "0x" + "d" * 40

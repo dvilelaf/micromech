@@ -10,8 +10,8 @@ Delivery transport strategy:
 
 Batching strategy:
 - On-chain requests are accumulated and flushed together in a single Safe TX
-  when either DEFAULT_DELIVERY_BATCH_SIZE requests are ready OR the oldest
-  request has been waiting DEFAULT_DELIVERY_FLUSH_TIMEOUT seconds.
+  when either config.delivery_batch_size requests are ready OR the oldest
+  request has been waiting config.delivery_flush_timeout_seconds seconds.
 - IPFS uploads for a batch are parallelized with asyncio.gather.
 - Off-chain (HTTP) requests are delivered 1:1 as before.
 """
@@ -27,8 +27,6 @@ from loguru import logger
 
 from micromech.core.config import ChainConfig, MicromechConfig
 from micromech.core.constants import (
-    DEFAULT_DELIVERY_BATCH_SIZE,
-    DEFAULT_DELIVERY_FLUSH_TIMEOUT,
     DEFAULT_DELIVERY_MAX_RETRIES,
     DEFAULT_DELIVERY_WORKERS,
     GAS_FALLBACK,
@@ -391,8 +389,8 @@ class DeliveryManager:
         """Deliver undelivered responses. On-chain: batched; off-chain: 1:1.
 
         On-chain records are accumulated and flushed together in a single Safe TX
-        when DEFAULT_DELIVERY_BATCH_SIZE records are ready or the oldest record
-        has been waiting DEFAULT_DELIVERY_FLUSH_TIMEOUT seconds.
+        when config.delivery_batch_size records are ready or the oldest record
+        has been waiting config.delivery_flush_timeout_seconds seconds.
         """
         if self.bridge is None:
             return 0
@@ -409,24 +407,25 @@ class DeliveryManager:
                 self._wallet_warning_logged = True
             return 0
 
+        batch_size = self.config.delivery_batch_size
+        flush_timeout = self.config.delivery_flush_timeout_seconds
+
         # Pull 2× batch size to ensure we get a full on-chain batch even when
         # off-chain records share the limit.  On-chain batch is then capped at
-        # DEFAULT_DELIVERY_BATCH_SIZE; off-chain processes all extras 1:1.
-        records = self.queue.get_undelivered(
-            limit=DEFAULT_DELIVERY_BATCH_SIZE * 2, chain=self._chain_name
-        )
+        # the configured batch size; off-chain processes all extras 1:1.
+        records = self.queue.get_undelivered(limit=batch_size * 2, chain=self._chain_name)
         if not records:
             return 0
 
-        onchain = [r for r in records if not r.request.is_offchain][:DEFAULT_DELIVERY_BATCH_SIZE]
+        onchain = [r for r in records if not r.request.is_offchain][:batch_size]
         offchain = [r for r in records if r.request.is_offchain]
 
         delivered = 0
 
         # --- On-chain: batch by size or time ---
         if onchain:
-            full_batch = len(onchain) >= DEFAULT_DELIVERY_BATCH_SIZE
-            old_enough = _batch_age_seconds(onchain) >= DEFAULT_DELIVERY_FLUSH_TIMEOUT
+            full_batch = len(onchain) >= batch_size
+            old_enough = _batch_age_seconds(onchain) >= flush_timeout
             should_flush = full_batch or old_enough
             if should_flush:
                 flush_reason = "size" if full_batch else "timeout"
@@ -525,11 +524,31 @@ class DeliveryManager:
         datas = [item[2] for item in good]
 
         try:
-            submit_started = time.monotonic()
-            tx_hash, delivered_flags = await asyncio.to_thread(
-                self._submit_batch_delivery, req_id_bytes_list, datas
-            )
-            safe_submit_seconds = time.monotonic() - submit_started
+            safe_lock_wait_seconds = 0.0
+            if self._has_safe:
+                from micromech.core.bridge import get_service_info
+
+                svc_info = get_service_info(self._chain_name)
+                multisig = svc_info.get("multisig_address")
+                if not multisig:
+                    raise ValueError(
+                        f"[{self._chain_name}] multisig_address not configured"
+                        " — cannot dispatch on-chain batch"
+                    )
+                lock_wait_started = time.monotonic()
+                async with get_safe_lock(multisig):
+                    safe_lock_wait_seconds = time.monotonic() - lock_wait_started
+                    submit_started = time.monotonic()
+                    tx_hash, delivered_flags = await asyncio.to_thread(
+                        self._submit_batch_delivery, req_id_bytes_list, datas
+                    )
+                    safe_submit_seconds = time.monotonic() - submit_started
+            else:
+                submit_started = time.monotonic()
+                tx_hash, delivered_flags = await asyncio.to_thread(
+                    self._submit_batch_delivery, req_id_bytes_list, datas
+                )
+                safe_submit_seconds = time.monotonic() - submit_started
             n_delivered = 0
             n_timed_out = 0
             for (
@@ -558,7 +577,7 @@ class DeliveryManager:
                             chain=self._chain_name,
                             age_seconds=_record_age_seconds(record),
                             prep_seconds=prep_seconds,
-                            safe_lock_wait_seconds=0.0,
+                            safe_lock_wait_seconds=safe_lock_wait_seconds,
                             safe_submit_seconds=safe_submit_seconds,
                         )
                     logger.opt(colors=True).info(
@@ -1355,11 +1374,11 @@ class DeliveryManager:
     # batches on startup and check the chain for the TX hash before re-submitting.
 
     async def run(self) -> None:
-        """Run the delivery loop with concurrent workers.
+        """Run the delivery loop.
 
-        Fires DEFAULT_DELIVERY_WORKERS concurrent Safe TXs each tick
-        (interval config.delivery_interval seconds).  An in-flight set
-        prevents double-delivery across concurrent workers.
+        Concurrent mode is the default because it preserves staking liveness:
+        one on-chain delivery per Safe nonce. Batch mode is explicit and should
+        only be enabled when that nonce/delivery ratio no longer matters.
         """
         self._running = True
         interval = self.config.delivery_interval
@@ -1367,16 +1386,27 @@ class DeliveryManager:
         if self.bridge is None:
             logger.info("Delivery manager: no bridge — delivery disabled")
         else:
-            logger.info(
-                "Delivery manager started (interval {}s, workers {})",
-                interval,
-                DEFAULT_DELIVERY_WORKERS,
-            )
+            if self.config.batch_delivery_enabled:
+                logger.info(
+                    "Delivery manager started (interval {}s, mode=batch, batch_size {}, flush_timeout {}s)",
+                    interval,
+                    self.config.delivery_batch_size,
+                    self.config.delivery_flush_timeout_seconds,
+                )
+            else:
+                logger.info(
+                    "Delivery manager started (interval {}s, mode=concurrent, workers {})",
+                    interval,
+                    DEFAULT_DELIVERY_WORKERS,
+                )
 
         while self._running:
             self._wake_event.clear()
             try:
-                count = await self._deliver_concurrent()
+                if self.config.batch_delivery_enabled:
+                    count = await self.deliver_batch()
+                else:
+                    count = await self._deliver_concurrent()
                 if count:
                     logger.debug("Delivered {} responses", count)
 

@@ -310,10 +310,6 @@ class TestBenchmarkDelivery:
                 "micromech.core.bridge.get_service_info",
                 return_value=svc_info,
             ),
-            patch(
-                "micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT",
-                0,
-            ),
         ):
             server = MechServer(config, bridges={"gnosis": bridge})
             server.listeners["gnosis"]._last_block = block_before
@@ -598,7 +594,6 @@ class TestBenchmarkDeliverySafe:
 
         with (
             patch("micromech.core.bridge.get_service_info", return_value=svc_info),
-            patch("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0),
         ):
             server = MechServer(run_config, bridges={"gnosis": bridge})
             server.listeners["gnosis"]._last_block = block_before

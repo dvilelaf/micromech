@@ -156,7 +156,8 @@ class TestPredictionRequestTool:
         # prediction_request imports _get_llm from llm_tool at call time
         with patch.object(llm_mod, "_get_llm", return_value=mock_llm):
             result_str, prompt_echo, metadata, counter = pred_mod.run(
-                prompt="Will ETH hit 10k by 2027?"
+                prompt="Will ETH hit 10k by 2027?",
+                additional_information="Unit test context.",
             )
 
         data = json.loads(result_str)
@@ -206,7 +207,10 @@ class TestPredictionRequestTool:
         importlib.reload(pred_mod)
 
         with patch.object(llm_mod, "_get_llm", side_effect=RuntimeError("Model failed to load")):
-            result_str, _, _, _ = pred_mod.run(prompt="Will ETH hit 10k?")
+            result_str, _, _, _ = pred_mod.run(
+                prompt="Will ETH hit 10k?",
+                additional_information="Unit test context.",
+            )
 
         data = json.loads(result_str)
         assert data["p_yes"] == 0.5
@@ -228,7 +232,10 @@ class TestPredictionRequestTool:
         mock_llm = self._make_mock_llm("I think the probability is about 70%")
 
         with patch.object(llm_mod, "_get_llm", return_value=mock_llm):
-            result_str, _, _, _ = pred_mod.run(prompt="Will ETH hit 10k?")
+            result_str, _, _, _ = pred_mod.run(
+                prompt="Will ETH hit 10k?",
+                additional_information="Unit test context.",
+            )
 
         data = json.loads(result_str)
         # Should be valid JSON with required fields (defaults if parse failed)
@@ -254,7 +261,10 @@ class TestPredictionRequestTool:
         mock_llm = self._make_mock_llm(llm_response)
 
         with patch.object(llm_mod, "_get_llm", return_value=mock_llm):
-            result_str, _, _, _ = pred_mod.run(prompt="test")
+            result_str, _, _, _ = pred_mod.run(
+                prompt="test",
+                additional_information="Unit test context.",
+            )
 
         data = json.loads(result_str)
         assert abs(data["p_yes"] + data["p_no"] - 1.0) < 0.02

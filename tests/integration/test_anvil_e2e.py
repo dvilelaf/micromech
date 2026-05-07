@@ -650,7 +650,6 @@ class TestFullServerCycleE2E:
         }
         with (
             patch("micromech.core.bridge.get_service_info", return_value=svc_info),
-            patch("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0),
         ):
             server = MechServer(config, bridges={"gnosis": bridge})
 

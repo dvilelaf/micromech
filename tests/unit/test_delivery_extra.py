@@ -155,15 +155,15 @@ class TestDeliverBatchNoWallet:
         assert count2 == 0
 
     @pytest.mark.asyncio
-    async def test_delivery_tx_failure_leaves_in_executed_for_retry(self, monkeypatch):
+    async def test_delivery_tx_failure_leaves_in_executed_for_retry(self):
         """Batch TX failure does NOT mark_failed — records stay EXECUTED for next loop."""
-        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 0)
         bridge = _make_bridge()
         q = _make_queue()
         record = _make_record()
         q.get_undelivered.return_value = [record]
 
-        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        config = MicromechConfig(delivery_flush_timeout_seconds=0)
+        dm = DeliveryManager(config, _make_chain_config(), q, bridge)
 
         # On-chain records go through _prepare_onchain then _submit_batch_delivery.
         # Simulate TX failure after IPFS prep succeeds.
@@ -401,6 +401,43 @@ class TestRunLoop:
         ):
             # wait_for is a safety net; the loop should exit on its own
             await _real_asyncio.wait_for(dm.run(), timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_run_uses_concurrent_delivery_by_default(self):
+        """Default delivery mode keeps one on-chain request per Safe TX."""
+        dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), _make_bridge())
+
+        async def _one_shot():
+            dm.stop()
+            return 0
+
+        with (
+            patch.object(dm, "_deliver_concurrent", side_effect=_one_shot) as mock_concurrent,
+            patch.object(dm, "deliver_batch") as mock_batch,
+        ):
+            await _real_asyncio.wait_for(dm.run(), timeout=5.0)
+
+        mock_concurrent.assert_called_once()
+        mock_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_run_uses_batch_delivery_when_enabled(self):
+        """Explicit batch mode routes the delivery loop to deliver_batch()."""
+        config = MicromechConfig(batch_delivery_enabled=True)
+        dm = DeliveryManager(config, _make_chain_config(), _make_queue(), _make_bridge())
+
+        async def _one_shot():
+            dm.stop()
+            return 0
+
+        with (
+            patch.object(dm, "deliver_batch", side_effect=_one_shot) as mock_batch,
+            patch.object(dm, "_deliver_concurrent") as mock_concurrent,
+        ):
+            await _real_asyncio.wait_for(dm.run(), timeout=5.0)
+
+        mock_batch.assert_called_once()
+        mock_concurrent.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_run_logs_delivery_count(self):
@@ -750,6 +787,58 @@ class TestDeliverOnchainBatch:
         # mark_failed is terminal — transient TX errors must be retried
         q.mark_failed.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_batch_safe_submit_uses_lock_and_ignores_parallel_nonce(self):
+        """Batch mode submits one Safe TX under the Safe lock, without NonceAllocator."""
+        bridge = _make_bridge(has_safe=True)
+        q = _make_queue()
+        records = [_make_record(request_id=f"0x{i:064x}") for i in range(2)]
+        config = MicromechConfig(
+            batch_delivery_enabled=True,
+            parallel_nonce_enabled=True,
+            delivery_batch_size=2,
+            delivery_flush_timeout_seconds=0,
+        )
+        dm = DeliveryManager(config, _make_chain_config(), q, bridge)
+        lock_events = []
+
+        async def _fake_prepare(rec):
+            return bytes.fromhex(rec.request.request_id[2:]), b"data", None
+
+        class _FakeSafeLock:
+            async def __aenter__(self):
+                lock_events.append("enter")
+
+            async def __aexit__(self, *_exc):
+                lock_events.append("exit")
+
+        def _fake_safe_lock(multisig):
+            lock_events.append(("lock", multisig))
+            return _FakeSafeLock()
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_fake_prepare),
+            patch.object(
+                dm,
+                "_submit_batch_delivery",
+                return_value=("0x" + "ab" * 32, [True, True]),
+            ) as mock_submit,
+            patch.object(dm, "_get_nonce_allocator") as mock_allocator,
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": "0x" + "e" * 40},
+            ),
+            patch("micromech.runtime.delivery.get_safe_lock", side_effect=_fake_safe_lock),
+        ):
+            count = await dm._deliver_onchain_batch(records)
+
+        assert count == 2
+        assert lock_events == [("lock", "0x" + "e" * 40), "enter", "exit"]
+        mock_submit.assert_called_once()
+        assert len(mock_submit.call_args.args[0]) == 2
+        mock_allocator.assert_not_called()
+        assert q.mark_delivered.call_count == 2
+
 
 # ---------------------------------------------------------------------------
 # deliver_batch — flush conditions
@@ -758,70 +847,85 @@ class TestDeliverOnchainBatch:
 
 class TestDeliverBatchFlushConditions:
     @pytest.mark.asyncio
-    async def test_no_flush_when_too_few_and_not_old(self, monkeypatch):
+    async def test_no_flush_when_too_few_and_not_old(self):
         """Small batch of fresh records is held until flush conditions are met."""
-        # Use batch_size=5 so that 1 record is genuinely "too few"
-        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_BATCH_SIZE", 5)
-        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 60)
         bridge = _make_bridge()
         q = _make_queue()
         q.get_undelivered.return_value = [_make_record()]
 
-        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        config = MicromechConfig(
+            batch_delivery_enabled=True,
+            delivery_batch_size=5,
+            delivery_flush_timeout_seconds=60,
+        )
+        dm = DeliveryManager(config, _make_chain_config(), q, bridge)
         with patch.object(dm, "_deliver_onchain_batch") as mock_batch:
             count = await dm.deliver_batch()
 
         assert count == 0
+        q.get_undelivered.assert_called_once_with(limit=10, chain="gnosis")
         mock_batch.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_flush_when_full_batch(self, monkeypatch):
-        """Batch flushes immediately when DEFAULT_DELIVERY_BATCH_SIZE records are ready."""
-        from micromech.core.constants import DEFAULT_DELIVERY_BATCH_SIZE
-
-        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 60)
+    async def test_flush_when_full_batch(self):
+        """Batch flushes immediately when configured batch_size records are ready."""
         bridge = _make_bridge()
         q = _make_queue()
         q.get_undelivered.return_value = [
-            _make_record(request_id=f"0x{i:064x}") for i in range(DEFAULT_DELIVERY_BATCH_SIZE)
+            _make_record(request_id=f"0x{i:064x}") for i in range(5)
         ]
 
-        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        config = MicromechConfig(
+            batch_delivery_enabled=True,
+            delivery_batch_size=5,
+            delivery_flush_timeout_seconds=60,
+        )
+        dm = DeliveryManager(config, _make_chain_config(), q, bridge)
         with patch.object(dm, "_deliver_onchain_batch", return_value=10) as mock_batch:
             count = await dm.deliver_batch()
 
         assert count == 10
+        q.get_undelivered.assert_called_once_with(limit=10, chain="gnosis")
         mock_batch.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_flush_when_oldest_record_exceeds_timeout(self, monkeypatch):
+    async def test_flush_when_oldest_record_exceeds_timeout(self):
         """Old record triggers flush even with a small batch."""
         from datetime import timedelta
 
-        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 30)
         bridge = _make_bridge()
         q = _make_queue()
         old_record = _make_record()
         old_record.request.created_at = datetime.now(timezone.utc) - timedelta(seconds=60)
         q.get_undelivered.return_value = [old_record]
 
-        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        config = MicromechConfig(
+            batch_delivery_enabled=True,
+            delivery_batch_size=5,
+            delivery_flush_timeout_seconds=30,
+        )
+        dm = DeliveryManager(config, _make_chain_config(), q, bridge)
         with patch.object(dm, "_deliver_onchain_batch", return_value=1) as mock_batch:
             count = await dm.deliver_batch()
 
         assert count == 1
+        q.get_undelivered.assert_called_once_with(limit=10, chain="gnosis")
         mock_batch.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_offchain_always_delivered_regardless_of_batch(self, monkeypatch):
+    async def test_offchain_always_delivered_regardless_of_batch(self):
         """Off-chain records are always delivered 1:1, no batch holding."""
-        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_FLUSH_TIMEOUT", 9999)
         bridge = _make_bridge()
         q = _make_queue()
         record = _make_record(is_offchain=True)
         q.get_undelivered.return_value = [record]
 
-        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        config = MicromechConfig(
+            batch_delivery_enabled=True,
+            delivery_batch_size=5,
+            delivery_flush_timeout_seconds=300,
+        )
+        dm = DeliveryManager(config, _make_chain_config(), q, bridge)
 
         async def _fake_deliver_one(rec):
             return "0xtx", None
