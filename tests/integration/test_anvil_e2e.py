@@ -1271,9 +1271,7 @@ class TestMechLifecycleE2E:
                 _iwa_cfg.plugins["olas"] = _OlasConfig()
                 _bridge_mod._service_info_cache.clear()
 
-                print(
-                    "\n--- Steps 2-6: full_deploy(skip_staking=True) [native 1 wei bond] ---"
-                )
+                print("\n--- Steps 2-6: full_deploy(skip_staking=True) [native 1 wei bond] ---")
 
                 lc = MechLifecycle(config, "gnosis")
                 result = lc.full_deploy(skip_staking=True)

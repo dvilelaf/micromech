@@ -695,7 +695,9 @@ class TestDeliverOnchainBatch:
 
         with (
             patch.object(dm, "_prepare_onchain", side_effect=_fake_prepare),
-            patch.object(dm, "_submit_batch_delivery", return_value=("0xtxhash", [True, True, True])) as mock_submit,
+            patch.object(
+                dm, "_submit_batch_delivery", return_value=("0xtxhash", [True, True, True])
+            ) as mock_submit,
         ):
             count = await dm._deliver_onchain_batch(records)
 
@@ -871,9 +873,7 @@ class TestDeliverBatchFlushConditions:
         """Batch flushes immediately when configured batch_size records are ready."""
         bridge = _make_bridge()
         q = _make_queue()
-        q.get_undelivered.return_value = [
-            _make_record(request_id=f"0x{i:064x}") for i in range(5)
-        ]
+        q.get_undelivered.return_value = [_make_record(request_id=f"0x{i:064x}") for i in range(5)]
 
         config = MicromechConfig(
             batch_delivery_enabled=True,
@@ -1112,9 +1112,7 @@ class TestDeliverSingleOnchain:
         dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
         dm._in_flight.add(record.request.request_id)
 
-        with patch.object(
-            dm, "_prepare_onchain", side_effect=RuntimeError("ipfs down")
-        ):
+        with patch.object(dm, "_prepare_onchain", side_effect=RuntimeError("ipfs down")):
             result = await dm._deliver_single_onchain(record)
 
         assert result is False
@@ -1150,9 +1148,7 @@ class TestDeliverSingleOnchain:
         dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
         dm._in_flight.add(record.request.request_id)
 
-        with patch.object(
-            dm, "_prepare_onchain", side_effect=RuntimeError("boom")
-        ):
+        with patch.object(dm, "_prepare_onchain", side_effect=RuntimeError("boom")):
             await dm._deliver_single_onchain(record)
 
         assert record.request.request_id not in dm._in_flight
@@ -1166,9 +1162,7 @@ class TestDeliverSingleOnchain:
 class TestDeliverConcurrent:
     @pytest.mark.asyncio
     async def test_skips_without_bridge(self):
-        dm = DeliveryManager(
-            _make_config(), _make_chain_config(), _make_queue(), bridge=None
-        )
+        dm = DeliveryManager(_make_config(), _make_chain_config(), _make_queue(), bridge=None)
         result = await dm._deliver_concurrent()
         assert result == 0
 
@@ -1205,8 +1199,7 @@ class TestDeliverConcurrent:
         bridge = _make_bridge()
         q = _make_queue()
         records = [
-            _make_record(request_id=f"0x{i:064x}")
-            for i in range(DEFAULT_DELIVERY_WORKERS + 2)
+            _make_record(request_id=f"0x{i:064x}") for i in range(DEFAULT_DELIVERY_WORKERS + 2)
         ]
         q.get_undelivered.return_value = records
 
@@ -1215,9 +1208,7 @@ class TestDeliverConcurrent:
         async def _fake_deliver(rec):
             return True
 
-        with patch.object(
-            dm, "_deliver_single_onchain", side_effect=_fake_deliver
-        ) as mock_single:
+        with patch.object(dm, "_deliver_single_onchain", side_effect=_fake_deliver) as mock_single:
             result = await dm._deliver_concurrent()
 
         assert result == DEFAULT_DELIVERY_WORKERS
@@ -1248,14 +1239,10 @@ class TestDeliverConcurrent:
         q = _make_queue()
         # 2 on-chain + 5 off-chain records in the fetched batch
         onchain_records = [
-            _make_record(request_id=f"0x{i:064x}", is_offchain=False)
-            for i in range(2)
+            _make_record(request_id=f"0x{i:064x}", is_offchain=False) for i in range(2)
         ]
         offchain_records = [
-            _make_record(
-                request_id=f"0x{10 + i:064x}", is_offchain=True
-            )
-            for i in range(5)
+            _make_record(request_id=f"0x{10 + i:064x}", is_offchain=True) for i in range(5)
         ]
         q.get_undelivered.return_value = onchain_records + offchain_records
 
@@ -1268,9 +1255,7 @@ class TestDeliverConcurrent:
             return True
 
         with (
-            patch.object(
-                dm, "_deliver_single_onchain", side_effect=_fake_single_on
-            ) as mock_on,
+            patch.object(dm, "_deliver_single_onchain", side_effect=_fake_single_on) as mock_on,
             patch.object(
                 dm,
                 "_deliver_single_offchain_concurrent",
@@ -1514,11 +1499,15 @@ class TestDecodeFlagsNonForked:
     """_decode_delivery_flags: covers lines 111-142 outside forked subprocess."""
 
     def test_all_accepted(self):
-        result = _decode_delivery_flags(_web3_with_flags([True, True]), {"logs": [_mp_log()]}, _MP_ADDR, 2)
+        result = _decode_delivery_flags(
+            _web3_with_flags([True, True]), {"logs": [_mp_log()]}, _MP_ADDR, 2
+        )
         assert result == [True, True]
 
     def test_partial_timeout(self):
-        result = _decode_delivery_flags(_web3_with_flags([True, False]), {"logs": [_mp_log()]}, _MP_ADDR, 2)
+        result = _decode_delivery_flags(
+            _web3_with_flags([True, False]), {"logs": [_mp_log()]}, _MP_ADDR, 2
+        )
         assert result == [True, False]
 
     def test_address_mismatch_ignored(self):
@@ -1538,7 +1527,9 @@ class TestDecodeFlagsNonForked:
         event_instance = MagicMock()
         event_instance.process_log.side_effect = Exception("bad ABI")
         web3.eth.contract.return_value.events.MarketplaceDelivery.return_value = event_instance
-        result = _decode_delivery_flags(web3, {"logs": [{"address": _MP_ADDR, "_bad": True}]}, _MP_ADDR, 2)
+        result = _decode_delivery_flags(
+            web3, {"logs": [{"address": _MP_ADDR, "_bad": True}]}, _MP_ADDR, 2
+        )
         assert result == [True, True]
 
     def test_length_mismatch_returns_all_true(self):

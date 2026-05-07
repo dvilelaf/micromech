@@ -90,9 +90,7 @@ class TestMicromechConfig:
         assert [mech.address for mech in mechs] == [
             mech["address"] for mech in KNOWN_FALLBACK_MECHS
         ]
-        assert [mech.name for mech in mechs] == [
-            mech["name"] for mech in KNOWN_FALLBACK_MECHS
-        ]
+        assert [mech.name for mech in mechs] == [mech["name"] for mech in KNOWN_FALLBACK_MECHS]
 
     def test_save_and_load_fallback(self, tmp_path: Path):
         """Save/load via fallback path (no iwa)."""
@@ -198,9 +196,7 @@ class TestMicromechConfig:
 
     def test_named_fallback_mechs_populate_legacy_addresses(self):
         fallback_mech = "0x" + "d" * 40
-        cfg = MicromechConfig(
-            fallback_mechs=[{"name": "olas priority", "address": fallback_mech}]
-        )
+        cfg = MicromechConfig(fallback_mechs=[{"name": "olas priority", "address": fallback_mech}])
 
         assert cfg.fallback_mech_addresses == [fallback_mech]
         assert cfg.fallback_mech_name(fallback_mech) == "olas priority"
@@ -227,13 +223,9 @@ class TestMicromechConfig:
     def test_invalid_named_fallback_mech_name(self):
         fallback_mech = "0x" + "d" * 40
         with pytest.raises(ValidationError):
-            MicromechConfig(
-                fallback_mechs=[{"name": "bad\nname", "address": fallback_mech}]
-            )
+            MicromechConfig(fallback_mechs=[{"name": "bad\nname", "address": fallback_mech}])
         with pytest.raises(ValidationError):
-            MicromechConfig(
-                fallback_mechs=[{"name": "bad\u202ename", "address": fallback_mech}]
-            )
+            MicromechConfig(fallback_mechs=[{"name": "bad\u202ename", "address": fallback_mech}])
 
     def test_enabled_chains_property(self):
         cfg = MicromechConfig(

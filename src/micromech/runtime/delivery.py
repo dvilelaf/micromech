@@ -569,9 +569,7 @@ class DeliveryManager:
                     self._delivered_count += 1
                     n_delivered += 1
                     if self._metrics:
-                        self._metrics.record_delivery(
-                            req_id, chain=self._chain_name
-                        )
+                        self._metrics.record_delivery(req_id, chain=self._chain_name)
                         self._metrics.record_delivery_timing(
                             req_id,
                             chain=self._chain_name,
@@ -606,9 +604,7 @@ class DeliveryManager:
                     if self._metrics:
                         if reason == "on_chain_timeout":
                             self._metrics.record_late_delivery(req_id, chain=self._chain_name)
-                        self._metrics.record_delivery_failed(
-                            req_id, reason, chain=self._chain_name
-                        )
+                        self._metrics.record_delivery_failed(req_id, reason, chain=self._chain_name)
             ids_short = ", ".join(r.request.request_id[:10] for r, *_ in good)
             logger.info(
                 "Batch TX mined: {} delivered, {} timed out (tx={} ids=[{}])",
@@ -829,9 +825,7 @@ class DeliveryManager:
         )
         return tx_hash, flags
 
-    def _submit_delivery(
-        self, request_id: str, data: bytes
-    ) -> tuple[str, list[bool]]:
+    def _submit_delivery(self, request_id: str, data: bytes) -> tuple[str, list[bool]]:
         """Submit deliverToMarketplace for a single request.
 
         Converts request_id to bytes32 and delegates to _submit_batch_delivery.
@@ -1034,9 +1028,7 @@ class DeliveryManager:
                         continue
             deliverable.append(r)
 
-        onchain = [r for r in deliverable if not r.request.is_offchain][
-            :DEFAULT_DELIVERY_WORKERS
-        ]
+        onchain = [r for r in deliverable if not r.request.is_offchain][:DEFAULT_DELIVERY_WORKERS]
         offchain = [r for r in deliverable if r.request.is_offchain]
 
         selected = onchain + offchain
@@ -1148,20 +1140,16 @@ class DeliveryManager:
                                 r.request.request_id[:20] + "...",
                                 err_str,
                             )
-                            self._increment_failure(
-                                r.request.request_id, f"tx: {err_str}"
-                            )
+                            self._increment_failure(r.request.request_id, f"tx: {err_str}")
                             if self._metrics:
                                 self._metrics.record_delivery_failed(
                                     r.request.request_id,
                                     err_str,
                                     chain=self._chain_name,
-                            )
+                                )
                             self._in_flight.discard(r.request.request_id)
                         else:
-                            prepared_onchain.append(
-                                (r, prep_data, time.monotonic() - prep_started)
-                            )
+                            prepared_onchain.append((r, prep_data, time.monotonic() - prep_started))
 
                     if prepared_onchain:
                         lock_wait_started = time.monotonic()
@@ -1185,12 +1173,8 @@ class DeliveryManager:
             for r in onchain:
                 onchain_results.append(await self._deliver_single_onchain(r))
 
-        offchain_tasks = [
-            self._deliver_single_offchain_concurrent(r) for r in offchain
-        ]
-        offchain_results = await asyncio.gather(
-            *offchain_tasks, return_exceptions=True
-        )
+        offchain_tasks = [self._deliver_single_offchain_concurrent(r) for r in offchain]
+        offchain_results = await asyncio.gather(*offchain_tasks, return_exceptions=True)
         results = onchain_results + list(offchain_results)
         n_delivered = sum(1 for r in results if r is True)
         if n_delivered:
@@ -1222,9 +1206,7 @@ class DeliveryManager:
                 req_id_bytes, delivery_data, ipfs_cid_hex = _prep_data
             else:
                 prep_started = time.monotonic()
-                req_id_bytes, delivery_data, ipfs_cid_hex = (
-                    await self._prepare_onchain(record)
-                )
+                req_id_bytes, delivery_data, ipfs_cid_hex = await self._prepare_onchain(record)
                 _prep_seconds = time.monotonic() - prep_started
             submit_started = time.monotonic()
             tx_hash, delivered_flags = await asyncio.to_thread(
@@ -1251,9 +1233,7 @@ class DeliveryManager:
                 )
                 self._delivered_count += 1
                 if self._metrics:
-                    self._metrics.record_delivery(
-                        req_id, chain=self._chain_name
-                    )
+                    self._metrics.record_delivery(req_id, chain=self._chain_name)
                     self._metrics.record_delivery_timing(
                         req_id,
                         chain=self._chain_name,
@@ -1296,9 +1276,7 @@ class DeliveryManager:
                 if self._metrics:
                     if reason == "on_chain_timeout":
                         self._metrics.record_late_delivery(req_id, chain=self._chain_name)
-                    self._metrics.record_delivery_failed(
-                        req_id, reason, chain=self._chain_name
-                    )
+                    self._metrics.record_delivery_failed(req_id, reason, chain=self._chain_name)
             return accepted
         except Exception as e:
             err_str = _sanitize_error(e)
@@ -1307,9 +1285,7 @@ class DeliveryManager:
                 record.request.request_id[:20] + "...",
                 err_str,
             )
-            self._increment_failure(
-                record.request.request_id, f"tx: {err_str}"
-            )
+            self._increment_failure(record.request.request_id, f"tx: {err_str}")
             if self._metrics:
                 self._metrics.record_delivery_failed(
                     record.request.request_id,
@@ -1320,9 +1296,7 @@ class DeliveryManager:
         finally:
             self._in_flight.discard(record.request.request_id)
 
-    async def _deliver_single_offchain_concurrent(
-        self, record: RequestRecord
-    ) -> bool:
+    async def _deliver_single_offchain_concurrent(self, record: RequestRecord) -> bool:
         """Deliver one off-chain request, removing from in-flight when done."""
         try:
             tx_hash, ipfs_hash = await self._deliver_one(record)
@@ -1334,9 +1308,7 @@ class DeliveryManager:
                 )
                 self._delivered_count += 1
                 if self._metrics:
-                    self._metrics.record_delivery(
-                        record.request.request_id, chain=self._chain_name
-                    )
+                    self._metrics.record_delivery(record.request.request_id, chain=self._chain_name)
                 logger.opt(colors=True).info(
                     "<green>[{}] Delivered (offchain) {} tool={} tx={}</green>",
                     self._chain_name,
@@ -1353,9 +1325,7 @@ class DeliveryManager:
                 record.request.request_id,
                 err_str,
             )
-            self._increment_failure(
-                record.request.request_id, f"delivery: {err_str}"
-            )
+            self._increment_failure(record.request.request_id, f"delivery: {err_str}")
             if self._metrics:
                 self._metrics.record_delivery_failed(
                     record.request.request_id,

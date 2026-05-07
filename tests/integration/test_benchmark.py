@@ -152,10 +152,7 @@ class TestBenchmarkExecution:
             deadline = time.perf_counter() + 120.0
             while time.perf_counter() < deadline:
                 counts = server.queue.count_by_status()
-                done = (
-                    counts.get(STATUS_EXECUTED, 0)
-                    + counts.get(STATUS_FAILED, 0)
-                )
+                done = counts.get(STATUS_EXECUTED, 0) + counts.get(STATUS_FAILED, 0)
                 if done >= n_requests:
                     break
                 await asyncio.sleep(0.05)
@@ -164,9 +161,7 @@ class TestBenchmarkExecution:
             # --- Collect latencies ---
             records = server.queue.get_recent(limit=n_requests + 10)
             latencies = [
-                r.result.execution_time
-                for r in records
-                if r.result and r.result.execution_time
+                r.result.execution_time for r in records if r.result and r.result.execution_time
             ]
 
             counts = server.queue.count_by_status()
@@ -197,9 +192,7 @@ class TestBenchmarkExecution:
                     ),
                     (
                         "Tool latency max",
-                        f"{max(latencies) * 1000:.1f} ms"
-                        if latencies
-                        else "n/a",
+                        f"{max(latencies) * 1000:.1f} ms" if latencies else "n/a",
                     ),
                 ],
             )
@@ -247,9 +240,7 @@ class TestBenchmarkDelivery:
         )
 
         # Fund the multisig for gas
-        w3.provider.make_request(
-            "anvil_setBalance", [MECH_MULTISIG, hex(50 * 10**18)]
-        )
+        w3.provider.make_request("anvil_setBalance", [MECH_MULTISIG, hex(50 * 10**18)])
 
         # --- Submit all requests on-chain ---
         fee = marketplace.functions.fee().call()
@@ -268,19 +259,12 @@ class TestBenchmarkDelivery:
                 w3.to_checksum_address(MECH_ADDR),
                 300,
                 b"",
-            ).transact(
-                {"from": RICH_ACCOUNT, "value": value, "gas": 500_000}
-            )
+            ).transact({"from": RICH_ACCOUNT, "value": value, "gas": 500_000})
             w3.eth.wait_for_transaction_receipt(tx)
 
-        w3.provider.make_request(
-            "anvil_stopImpersonatingAccount", [RICH_ACCOUNT]
-        )
+        w3.provider.make_request("anvil_stopImpersonatingAccount", [RICH_ACCOUNT])
         submit_time = time.perf_counter() - t_submit_start
-        print(
-            f"\n  Submitted {n_requests} on-chain requests"
-            f" in {submit_time:.1f}s"
-        )
+        print(f"\n  Submitted {n_requests} on-chain requests in {submit_time:.1f}s")
 
         # --- Start full server ---
         config = MicromechConfig(
@@ -331,10 +315,7 @@ class TestBenchmarkDelivery:
                             t_first_delivery.append(now - t_server_start)
                         prev_delivered = delivered
                         elapsed = now - t_server_start
-                        print(
-                            f"  [{elapsed:.1f}s]"
-                            f" delivered={delivered} failed={failed}"
-                        )
+                        print(f"  [{elapsed:.1f}s] delivered={delivered} failed={failed}")
 
                     if delivered + failed >= n_requests:
                         break
@@ -344,9 +325,7 @@ class TestBenchmarkDelivery:
             asyncio.create_task(stop_when_done())
 
             try:
-                await asyncio.wait_for(
-                    server.run(with_http=False), timeout=200.0
-                )
+                await asyncio.wait_for(server.run(with_http=False), timeout=200.0)
             except (asyncio.CancelledError, asyncio.TimeoutError):
                 pass
 
@@ -360,9 +339,7 @@ class TestBenchmarkDelivery:
         from micromech.core.persistence import RequestRow
 
         e2e_times = []
-        for row in RequestRow.select().where(
-            RequestRow.status == STATUS_DELIVERED
-        ):
+        for row in RequestRow.select().where(RequestRow.status == STATUS_DELIVERED):
             if row.delivered_at and row.created_at:
                 delta = (row.delivered_at - row.created_at).total_seconds()
                 e2e_times.append(delta)
@@ -382,26 +359,19 @@ class TestBenchmarkDelivery:
                 ),
                 (
                     "Time to first delivery",
-                    f"{t_first_delivery[0]:.1f} s"
-                    if t_first_delivery
-                    else "n/a",
+                    f"{t_first_delivery[0]:.1f} s" if t_first_delivery else "n/a",
                 ),
                 (
                     "Throughput",
-                    f"{throughput:.2f} req/s"
-                    f"  ({throughput * 60:.1f} req/min)",
+                    f"{throughput:.2f} req/s  ({throughput * 60:.1f} req/min)",
                 ),
                 (
                     "E2E latency P50 (created→delivered)",
-                    f"{_percentile(e2e_times, 50):.1f} s"
-                    if e2e_times
-                    else "n/a",
+                    f"{_percentile(e2e_times, 50):.1f} s" if e2e_times else "n/a",
                 ),
                 (
                     "E2E latency P95",
-                    f"{_percentile(e2e_times, 95):.1f} s"
-                    if e2e_times
-                    else "n/a",
+                    f"{_percentile(e2e_times, 95):.1f} s" if e2e_times else "n/a",
                 ),
                 (
                     "E2E latency max",
@@ -614,10 +584,7 @@ class TestBenchmarkDeliverySafe:
                             t_first_delivery.append(now - t_server_start)
                         prev_delivered = delivered
                         elapsed = now - t_server_start
-                        print(
-                            f"  [{elapsed:.1f}s]"
-                            f" delivered={delivered} failed={failed}"
-                        )
+                        print(f"  [{elapsed:.1f}s] delivered={delivered} failed={failed}")
                     if delivered + failed >= n_requests:
                         break
                 server.stop()
