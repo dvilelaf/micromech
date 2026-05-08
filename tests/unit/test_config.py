@@ -173,7 +173,7 @@ class TestMicromechConfig:
         pyproject = Path(__file__).parents[2] / "pyproject.toml"
         version = tomllib.loads(pyproject.read_text())["project"]["version"]
 
-        assert version == "0.1.1"
+        assert version == "0.1.2"
         assert micromech.__version__ == version
 
     def test_legacy_fallback_mech_addresses_populate_named_mechs(self):

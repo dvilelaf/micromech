@@ -69,7 +69,7 @@ case "$*" in
     ;;
   *inspect*"dvilela/micromech:latest"*)
     case "$*" in
-      *"org.dvilela.micromech.version"*) echo 0.1.1; exit 0 ;;
+      *"org.dvilela.micromech.version"*) echo 0.1.2; exit 0 ;;
       *.Id*) echo sha256:new; exit 0 ;;
     esac
     ;;
@@ -227,7 +227,7 @@ def test_generated_just_update_recreates_when_container_lags_local_latest(tmp_pa
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Updated v0.1.0 -> v0.1.1" in result.stdout
+    assert "Updated v0.1.0 -> v0.1.2" in result.stdout
     log = docker_log.read_text()
     assert "inspect --format {{.Image}} cid-micromech" in log
     assert (
