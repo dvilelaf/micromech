@@ -8,6 +8,22 @@ from pathlib import Path
 import pytest
 
 QUICKSTART_SH = Path(__file__).parent.parent.parent / "scripts" / "quickstart.sh"
+REPAIR_UPDATER_SH = Path(__file__).parent.parent.parent / "scripts" / "repair-updater.sh"
+UPDATER_SH = Path(__file__).parent.parent.parent / "scripts" / "updater.sh"
+
+IMAGE_COMPOSE_TEMPLATE = """\
+services:
+  micromech:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "1000:1000"
+    volumes:
+      - ./data:/app/data
+      - ./secrets.env:/app/secrets.env
+    restart: unless-stopped
+    command: ["python", "-m", "micromech"]
+"""
 
 
 def _write_fake_docker(fake_bin: Path) -> None:
@@ -697,3 +713,305 @@ exit 1
     docker_log = (tmp_path / "docker.log").read_text()
     assert "up -d --force-recreate updater" in docker_log
     assert "up -d --force-recreate dockerproxy updater" not in docker_log
+
+
+class TestRepairUpdaterScript:
+    """Regression tests for the public one-command updater repair path."""
+
+    def _write_fake_docker(self, fake_bin: Path, image_compose: Path) -> Path:
+        log_file = fake_bin.parent / "docker.log"
+        fake_docker = fake_bin / "docker"
+        fake_docker.write_text(
+            f"""#!/usr/bin/env bash
+set -e
+printf '%s\\n' "$*" >> "{log_file}"
+if [ "$1" = "compose" ]; then
+    shift
+    if [ "${{1:-}}" = "version" ]; then exit 0; fi
+    file_config=0
+    if [ "${{1:-}}" = "-f" ]; then file_config=1; shift 2; fi
+    case "${{1:-}}" in
+        config)
+            case "${{2:-}}" in
+                --images)
+                    if [ "${{FAKE_CONFIG_IMAGES_FAIL_UNTIL_GENERATED:-0}}" = "1" ] && ! grep -q '^name: micromech' docker-compose.yml 2>/dev/null; then
+                        exit 1
+                    fi
+                    echo "${{FAKE_IMAGE:-${{FAKE_GENERATED_IMAGE:-dvilela/micromech:latest}}}}"
+                    exit 0
+                    ;;
+                --services)
+                    if [ "$file_config" = "1" ] || grep -Eq '^[[:space:]]+micromech:' docker-compose.yml 2>/dev/null; then
+                        printf 'micromech\\ndockerproxy\\nupdater\\n'
+                    else
+                        printf 'other\\n'
+                    fi
+                    exit 0
+                    ;;
+                -q) exit 0 ;;
+                *) cat docker-compose.yml 2>/dev/null || true; exit 0 ;;
+            esac
+            ;;
+        pull|up|ps|exec)
+            if [ "${{1:-}}" = "ps" ]; then echo updater-container; fi
+            exit 0
+            ;;
+    esac
+fi
+if [ "$1" = "info" ]; then exit 0; fi
+if [ "$1" = "pull" ]; then exit 0; fi
+if [ "$1" = "run" ]; then
+    last="${{@: -1}}"
+    case "$last" in
+        /app/scripts/quickstart.sh) cat "{QUICKSTART_SH}"; exit 0 ;;
+        /app/scripts/updater.sh) cat "{UPDATER_SH}"; exit 0 ;;
+        /app/docker-compose.yml) cat "{image_compose}"; exit 0 ;;
+    esac
+fi
+echo "unexpected docker invocation: $*" >&2
+exit 1
+"""
+        )
+        fake_docker.chmod(0o755)
+        return log_file
+
+    def test_repair_updater_repairs_testing_install_without_just(self, tmp_path: Path) -> None:
+        deploy_dir = tmp_path / "micromech"
+        deploy_dir.mkdir()
+        (deploy_dir / "data").mkdir()
+        (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
+        (deploy_dir / "docker-compose.yml").write_text(
+            """\
+services:
+  micromech:
+    image: dvilela/micromech-testing:latest
+    user: "1000:1000"
+    volumes:
+      - ./data:/app/data
+      - ./secrets.env:/app/secrets.env
+"""
+        )
+        (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
+        (deploy_dir / "updater.sh").write_text("#!/bin/sh\necho old\n")
+
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        image_compose = tmp_path / "image-compose.yml"
+        image_compose.write_text(IMAGE_COMPOSE_TEMPLATE)
+        log_file = self._write_fake_docker(fake_bin, image_compose)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+        env["FAKE_IMAGE"] = "dvilela/micromech-testing:latest"
+
+        result = subprocess.run(
+            ["bash", str(REPAIR_UPDATER_SH)],
+            cwd=deploy_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        compose = (deploy_dir / "docker-compose.yml").read_text()
+        assert "image: dvilela/micromech-testing:latest" in compose
+        assert "UPDATER_RUN_AS=1000:1000" in compose
+        assert "- ./:/host" in compose
+        assert "su-exec" in compose
+        assert "org.dvilela.micromech.version" in (deploy_dir / "Justfile").read_text()
+        assert "PROJECT_DIR=" in (deploy_dir / "updater.sh").read_text()
+
+        docker_log = log_file.read_text()
+        assert "pull dvilela/micromech-testing:latest" in docker_log
+        assert "compose pull micromech" in docker_log
+        assert "compose up -d --force-recreate dockerproxy updater" in docker_log
+        assert "just" not in docker_log
+
+    def test_repair_updater_can_be_run_from_parent_directory(self, tmp_path: Path) -> None:
+        deploy_dir = tmp_path / "micromech"
+        deploy_dir.mkdir()
+        (deploy_dir / "data").mkdir()
+        (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
+        (deploy_dir / "docker-compose.yml").write_text(
+            "services:\n  micromech:\n    image: dvilela/micromech:latest\n    user: \"1000:1000\"\n"
+        )
+        (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
+        (deploy_dir / "updater.sh").write_text("#!/bin/sh\necho old\n")
+
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        image_compose = tmp_path / "image-compose.yml"
+        image_compose.write_text(IMAGE_COMPOSE_TEMPLATE)
+        self._write_fake_docker(fake_bin, image_compose)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+        result = subprocess.run(
+            ["bash", str(REPAIR_UPDATER_SH)],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "Micromech updater repair completed" in result.stdout
+        assert (deploy_dir / "docker-compose.yml").read_text().startswith("name: micromech")
+
+    def test_repair_updater_preserves_testing_from_config_when_compose_detection_fails(self, tmp_path: Path) -> None:
+        deploy_dir = tmp_path / "micromech"
+        deploy_dir.mkdir()
+        (deploy_dir / "data").mkdir()
+        (deploy_dir / "data" / "config.yaml").write_text("update_channel: testing # keep testing\n")
+        (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
+        (deploy_dir / "docker-compose.yml").write_text(
+            "services:\n  micromech:\n    image: invalid\n    user: \"1000:1000\"\n"
+        )
+        (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
+        (deploy_dir / "updater.sh").write_text("#!/bin/sh\necho old\n")
+
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        image_compose = tmp_path / "image-compose.yml"
+        image_compose.write_text(IMAGE_COMPOSE_TEMPLATE)
+        self._write_fake_docker(fake_bin, image_compose)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+        env["FAKE_CONFIG_IMAGES_FAIL_UNTIL_GENERATED"] = "1"
+        env["FAKE_GENERATED_IMAGE"] = "dvilela/micromech-testing:latest"
+
+        result = subprocess.run(
+            ["bash", str(REPAIR_UPDATER_SH)],
+            cwd=deploy_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "image: dvilela/micromech-testing:latest" in (deploy_dir / "docker-compose.yml").read_text()
+
+    def test_repair_updater_detects_quoted_image_when_compose_detection_fails(self, tmp_path: Path) -> None:
+        deploy_dir = tmp_path / "micromech"
+        deploy_dir.mkdir()
+        (deploy_dir / "data").mkdir()
+        (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
+        (deploy_dir / "docker-compose.yml").write_text(
+            "services:\n  micromech:\n    image: \"dvilela/micromech-testing:latest\"\n    user: \"1000:1000\"\n"
+        )
+        (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
+        (deploy_dir / "updater.sh").write_text("#!/bin/sh\necho old\n")
+
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        image_compose = tmp_path / "image-compose.yml"
+        image_compose.write_text(IMAGE_COMPOSE_TEMPLATE)
+        self._write_fake_docker(fake_bin, image_compose)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+        env["FAKE_CONFIG_IMAGES_FAIL_UNTIL_GENERATED"] = "1"
+        env["FAKE_GENERATED_IMAGE"] = "dvilela/micromech-testing:latest"
+
+        result = subprocess.run(
+            ["bash", str(REPAIR_UPDATER_SH)],
+            cwd=deploy_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "image: dvilela/micromech-testing:latest" in (deploy_dir / "docker-compose.yml").read_text()
+
+    def test_repair_updater_refuses_managed_symlink_install(self, tmp_path: Path) -> None:
+        deploy_dir = tmp_path / "micromech"
+        managed_dir = tmp_path / "managed"
+        deploy_dir.mkdir()
+        managed_dir.mkdir()
+        (deploy_dir / "data").mkdir()
+        (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
+        (deploy_dir / "docker-compose.yml").write_text(
+            "services:\n  micromech:\n    image: dvilela/micromech:latest\n    user: \"1000:1000\"\n"
+        )
+        (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
+        (managed_dir / "updater.sh").write_text("#!/bin/sh\necho old but valid\n")
+        (deploy_dir / "updater.sh").symlink_to(managed_dir / "updater.sh")
+
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        image_compose = tmp_path / "image-compose.yml"
+        image_compose.write_text(IMAGE_COMPOSE_TEMPLATE)
+        self._write_fake_docker(fake_bin, image_compose)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+        result = subprocess.run(
+            ["bash", str(REPAIR_UPDATER_SH)],
+            cwd=deploy_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode != 0
+        assert "is a symlink" in result.stderr
+
+    def test_repair_updater_uses_subdir_when_parent_has_unrelated_compose(self, tmp_path: Path) -> None:
+        (tmp_path / "docker-compose.yml").write_text("services:\n  other:\n    image: alpine\n")
+        deploy_dir = tmp_path / "micromech"
+        deploy_dir.mkdir()
+        (deploy_dir / "data").mkdir()
+        (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
+        (deploy_dir / "docker-compose.yml").write_text(
+            "services:\n  micromech:\n    image: dvilela/micromech:latest\n    user: \"1000:1000\"\n"
+        )
+        (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
+        (deploy_dir / "updater.sh").write_text("#!/bin/sh\necho old\n")
+
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        image_compose = tmp_path / "image-compose.yml"
+        image_compose.write_text(IMAGE_COMPOSE_TEMPLATE)
+        self._write_fake_docker(fake_bin, image_compose)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+
+        result = subprocess.run(
+            ["bash", str(REPAIR_UPDATER_SH)],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert (tmp_path / "docker-compose.yml").read_text() == "services:\n  other:\n    image: alpine\n"
+        assert (deploy_dir / "docker-compose.yml").read_text().startswith("name: micromech")
+
+    def test_full_quickstart_rejects_invalid_image_override_before_pull(self, tmp_path: Path) -> None:
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        image_compose = tmp_path / "image-compose.yml"
+        image_compose.write_text(IMAGE_COMPOSE_TEMPLATE)
+        log_file = self._write_fake_docker(fake_bin, image_compose)
+
+        env = os.environ.copy()
+        env["PATH"] = f"{fake_bin}:{env['PATH']}"
+        env["MICROMECH_IMAGE"] = "attacker/example:latest"
+
+        result = subprocess.run(
+            ["bash", str(QUICKSTART_SH)],
+            cwd=tmp_path,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode != 0
+        assert "unsupported MICROMECH_IMAGE" in result.stderr
+        assert "pull attacker/example:latest" not in log_file.read_text()

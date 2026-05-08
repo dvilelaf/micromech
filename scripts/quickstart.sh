@@ -6,10 +6,16 @@ BLUE='\033[0;34m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
 
-MICROMECH_IMAGE="dvilela/micromech:latest"
+MICROMECH_IMAGE_OVERRIDE="${MICROMECH_IMAGE:-}"
+MICROMECH_IMAGE="${MICROMECH_IMAGE_OVERRIDE:-dvilela/micromech:latest}"
 
 detect_micromech_image() {
     local image=""
+    case "${MICROMECH_IMAGE_OVERRIDE:-}" in
+        dvilela/micromech:latest|dvilela/micromech-testing:latest) echo "$MICROMECH_IMAGE_OVERRIDE"; return 0 ;;
+        "") ;;
+        *) echo "ERROR: unsupported MICROMECH_IMAGE: $MICROMECH_IMAGE_OVERRIDE" >&2; return 1 ;;
+    esac
     if [ -f docker-compose.yml ] && docker compose version >/dev/null 2>&1; then
         image=$(docker compose config --images micromech 2>/dev/null | head -1 || true)
         case "$image" in
@@ -549,7 +555,7 @@ if is_managed_install; then
 fi
 
 # Extract artifacts from Docker image
-IMAGE="$MICROMECH_IMAGE"
+IMAGE="$(detect_micromech_image)" || exit 1
 echo -e "${BLUE}📦 Pulling latest image and extracting configuration...${NC}"
 docker pull "$IMAGE"
 
