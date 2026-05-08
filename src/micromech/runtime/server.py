@@ -465,6 +465,10 @@ class MechServer:
             if notification is None:
                 notification = NotificationService()
 
+            from micromech.tasks.update_result import consume_update_result
+
+            await consume_update_result(notification)
+
             self._task_scheduler = TaskScheduler(
                 self.config,
                 self.bridges,

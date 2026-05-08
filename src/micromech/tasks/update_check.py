@@ -13,8 +13,11 @@ from micromech.bot.formatting import bold_md, code_md
 if TYPE_CHECKING:
     from micromech.tasks.notifications import NotificationService
 
-DOCKERHUB_REPO = "dvilela/micromech"
-DOCKERHUB_API = f"https://hub.docker.com/v2/repositories/{DOCKERHUB_REPO}/tags"
+DOCKERHUB_REPOS = {
+    "release": "dvilela/micromech",
+    "testing": "dvilela/micromech-testing",
+}
+DOCKERHUB_API_TEMPLATE = "https://hub.docker.com/v2/repositories/{}/tags"
 
 # File-based IPC with the updater sidecar
 TRIGGER_PATH = Path("/app/data/.update-request")
@@ -51,15 +54,17 @@ def parse_version(v: str) -> tuple[int, ...]:
     return tuple(parts)
 
 
-async def check_dockerhub_latest() -> str | None:
+async def check_dockerhub_latest(channel: str = "release") -> str | None:
     """Check DockerHub for the latest micromech tag.
 
     Returns the latest version tag, or None if check fails.
     """
+    repo = DOCKERHUB_REPOS.get(channel, DOCKERHUB_REPOS["release"])
+    api_url = DOCKERHUB_API_TEMPLATE.format(repo)
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                DOCKERHUB_API,
+                api_url,
                 params={"page_size": 10, "ordering": "last_updated"},
                 timeout=30.0,
             )
@@ -139,7 +144,8 @@ async def update_check_task(
     logger.debug("Checking for micromech updates...")
 
     current = get_current_version()
-    latest = await check_dockerhub_latest()
+    channel = getattr(config, "update_channel", "release") if config is not None else "release"
+    latest = await check_dockerhub_latest(channel=channel)
 
     if not latest:
         logger.debug("Could not determine latest version from DockerHub")

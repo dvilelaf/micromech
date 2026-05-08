@@ -314,6 +314,31 @@ class TestCheckDockerhubLatest:
         assert result == "0.0.17"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("channel", "repo"),
+        [
+            ("release", "dvilela/micromech"),
+            ("testing", "dvilela/micromech-testing"),
+            ("bogus", "dvilela/micromech"),
+        ],
+    )
+    async def test_uses_channel_specific_repo(self, channel, repo):
+        from micromech.tasks.update_check import check_dockerhub_latest
+
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = {"results": [{"name": "0.1.1"}]}
+
+        with patch("httpx.AsyncClient") as MockClient:
+            instance = MockClient.return_value.__aenter__.return_value
+            instance.get = AsyncMock(return_value=mock_resp)
+            result = await check_dockerhub_latest(channel=channel)
+
+        assert result == "0.1.1"
+        url = instance.get.call_args.args[0]
+        assert f"/{repo}/tags" in url
+
+    @pytest.mark.asyncio
     async def test_skips_latest_tag(self):
         from micromech.tasks.update_check import check_dockerhub_latest
 
@@ -401,13 +426,17 @@ class TestUpdateCheckTask:
         notification = NotificationService()
         notification.send = AsyncMock()
         notification.send_message = AsyncMock()
+        config = make_test_config()
+        config.update_channel = "testing"
+        latest = AsyncMock(return_value="0.0.17")
 
         with (
-            patch("micromech.tasks.update_check.check_dockerhub_latest", return_value="0.0.17"),
+            patch("micromech.tasks.update_check.check_dockerhub_latest", latest),
             patch("micromech.tasks.update_check.get_current_version", return_value="0.0.16"),
         ):
-            await update_check_task(notification)
+            await update_check_task(notification, config)
 
+        latest.assert_awaited_once_with(channel="testing")
         notification.send_message.assert_called_once()
         message = notification.send_message.call_args.args[0]
         assert "*Update Available*" in message
@@ -528,6 +557,71 @@ class TestAutoUpdatePollTask:
         assert "forced" in notification.send.call_args[0][1]
         uc._pending_version = None
         uc._auto_update_started_at = None
+
+
+class TestConsumeUpdateResult:
+    @pytest.mark.asyncio
+    async def test_notifies_and_acknowledges_updated_marker(self, tmp_path):
+        from micromech.tasks.update_result import consume_update_result
+
+        result = tmp_path / ".update-result"
+        result.write_text("updated:0.1.0:0.1.2")
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch("micromech.tasks.update_result.RESULT_PATH", result):
+            await consume_update_result(notification)
+
+        notification.send.assert_awaited_once_with("Update Complete", "0.1.0 -> 0.1.2")
+        assert not result.exists()
+
+    @pytest.mark.asyncio
+    async def test_notifies_and_acknowledges_error_marker(self, tmp_path):
+        from micromech.tasks.update_result import consume_update_result
+
+        result = tmp_path / ".update-result"
+        result.write_text("error:pull_failed\nextra")
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch("micromech.tasks.update_result.RESULT_PATH", result):
+            await consume_update_result(notification)
+
+        notification.send.assert_awaited_once_with("Update Failed", "pull_failedextra", level="warning")
+        assert not result.exists()
+
+    @pytest.mark.asyncio
+    async def test_discards_symlink_marker_without_reading(self, tmp_path):
+        from micromech.tasks.update_result import consume_update_result
+
+        target = tmp_path / "target"
+        target.write_text("updated:old:new")
+        result = tmp_path / ".update-result"
+        result.symlink_to(target)
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch("micromech.tasks.update_result.RESULT_PATH", result):
+            await consume_update_result(notification)
+
+        notification.send.assert_not_called()
+        assert not result.exists()
+        assert target.exists()
+
+    @pytest.mark.asyncio
+    async def test_discards_oversized_marker_without_notifying(self, tmp_path):
+        from micromech.tasks.update_result import consume_update_result
+
+        result = tmp_path / ".update-result"
+        result.write_text("x" * 1024)
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch("micromech.tasks.update_result.RESULT_PATH", result):
+            await consume_update_result(notification)
+
+        notification.send.assert_not_called()
+        assert not result.exists()
 
 
 # ===========================================================================

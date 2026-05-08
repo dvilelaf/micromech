@@ -26,6 +26,33 @@ data_safe() {
     [ -d data ] && [ ! -L data ]
 }
 
+normalize_version() {
+    value="$1"
+    value=$(printf '%s' "$value" | tr -cd 'A-Za-z0-9._-' | cut -c1-32)
+    case "$value" in
+        ""|novalue|unknown) echo "unknown" ;;
+        *) echo "$value" ;;
+    esac
+}
+
+image_version() {
+    image="$1"
+    # Only trust Micromech-specific metadata. Generic labels can refer to a dependency.
+    value=$(docker inspect --format '{{index .Config.Labels "org.dvilela.micromech.version"}}' "$image" 2>/dev/null || true)
+    normalize_version "$value"
+}
+
+image_id() {
+    docker inspect --format '{{.Id}}' "$1" 2>/dev/null || echo "none"
+}
+
+running_service_image_id() {
+    cid=$(docker compose ps -q micromech 2>/dev/null | head -1 || true)
+    if [ -n "$cid" ]; then
+        docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true
+    fi
+}
+
 backup_safe() {
     data_safe \
         && [ ! -L data/backup ] \
@@ -164,19 +191,19 @@ while true; do
                 _write_result "error:crashloop"
             fi
         else
-            OLD=$(docker inspect --format '{{index .Config.Labels "version"}}' "$MICROMECH_IMAGE" 2>/dev/null || echo "unknown")
-            OLD_DIGEST=$(docker inspect --format '{{.Id}}' "$MICROMECH_IMAGE" 2>/dev/null || echo "none")
-            OLD=$(printf '%s' "$OLD" | tr -cd 'A-Za-z0-9._-' | cut -c1-32)
+            OLD_IMAGE=$(running_service_image_id)
+            OLD_IMAGE=${OLD_IMAGE:-$MICROMECH_IMAGE}
+            OLD=$(image_version "$OLD_IMAGE")
+            OLD_DIGEST=$(image_id "$OLD_IMAGE")
 
             if [ "$OLD_DIGEST" != "none" ]; then
-                docker tag "$MICROMECH_IMAGE" "${MICROMECH_IMAGE%:latest}:rollback-prev" \
+                docker tag "$OLD_IMAGE" "${MICROMECH_IMAGE%:latest}:rollback-prev" \
                     || log "WARNING: rollback-prev retag failed; rollback may not restore image"
             fi
 
             if docker compose pull micromech 2>&1; then
-                NEW=$(docker inspect --format '{{index .Config.Labels "version"}}' "$MICROMECH_IMAGE" 2>/dev/null || echo "unknown")
-                NEW_DIGEST=$(docker inspect --format '{{.Id}}' "$MICROMECH_IMAGE" 2>/dev/null || echo "none")
-                NEW=$(printf '%s' "$NEW" | tr -cd 'A-Za-z0-9._-' | cut -c1-32)
+                NEW=$(image_version "$MICROMECH_IMAGE")
+                NEW_DIGEST=$(image_id "$MICROMECH_IMAGE")
 
                 if [ "$OLD" != "$NEW" ] || [ "$OLD_DIGEST" != "$NEW_DIGEST" ]; then
                     updater_changed=0

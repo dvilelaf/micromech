@@ -1,7 +1,7 @@
 """Tests for the MechServer orchestrator."""
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -61,6 +61,35 @@ class TestMechServerInit:
         server = MechServer(server_config)
         server._load_tools()
         assert server.registry.has("echo")
+        server.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_run_consumes_update_result_before_scheduler(self, server_config):
+        server = MechServer(server_config)
+        server.deliveries = {}
+        server.listeners = {}
+        notification = MagicMock()
+        notification.send = AsyncMock()
+
+        consume = MagicMock()
+        scheduler = MagicMock()
+
+        async def _cancel(*_tasks):
+            raise asyncio.CancelledError
+
+        with (
+            patch.object(server, "_recover", new_callable=AsyncMock) as recover,
+            patch.object(server, "_processor_loop", new_callable=AsyncMock) as processor,
+            patch.object(server, "_prefetch_llm_model", new_callable=AsyncMock) as prefetch,
+            patch("micromech.tasks.update_result.consume_update_result", new_callable=AsyncMock) as consume_patch,
+            patch("micromech.tasks.scheduler.TaskScheduler", return_value=scheduler),
+            patch("micromech.tasks.watchdog.watchdog_loop", new_callable=AsyncMock) as watchdog,
+            patch("micromech.runtime.server.asyncio.gather", side_effect=_cancel),
+        ):
+            await server.run(with_http=False, register_signals=False, notification=notification)
+
+        consume_patch.assert_awaited_once_with(notification)
+        scheduler.start.assert_called_once()
         server.shutdown()
 
     @pytest.mark.asyncio

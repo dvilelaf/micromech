@@ -78,6 +78,24 @@ Run these from inside the `micromech/` folder. If you have [`just`](https://gith
 
 micromech restarts automatically if your computer reboots.
 
+### Repair updater files
+
+If `just update` reports an impossible version or seems stuck on old updater files, refresh the generated files from the configured Docker image. This preserves `data/` and `secrets.env`.
+
+```bash
+cd ~/micromech
+IMAGE=$(docker compose config --images micromech | head -1)
+case "$IMAGE" in dvilela/micromech:latest|dvilela/micromech-testing:latest) ;; *) IMAGE=dvilela/micromech:latest ;; esac
+docker pull "$IMAGE"
+QS=$(mktemp /tmp/micromech-quickstart.XXXXXX.sh)
+trap 'rm -f "$QS"' EXIT
+docker run --rm --entrypoint cat "$IMAGE" /app/scripts/quickstart.sh > "$QS"
+bash -n "$QS"
+UPDATE_CONFIG=1 bash "$QS"
+docker compose up -d --force-recreate updater
+just update
+```
+
 ## Remote Control via Telegram (Optional)
 
 Control your mech from your phone. Configure it from the dashboard, then use these commands:

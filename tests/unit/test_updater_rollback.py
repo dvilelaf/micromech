@@ -320,13 +320,15 @@ class TestUpdaterStructuralGuards:
         assert 'mv "$cfg_tmp" data/config.yaml' in src
         assert 'mv "$wal_tmp" data/wallet.json' in src
 
-    def test_old_version_fallback_guard(self):
+    def test_project_specific_version_label_guard(self):
         src = UPDATER_SH.read_text()
-        assert '[ -n "$OLD" ] || OLD="unknown"' in src
+        assert 'org.dvilela.micromech.version' in src
+        assert 'index .Config.Labels "version"' not in src
+        assert '""|novalue|unknown) echo "unknown"' in src
 
     def test_pre_pull_retag_with_guard(self):
         src = UPDATER_SH.read_text()
-        assert 'docker tag "$MICROMECH_IMAGE" "${MICROMECH_IMAGE%:latest}:rollback-prev"' in src
+        assert 'docker tag "$OLD_IMAGE" "${MICROMECH_IMAGE%:latest}:rollback-prev"' in src
 
     def test_wait_healthy_function_defined(self):
         """micromech did NOT have wait_healthy before; must be defined now."""
@@ -448,14 +450,14 @@ class TestUpdaterStructuralGuards:
         assert "compose -f /tmp/micromech-compose-abs-" in docker_log.read_text()
 
     def test_h3_old_sanitized_after_capture(self):
-        """OLD must be sanitized immediately after docker inspect to block label injection."""
+        """OLD must be normalized through the project-specific image helper."""
         src = UPDATER_SH.read_text()
-        assert "OLD=$(printf '%s' \"$OLD\" | tr -cd 'A-Za-z0-9._-' | cut -c1-32)" in src
+        assert 'OLD=$(image_version "$OLD_IMAGE")' in src
 
     def test_h3_new_sanitized_after_capture(self):
-        """NEW must be sanitized immediately after docker inspect."""
+        """NEW must be normalized through the project-specific image helper."""
         src = UPDATER_SH.read_text()
-        assert "NEW=$(printf '%s' \"$NEW\" | tr -cd 'A-Za-z0-9._-' | cut -c1-32)" in src
+        assert 'NEW=$(image_version "$MICROMECH_IMAGE")' in src
 
     def test_c2_chown_called_after_restore(self):
         """Restored files must be chowned to the configured service uid/gid."""
@@ -842,7 +844,8 @@ class TestQuickstartHostArtifacts:
     def test_quickstart_detects_existing_image_channel(self):
         src = QUICKSTART_SH.read_text()
         assert "detect_micromech_image()" in src
-        assert "dvilela\\/micromech[^[:space:]]*:latest" in src
+        assert "dvilela\\/micromech\\(-testing\\)\\?:latest" in src
+        assert "dvilela/micromech:latest|dvilela/micromech-testing:latest" in src
 
 
 class TestRollbackC1MtimeSort:

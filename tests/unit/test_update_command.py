@@ -27,13 +27,12 @@ class TestUpdateRollbackMessage(unittest.IsolatedAsyncioTestCase):
 
         mock_trigger = MagicMock(spec=Path)
         mock_result = MagicMock(spec=Path)
-        mock_result.exists.return_value = True
-        mock_result.read_text.return_value = marker
 
         with (
             patch("micromech.bot.security.secrets") as mock_settings,
             patch("micromech.bot.commands.update.TRIGGER_PATH", mock_trigger),
             patch("micromech.bot.commands.update.RESULT_PATH", mock_result),
+            patch("micromech.bot.commands.update.pop_update_result", return_value=marker),
             patch("micromech.bot.commands.update.POLL_INTERVAL", 0.01),
         ):
             mock_settings.telegram_chat_id = 123456789

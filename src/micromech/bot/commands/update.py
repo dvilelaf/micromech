@@ -8,6 +8,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from micromech.bot.security import authorized_only
+from micromech.tasks.update_result import pop_update_result
 
 TRIGGER_PATH = Path("/app/data/.update-request")
 RESULT_PATH = Path("/app/data/.update-result")
@@ -47,11 +48,10 @@ async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         for _ in range(POLL_ATTEMPTS):
             await asyncio.sleep(POLL_INTERVAL)
 
-            if not RESULT_PATH.exists():
+            result = pop_update_result(RESULT_PATH)
+            if result is None:
                 continue
 
-            result = RESULT_PATH.read_text().strip()
-            RESULT_PATH.unlink(missing_ok=True)
             disk_warn = _disk_warning_suffix()
 
             if result.startswith("updated:"):

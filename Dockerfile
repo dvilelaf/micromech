@@ -45,6 +45,9 @@ FROM python:3.12-slim-bookworm
 
 ARG VERSION=unknown
 LABEL version="${VERSION}"
+LABEL org.opencontainers.image.title="micromech"
+LABEL org.opencontainers.image.version="${VERSION}"
+LABEL org.dvilela.micromech.version="${VERSION}"
 
 ENV PYTHONUNBUFFERED=1
 # Redirect HuggingFace cache to /app/data so non-root users can write to it.

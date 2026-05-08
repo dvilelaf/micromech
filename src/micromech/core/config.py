@@ -2,7 +2,7 @@
 
 import unicodedata
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -168,6 +168,7 @@ class MicromechConfig(BaseModel):
     failed_deliveries_alert_interval_hours: int = Field(default=1, ge=1, le=48)
     update_check_enabled: bool = True
     auto_update_enabled: bool = False
+    update_channel: Literal["release", "testing"] = "release"
 
     # Parallel Safe TX delivery (NonceAllocator)
     parallel_nonce_enabled: bool = False

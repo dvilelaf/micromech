@@ -10,8 +10,19 @@ MICROMECH_IMAGE="dvilela/micromech:latest"
 
 detect_micromech_image() {
     local image=""
+    if [ -f docker-compose.yml ] && docker compose version >/dev/null 2>&1; then
+        image=$(docker compose config --images micromech 2>/dev/null | head -1 || true)
+        case "$image" in
+            dvilela/micromech:latest|dvilela/micromech-testing:latest) echo "$image"; return 0 ;;
+            *) image="" ;;
+        esac
+    fi
     if [ -f docker-compose.yml ]; then
-        image=$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(dvilela\/micromech[^[:space:]]*:latest\)[[:space:]]*$/\1/p' docker-compose.yml | head -1)
+        image=$(sed -n 's/^[[:space:]]*image:[[:space:]]*\(dvilela\/micromech\(-testing\)\?:latest\)[[:space:]]*$/\1/p' docker-compose.yml | head -1)
+        case "$image" in
+            dvilela/micromech:latest|dvilela/micromech-testing:latest) echo "$image"; return 0 ;;
+            *) image="" ;;
+        esac
     fi
     echo "${image:-$MICROMECH_IMAGE}"
 }
@@ -318,25 +329,51 @@ logs:
 update:
     #!/usr/bin/env bash
     set -e
-    MICROMECH_IMAGE=\$(sed -n 's/.*image: *\(dvilela\/micromech[^:]*:latest\).*/\1/p' docker-compose.yml | head -1)
-    MICROMECH_IMAGE=\${MICROMECH_IMAGE:-$image}
-    current=\$(docker inspect --format '{{{{index .Config.Labels "version"}}' "\$MICROMECH_IMAGE" 2>/dev/null || echo "unknown")
-    current_digest=\$(docker inspect --format '{{{{.Id}}' "\$MICROMECH_IMAGE" 2>/dev/null || echo "none")
-    docker compose pull
-    new=\$(docker inspect --format '{{{{index .Config.Labels "version"}}' "\$MICROMECH_IMAGE" 2>/dev/null || echo "unknown")
-    new_digest=\$(docker inspect --format '{{{{.Id}}' "\$MICROMECH_IMAGE" 2>/dev/null || echo "none")
+    normalize_version() {
+        local value="\$1"
+        value=\$(printf '%s' "\$value" | tr -cd 'A-Za-z0-9._-' | cut -c1-32)
+        case "\$value" in ""|novalue|unknown) echo "unknown" ;; *) echo "\$value" ;; esac
+    }
+    image_version() {
+        local value
+        value=\$(docker inspect --format '{{{{index .Config.Labels "org.dvilela.micromech.version"}}' "\$1" 2>/dev/null || true)
+        normalize_version "\$value"
+    }
+    image_id() { docker inspect --format '{{{{.Id}}' "\$1" 2>/dev/null || echo "none"; }
+    running_image_id() {
+        local cid
+        cid=\$(docker compose ps -q micromech 2>/dev/null | head -1 || true)
+        [ -n "\$cid" ] && docker inspect --format '{{{{.Image}}' "\$cid" 2>/dev/null || true
+    }
+    resolve_image() {
+        local image
+        image=\$(docker compose config --images micromech 2>/dev/null | head -1 || true)
+        case "\$image" in
+            dvilela/micromech:latest|dvilela/micromech-testing:latest) echo "\$image" ;;
+            *) echo "$image" ;;
+        esac
+    }
+    MICROMECH_IMAGE=\$(resolve_image)
+    current_image=\$(running_image_id)
+    current_image=\${current_image:-\$MICROMECH_IMAGE}
+    current=\$(image_version "\$current_image")
+    current_digest=\$(image_id "\$current_image")
+    docker compose pull micromech
+    new=\$(image_version "\$MICROMECH_IMAGE")
+    new_digest=\$(image_id "\$MICROMECH_IMAGE")
     if [ "\$current" != "\$new" ] || [ "\$current_digest" != "\$new_digest" ]; then
         echo "🔄 Updated v\$current -> v\$new"
         echo "📝 Updating config files..."
         qs_tmp=\$(mktemp /tmp/micromech-qs-XXXXXX)
         trap 'rm -f "\$qs_tmp"' EXIT
         docker run --rm --entrypoint cat "\$MICROMECH_IMAGE" /app/scripts/quickstart.sh > "\$qs_tmp"
+        bash -n "\$qs_tmp"
         UPDATE_CONFIG=1 bash "\$qs_tmp"
         rm -f "\$qs_tmp"
         trap - EXIT
         docker compose up -d
     else
-        echo "✅ Already at latest version (v\$current)"
+        echo "✅ Already at latest Micromech image (v\$current)"
     fi
     # Warn if Docker has significant reclaimable space
     waste_gb=\$(if command -v timeout >/dev/null 2>&1; then timeout 5 docker system df 2>/dev/null || true; fi | tail -n +2 | awk '{v=\$NF; if (v ~ /^\\(/) v=\$(NF-1); n=v; gsub(/[^0-9.]/, "", n); u=toupper(v); gsub(/[0-9.]/, "", u); if (u ~ /^TB/) t+=n*1024; else if (u ~ /^GB/) t+=n; else if (u ~ /^MB/) t+=n/1024; else if (u ~ /^KB/) t+=n/1048576; else if (u ~ /^B/) t+=n/1073741824} END {printf "%.0f", t}')
@@ -348,11 +385,15 @@ update-config:
     #!/usr/bin/env bash
     set -e
     echo "📝 Updating Justfile and docker-compose.yml from latest Docker image..."
-    MICROMECH_IMAGE=\$(sed -n 's/.*image: *\(dvilela\/micromech[^:]*:latest\).*/\1/p' docker-compose.yml | head -1)
-    MICROMECH_IMAGE=\${MICROMECH_IMAGE:-$image}
+    MICROMECH_IMAGE=\$(docker compose config --images micromech 2>/dev/null | head -1 || true)
+    case "\$MICROMECH_IMAGE" in
+        dvilela/micromech:latest|dvilela/micromech-testing:latest) ;;
+        *) MICROMECH_IMAGE="$image" ;;
+    esac
     qs_tmp=\$(mktemp /tmp/micromech-qs-XXXXXX)
     trap 'rm -f "\$qs_tmp"' EXIT
     docker run --rm --entrypoint cat "\$MICROMECH_IMAGE" /app/scripts/quickstart.sh > "\$qs_tmp"
+    bash -n "\$qs_tmp"
     UPDATE_CONFIG=1 bash "\$qs_tmp"
     rm -f "\$qs_tmp"
     trap - EXIT

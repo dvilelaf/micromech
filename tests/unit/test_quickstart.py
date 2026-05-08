@@ -1,6 +1,7 @@
 """Tests for quickstart ownership and managed-install guards."""
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,7 @@ def _write_fake_docker(fake_bin: Path) -> None:
     docker = fake_bin / "docker"
     docker.write_text(
         """#!/bin/sh
+[ -n "$DOCKER_LOG" ] && echo "$@" >> "$DOCKER_LOG"
 case "$*" in
   "compose -f docker-compose.yml.tmp config -q")
     exit 0
@@ -23,11 +25,37 @@ case "$*" in
   "compose version")
     exit 0
     ;;
+  "compose config --images micromech")
+    printf 'dvilela/micromech:latest\\n'
+    ;;
+  "compose ps -q micromech")
+    echo cid-micromech
+    ;;
+  *cid-micromech*)
+    case "$*" in
+      *.Image*) echo sha256:old; exit 0 ;;
+    esac
+    ;;
+  *sha256:old*)
+    case "$*" in
+      *"org.dvilela.micromech.version"*) echo 0.1.0; exit 0 ;;
+      *.Id*) echo sha256:old; exit 0 ;;
+    esac
+    ;;
   "info")
+    exit 0
+    ;;
+  "compose pull micromech")
     exit 0
     ;;
   "pull dvilela/micromech:latest")
     exit 0
+    ;;
+  *inspect*"dvilela/micromech:latest"*)
+    case "$*" in
+      *"org.dvilela.micromech.version"*) echo 0.1.1; exit 0 ;;
+      *.Id*) echo sha256:new; exit 0 ;;
+    esac
     ;;
   "create dvilela/micromech:latest")
     echo fake-container
@@ -40,6 +68,9 @@ case "$*" in
     ;;
   "compose up -d")
     exit 0
+    ;;
+  *"/app/scripts/quickstart.sh"*)
+    cat "__QUICKSTART_SH__"
     ;;
   *"/app/docker-compose.yml"*)
     cat <<'EOF'
@@ -65,6 +96,7 @@ EOF
     ;;
 esac
 """
+        .replace("__QUICKSTART_SH__", str(QUICKSTART_SH))
     )
     docker.chmod(0o755)
 
@@ -127,6 +159,11 @@ def test_update_config_uses_installer_owner(tmp_path: Path, sudo_user: str | Non
     assert 'user: "2001:3001"' in compose
     assert "UPDATER_RUN_AS=2001:3001" in compose
     assert '--user "2001:3001"' in justfile
+    assert "org.dvilela.micromech.version" in justfile
+    assert 'index .Config.Labels "version"' not in justfile
+    assert "docker compose ps -q micromech" in justfile
+    assert "docker compose pull micromech" in justfile
+    assert "bash -n \"$qs_tmp\"" in justfile
     if sudo_user is not None:
         assert chown_log.read_text().splitlines() == [
             "-- 2001:3001 docker-compose.yml",
@@ -148,6 +185,39 @@ def test_update_config_preserves_existing_compose_user(tmp_path: Path) -> None:
     assert 'user: "4444:5555"' in compose
     assert "UPDATER_RUN_AS=4444:5555" in compose
     assert '--user "4444:5555"' in justfile
+
+
+def test_generated_just_update_recreates_when_container_lags_local_latest(tmp_path: Path) -> None:
+    if not shutil.which("just"):
+        pytest.skip("just is not installed")
+
+    deploy_dir, fake_bin = _make_deploy_dir(tmp_path)
+    _write_fake_id(fake_bin)
+    docker_log = tmp_path / "docker.log"
+
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["UPDATE_CONFIG"] = "1"
+    env["DOCKER_LOG"] = str(docker_log)
+    subprocess.run(["bash", str(QUICKSTART_SH)], cwd=deploy_dir, env=env, check=True)
+    env.pop("UPDATE_CONFIG")
+
+    result = subprocess.run(
+        ["just", "--justfile", str(deploy_dir / "Justfile"), "update"],
+        cwd=deploy_dir,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Updated v0.1.0 -> v0.1.1" in result.stdout
+    log = docker_log.read_text()
+    assert "inspect --format {{.Image}} cid-micromech" in log
+    assert (
+        "inspect --format {{index .Config.Labels \"org.dvilela.micromech.version\"}} sha256:old"
+        in log
+    )
 
 
 def test_update_config_rejects_invalid_existing_compose_user(tmp_path: Path) -> None:
