@@ -71,19 +71,18 @@ class TestMechServerInit:
         notification = MagicMock()
         notification.send = AsyncMock()
 
-        consume = MagicMock()
         scheduler = MagicMock()
 
         async def _cancel(*_tasks):
             raise asyncio.CancelledError
 
         with (
-            patch.object(server, "_recover", new_callable=AsyncMock) as recover,
-            patch.object(server, "_processor_loop", new_callable=AsyncMock) as processor,
-            patch.object(server, "_prefetch_llm_model", new_callable=AsyncMock) as prefetch,
+            patch.object(server, "_recover", new_callable=AsyncMock),
+            patch.object(server, "_processor_loop", new_callable=AsyncMock),
+            patch.object(server, "_prefetch_llm_model", new_callable=AsyncMock),
             patch("micromech.tasks.update_result.consume_update_result", new_callable=AsyncMock) as consume_patch,
             patch("micromech.tasks.scheduler.TaskScheduler", return_value=scheduler),
-            patch("micromech.tasks.watchdog.watchdog_loop", new_callable=AsyncMock) as watchdog,
+            patch("micromech.tasks.watchdog.watchdog_loop", new_callable=AsyncMock),
             patch("micromech.runtime.server.asyncio.gather", side_effect=_cancel),
         ):
             await server.run(with_http=False, register_signals=False, notification=notification)
