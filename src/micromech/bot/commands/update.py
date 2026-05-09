@@ -15,7 +15,7 @@ RESULT_PATH = Path("/app/data/.update-result")
 DISK_WARNING_PATH = Path("/app/data/.disk-warning")
 
 POLL_INTERVAL = 10
-POLL_ATTEMPTS = 12
+POLL_ATTEMPTS = 40
 
 
 def _disk_warning_suffix() -> str:
@@ -56,14 +56,31 @@ async def update_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
             if result.startswith("updated:"):
                 parts = result.split(":")
+                if len(parts) != 3:
+                    await wait_msg.edit_text(f"Update failed: invalid_result{disk_warn}")
+                    return
                 await wait_msg.edit_text(
                     f"Updating v{parts[1]} → v{parts[2]}! Restarting...{disk_warn}"
                 )
                 return
             elif result.startswith("current:"):
-                version = result.split(":")[1]
+                parts = result.split(":")
+                if len(parts) != 2:
+                    await wait_msg.edit_text(f"Update failed: invalid_result{disk_warn}")
+                    return
+                version = parts[1]
                 await wait_msg.edit_text(
                     f"Already at latest version (v{version}){disk_warn}"
+                )
+                return
+            elif result.startswith("rolled_back:"):
+                parts = result.split(":")
+                if len(parts) != 3:
+                    await wait_msg.edit_text(f"Update failed: invalid_result{disk_warn}")
+                    return
+                _, old, failed = parts
+                await wait_msg.edit_text(
+                    f"Update failed; rolled back to v{old} after v{failed} failed.{disk_warn}"
                 )
                 return
             elif result.startswith("error:"):

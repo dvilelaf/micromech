@@ -317,8 +317,28 @@ down:
 
 # Update to the latest published image
 update:
-    docker compose pull
-    docker compose up -d
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p data
+    rm -f data/.update-result
+    printf 'update\n' > data/.update-request
+    echo "Update requested. Waiting for updater result..."
+    for _ in $(seq 1 240); do
+        if [ -f data/.update-result ]; then
+            result=$(cat data/.update-result)
+            rm -f data/.update-result
+            case "$result" in
+                current:*) echo "✅ Already at latest Micromech image (v${result#current:})"; exit 0 ;;
+                updated:*) echo "✅ Micromech updated: ${result#updated:}"; exit 0 ;;
+                rolled_back:*) echo "⚠️  Micromech update failed and rolled back: ${result#rolled_back:}"; exit 1 ;;
+                error:*) echo "❌ Micromech update failed: ${result#error:}"; exit 1 ;;
+                *) echo "❌ Unknown updater result: $result"; exit 1 ;;
+            esac
+        fi
+        sleep 2
+    done
+    echo "❌ Timeout waiting for updater. Is the updater container running?"
+    exit 1
 
 # Force full rebuild (no cache) - use when dependencies change
 rebuild-clean:

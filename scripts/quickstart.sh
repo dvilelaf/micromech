@@ -334,58 +334,27 @@ logs:
 
 update:
     #!/usr/bin/env bash
-    set -e
-    normalize_version() {
-        local value="\$1"
-        value=\$(printf '%s' "\$value" | tr -cd 'A-Za-z0-9._-' | cut -c1-32)
-        case "\$value" in ""|novalue|unknown) echo "unknown" ;; *) echo "\$value" ;; esac
-    }
-    image_version() {
-        local value
-        value=\$(docker inspect --format '{{{{index .Config.Labels "org.dvilela.micromech.version"}}' "\$1" 2>/dev/null || true)
-        normalize_version "\$value"
-    }
-    image_id() { docker inspect --format '{{{{.Id}}' "\$1" 2>/dev/null || echo "none"; }
-    running_image_id() {
-        local cid
-        cid=\$(docker compose ps -q micromech 2>/dev/null | head -1 || true)
-        [ -n "\$cid" ] && docker inspect --format '{{{{.Image}}' "\$cid" 2>/dev/null || true
-    }
-    resolve_image() {
-        local image
-        image=\$(docker compose config --images micromech 2>/dev/null | head -1 || true)
-        case "\$image" in
-            dvilela/micromech:latest|dvilela/micromech-testing:latest) echo "\$image" ;;
-            *) echo "$image" ;;
-        esac
-    }
-    MICROMECH_IMAGE=\$(resolve_image)
-    current_image=\$(running_image_id)
-    current_image=\${current_image:-\$MICROMECH_IMAGE}
-    current=\$(image_version "\$current_image")
-    current_digest=\$(image_id "\$current_image")
-    docker compose pull micromech
-    new=\$(image_version "\$MICROMECH_IMAGE")
-    new_digest=\$(image_id "\$MICROMECH_IMAGE")
-    if [ "\$current" != "\$new" ] || [ "\$current_digest" != "\$new_digest" ]; then
-        echo "🔄 Updated v\$current -> v\$new"
-        echo "📝 Updating config files..."
-        qs_tmp=\$(mktemp /tmp/micromech-qs-XXXXXX)
-        trap 'rm -f "\$qs_tmp"' EXIT
-        docker run --rm --entrypoint cat "\$MICROMECH_IMAGE" /app/scripts/quickstart.sh > "\$qs_tmp"
-        bash -n "\$qs_tmp"
-        UPDATE_CONFIG=1 bash "\$qs_tmp"
-        rm -f "\$qs_tmp"
-        trap - EXIT
-        docker compose up -d
-    else
-        echo "✅ Already at latest Micromech image (v\$current)"
-    fi
-    # Warn if Docker has significant reclaimable space
-    waste_gb=\$(if command -v timeout >/dev/null 2>&1; then timeout 5 docker system df 2>/dev/null || true; fi | tail -n +2 | awk '{v=\$NF; if (v ~ /^\\(/) v=\$(NF-1); n=v; gsub(/[^0-9.]/, "", n); u=toupper(v); gsub(/[0-9.]/, "", u); if (u ~ /^TB/) t+=n*1024; else if (u ~ /^GB/) t+=n; else if (u ~ /^MB/) t+=n/1024; else if (u ~ /^KB/) t+=n/1048576; else if (u ~ /^B/) t+=n/1073741824} END {printf "%.0f", t}')
-    if [ "\${waste_gb:-0}" -ge 5 ]; then
-        echo "⚠️  Docker has ~\${waste_gb}GB of reclaimable space. Run 'docker system prune' to free disk."
-    fi
+    set -euo pipefail
+    mkdir -p data
+    rm -f data/.update-result
+    printf 'update\n' > data/.update-request
+    echo "Update requested. Waiting for updater result..."
+    for _ in \$(seq 1 240); do
+        if [ -f data/.update-result ]; then
+            result=\$(cat data/.update-result)
+            rm -f data/.update-result
+            case "\$result" in
+                current:*) echo "✅ Already at latest Micromech image (v\${result#current:})"; exit 0 ;;
+                updated:*) echo "✅ Micromech updated: \${result#updated:}"; exit 0 ;;
+                rolled_back:*) echo "⚠️  Micromech update failed and rolled back: \${result#rolled_back:}"; exit 1 ;;
+                error:*) echo "❌ Micromech update failed: \${result#error:}"; exit 1 ;;
+                *) echo "❌ Unknown updater result: \$result"; exit 1 ;;
+            esac
+        fi
+        sleep 2
+    done
+    echo "❌ Timeout waiting for updater. Is the updater container running?"
+    exit 1
 
 update-config:
     #!/usr/bin/env bash

@@ -1,4 +1,4 @@
-"""Tests for /update command — focus on rollback marker parsing."""
+"""Tests for /update command rollback marker parsing."""
 
 import unittest
 from pathlib import Path
@@ -11,12 +11,7 @@ from micromech.bot.commands.update import update_command
 
 
 class TestUpdateRollbackMessage(unittest.IsolatedAsyncioTestCase):
-    """Bot must display the literal rollback marker from updater.sh.
-
-    The bash updater writes `error:rolled_back_to_v$OLD` after a failed
-    health check. The bot's `update_command` parses any `error:` prefix via
-    `split(":", 1)`, which preserves version dots in the suffix.
-    """
+    """Bot must display explicit `rolled_back:<old>:<failed>` markers."""
 
     async def _run(self, marker: str) -> str:
         mock_update = MagicMock(spec=Update)
@@ -42,23 +37,18 @@ class TestUpdateRollbackMessage(unittest.IsolatedAsyncioTestCase):
         return mock_wait_msg.edit_text.call_args[0][0]
 
     async def test_rolled_back_versioned(self):
-        text = await self._run("error:rolled_back_to_v0.5.1")
-        # split(":", 1) must preserve dots in version.
-        assert "rolled_back_to_v0.5.1" in text
-        assert "Update failed" in text
+        text = await self._run("rolled_back:0.5.1:0.5.2")
+        assert "rolled back to v0.5.1" in text
+        assert "v0.5.2 failed" in text
 
     async def test_rolled_back_unknown_version(self):
-        """Updater writes `vunknown` if OLD label was missing on the previous image."""
-        text = await self._run("error:rolled_back_to_vunknown")
-        assert "rolled_back_to_vunknown" in text
-        assert "Update failed" in text
+        text = await self._run("rolled_back:unknown:0.5.2")
+        assert "rolled back to vunknown" in text
 
     async def test_rolled_back_with_semver_suffix(self):
-        """Versions like 0.10.0-rc1 must survive the split intact."""
-        text = await self._run("error:rolled_back_to_v0.10.0-rc1")
-        assert "rolled_back_to_v0.10.0-rc1" in text
+        text = await self._run("rolled_back:0.9.9:0.10.0-rc1")
+        assert "v0.10.0-rc1 failed" in text
 
     async def test_existing_error_prefix_still_works(self):
-        """Regression guard: the new rollback marker must not break old error: cases."""
         text = await self._run("error:pull_failed")
         assert "pull_failed" in text

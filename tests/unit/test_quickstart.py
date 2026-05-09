@@ -172,14 +172,15 @@ def test_update_config_uses_installer_owner(tmp_path: Path, sudo_user: str | Non
 
     compose = (deploy_dir / "docker-compose.yml").read_text()
     justfile = (deploy_dir / "Justfile").read_text()
+    update_block = justfile.split("\nupdate:\n", 1)[1].split("\nupdate-config:\n", 1)[0]
     assert 'user: "2001:3001"' in compose
     assert "UPDATER_RUN_AS=2001:3001" in compose
     assert '--user "2001:3001"' in justfile
-    assert "org.dvilela.micromech.version" in justfile
     assert 'index .Config.Labels "version"' not in justfile
-    assert "docker compose ps -q micromech" in justfile
-    assert "docker compose pull micromech" in justfile
-    assert "bash -n \"$qs_tmp\"" in justfile
+    assert "printf 'update\\n' > data/.update-request" in update_block
+    assert "data/.update-result" in update_block
+    assert "docker compose pull micromech" not in update_block
+    assert "bash -n \"$qs_tmp\"" not in update_block
     if sudo_user is not None:
         assert chown_log.read_text().splitlines() == [
             "-- 2001:3001 docker-compose.yml",
@@ -217,6 +218,11 @@ def test_generated_just_update_recreates_when_container_lags_local_latest(tmp_pa
     env["DOCKER_LOG"] = str(docker_log)
     subprocess.run(["bash", str(QUICKSTART_SH)], cwd=deploy_dir, env=env, check=True)
     env.pop("UPDATE_CONFIG")
+    fake_sleep = fake_bin / "sleep"
+    fake_sleep.write_text(
+        f"#!/bin/sh\nprintf 'updated:0.1.0:0.1.2\\n' > {deploy_dir}/data/.update-result\n"
+    )
+    fake_sleep.chmod(0o755)
 
     result = subprocess.run(
         ["just", "--justfile", str(deploy_dir / "Justfile"), "update"],
@@ -227,13 +233,9 @@ def test_generated_just_update_recreates_when_container_lags_local_latest(tmp_pa
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Updated v0.1.0 -> v0.1.2" in result.stdout
-    log = docker_log.read_text()
-    assert "inspect --format {{.Image}} cid-micromech" in log
-    assert (
-        "inspect --format {{index .Config.Labels \"org.dvilela.micromech.version\"}} sha256:old"
-        in log
-    )
+    assert "Micromech updated: 0.1.0:0.1.2" in result.stdout
+    assert (deploy_dir / "data" / ".update-request").read_text() == "update\n"
+    assert "compose pull micromech" not in docker_log.read_text()
 
 
 def test_update_config_rejects_invalid_existing_compose_user(tmp_path: Path) -> None:
@@ -602,117 +604,11 @@ esac
 def test_updater_managed_legacy_update_migrates_secret_mount_and_recreates_updater_only(
     tmp_path: Path,
 ) -> None:
-    """Exercise updater.sh -> extracted quickstart.sh -> legacy sidecar recreate."""
-    repo_root = Path(__file__).parent.parent.parent
-    deploy_dir = tmp_path / "deploy"
-    managed_dir = tmp_path / "managed"
-    fake_bin = tmp_path / "bin"
-    deploy_dir.mkdir()
-    managed_dir.mkdir()
-    fake_bin.mkdir()
-    (deploy_dir / "data" / "backup" / "pre-update").mkdir(parents=True)
-    (deploy_dir / "data" / "config.yaml").write_text("chains: []\n")
-    (deploy_dir / "data" / "wallet.json").write_text('{"wallet": true}\n')
-    (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
-    secrets_stat = (deploy_dir / "secrets.env").stat()
-    (managed_dir / "Justfile").write_text("managed just\n")
-    (managed_dir / "updater.sh").write_text("#!/bin/sh\necho managed updater\n")
-    (managed_dir / "updater.sh").chmod(0o755)
-    (deploy_dir / "Justfile").symlink_to(managed_dir / "Justfile")
-    (deploy_dir / "updater.sh").symlink_to(managed_dir / "updater.sh")
-    (deploy_dir / "docker-compose.yml").write_text(
-        """name: micromech
-services:
-  micromech:
-    image: dvilela/micromech:latest
-    user: "1000:1000"
-    volumes:
-      - ./data:/app/data
-    env_file:
-      - ./secrets.env
-  updater:
-    image: docker:cli
-    volumes:
-      - ./:/host
-"""
-    )
-    (deploy_dir / "data" / ".update-request").write_text("update")
-
-    fake_sleep = fake_bin / "sleep"
-    fake_sleep.write_text(f"#!/bin/sh\nrm -f {deploy_dir}/data/.update-result\nexit 0\n")
-    fake_sleep.chmod(0o755)
-    fake_chown = fake_bin / "chown"
-    fake_chown.write_text("#!/bin/sh\nexit 0\n")
-    fake_chown.chmod(0o755)
-    fake_docker = fake_bin / "docker"
-    fake_docker.write_text(
-        f"""#!/bin/sh
-echo "$@" >> "{tmp_path}/docker.log"
-case "$*" in
-  *cid-micromech*)
-    case "$*" in
-      *State.Status*) echo running ;;
-      *State.Health*) echo healthy ;;
-      *) echo unknown ;;
-    esac
-    exit 0
-    ;;
-  *"dvilela/micromech:latest"*)
-    case "$*" in
-      *Labels*) [ -f "{tmp_path}/pulled" ] && echo 0.0.47 || echo 0.0.46; exit 0 ;;
-      *.Id*) [ -f "{tmp_path}/pulled" ] && echo sha256:new || echo sha256:old; exit 0 ;;
-    esac
-    ;;
-esac
-case "$*" in
-  "compose config --images micromech") echo "dvilela/micromech:latest"; exit 0 ;;
-  "compose pull micromech") touch "{tmp_path}/pulled"; exit 0 ;;
-  "run --rm --entrypoint cat dvilela/micromech:latest /app/scripts/quickstart.sh")
-    cat "{repo_root}/scripts/quickstart.sh"; exit 0 ;;
-  "compose -f docker-compose.yml config -q") exit 0 ;;
-  "compose -f docker-compose.yml config --services") printf 'micromech\\nupdater\\n'; exit 0 ;;
-  "compose stop micromech") exit 0 ;;
-  "compose up -d micromech") exit 0 ;;
-  "compose ps -q micromech") echo cid-micromech; exit 0 ;;
-  *" up -d micromech") exit 0 ;;
-  *"config --services") printf 'updater\\n'; exit 0 ;;
-  *"up -d --force-recreate updater") exit 0 ;;
-  *"up -d --force-recreate dockerproxy updater") exit 1 ;;
-esac
-if [ "$1" = "tag" ] || [ "$1 $2" = "image inspect" ]; then exit 0; fi
-echo "unexpected docker invocation: $*" >&2
-exit 1
-"""
-    )
-    fake_docker.chmod(0o755)
-
-    updater = tmp_path / "updater.sh"
-    updater.write_text(
-        (repo_root / "scripts" / "updater.sh")
-        .read_text()
-        .replace('UPDATER_LOG="/host/data/updater.log"', f'UPDATER_LOG="{tmp_path}/updater.log"')
-        .replace("cd /host", f'cd "{deploy_dir}"')
-    )
-    updater.chmod(0o755)
-
-    env = os.environ.copy()
-    env["PATH"] = f"{fake_bin}:{env['PATH']}"
-    env["HOST_PROJECT_DIR"] = str(deploy_dir)
-    result = subprocess.run(["bash", str(updater)], env=env, capture_output=True, text=True)
-
-    assert result.returncode == 0, result.stderr
-    compose = (deploy_dir / "docker-compose.yml").read_text()
-    assert "- ./secrets.env:/app/secrets.env" in compose
-    assert ":/app/secrets.env:ro" not in compose
-    assert (deploy_dir / "secrets.env").stat().st_ino == secrets_stat.st_ino
-    assert (deploy_dir / "secrets.env").stat().st_mtime_ns == secrets_stat.st_mtime_ns
-    assert (deploy_dir / "Justfile").is_symlink()
-    assert (deploy_dir / "updater.sh").is_symlink()
-    assert (managed_dir / "Justfile").read_text() == "managed just\n"
-    assert (managed_dir / "updater.sh").read_text() == "#!/bin/sh\necho managed updater\n"
-    docker_log = (tmp_path / "docker.log").read_text()
-    assert "up -d --force-recreate updater" in docker_log
-    assert "up -d --force-recreate dockerproxy updater" not in docker_log
+    """Normal updater must not run legacy auto-migrations."""
+    src = UPDATER_SH.read_text()
+    assert "/app/scripts/quickstart.sh" not in src
+    assert "UPDATE_CONFIG=1" not in src
+    assert "force-recreate updater" not in src
 
 
 class TestRepairUpdaterScript:
@@ -818,8 +714,10 @@ services:
         assert "UPDATER_RUN_AS=1000:1000" in compose
         assert "- ./:/host" in compose
         assert "su-exec" in compose
-        assert "org.dvilela.micromech.version" in (deploy_dir / "Justfile").read_text()
-        assert "PROJECT_DIR=" in (deploy_dir / "updater.sh").read_text()
+        justfile = (deploy_dir / "Justfile").read_text()
+        assert "printf 'update\\n' > data/.update-request" in justfile
+        assert "docker compose pull micromech" not in justfile
+        assert "HOST_ROOT=" in (deploy_dir / "updater.sh").read_text()
 
         docker_log = log_file.read_text()
         assert "pull dvilela/micromech-testing:latest" in docker_log

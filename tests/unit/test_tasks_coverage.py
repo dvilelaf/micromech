@@ -576,6 +576,22 @@ class TestConsumeUpdateResult:
         assert not result.exists()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("marker", ["updated:0.1.0", "updated:0.1.0:0.1.2:extra", "rolled_back:0.1.0"])
+    async def test_discards_malformed_versioned_markers(self, tmp_path, marker):
+        from micromech.tasks.update_result import consume_update_result
+
+        result = tmp_path / ".update-result"
+        result.write_text(marker)
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch("micromech.tasks.update_result.RESULT_PATH", result):
+            await consume_update_result(notification)
+
+        notification.send.assert_not_called()
+        assert not result.exists()
+
+    @pytest.mark.asyncio
     async def test_notifies_and_acknowledges_error_marker(self, tmp_path):
         from micromech.tasks.update_result import consume_update_result
 

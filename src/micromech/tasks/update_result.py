@@ -58,9 +58,24 @@ async def consume_update_result(notification: object) -> None:
 
     if result.startswith("updated:"):
         parts = result.split(":")
-        old = _safe_marker(parts[1]) if len(parts) > 1 else "unknown"
-        new = _safe_marker(parts[2]) if len(parts) > 2 else "unknown"
-        await notification.send("Update Complete", f"{old} -> {new}")
+        if len(parts) == 3:
+            old = _safe_marker(parts[1])
+            new = _safe_marker(parts[2])
+            await notification.send("Update Complete", f"{old} -> {new}")
+        else:
+            logger.warning("Discarded invalid update result marker")
+    elif result.startswith("rolled_back:"):
+        parts = result.split(":")
+        if len(parts) == 3:
+            old = _safe_marker(parts[1])
+            failed = _safe_marker(parts[2])
+            await notification.send(
+                "Update Rolled Back",
+                f"{failed} failed; restored {old}",
+                level="warning",
+            )
+        else:
+            logger.warning("Discarded invalid update result marker")
     elif result.startswith("error:"):
         error = _safe_marker(result.split(":", 1)[1])
         await notification.send("Update Failed", error, level="warning")
