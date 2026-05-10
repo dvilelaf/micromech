@@ -5,7 +5,6 @@ import subprocess
 import textwrap
 from pathlib import Path
 
-
 UPDATER = Path("scripts/updater.sh")
 QUICKSTART = Path("scripts/quickstart.sh")
 
@@ -34,8 +33,8 @@ def test_normal_update_does_not_mutate_host_artifacts_or_data() -> None:
         "docker-compose.yml.bak",
         "cp -p data/config.yaml",
         "cp -p data/wallet.json",
-        "mv \"$cfg_tmp\" data/config.yaml",
-        "mv \"$wal_tmp\" data/wallet.json",
+        'mv "$cfg_tmp" data/config.yaml',
+        'mv "$wal_tmp" data/wallet.json',
         "exec bash ./updater.sh",
         "--force-recreate dockerproxy updater",
     ]
@@ -67,15 +66,15 @@ def test_update_fingerprints_protected_artifacts_before_success_or_rollback() ->
     assert "readlink -f" in src
     assert "symlink-target" in src
     assert src.index("protected_fingerprint") < src.index("compose_up_service")
-    assert "write_result \"updated:$old:$new\"" in src
-    assert src.index("verify_fingerprint \"$fingerprints\"") < src.index(
-        "write_result \"updated:$old:$new\""
+    assert 'write_result "updated:$old:$new"' in src
+    assert src.index('verify_fingerprint "$fingerprints"') < src.index(
+        'write_result "updated:$old:$new"'
     )
 
 
 def test_update_rollback_is_final_state_not_error_alias() -> None:
     src = _updater()
-    assert "write_result \"rolled_back:$old:$new\"" in src
+    assert 'write_result "rolled_back:$old:$new"' in src
     assert "rolled_back_to_v" not in src
 
 
@@ -130,7 +129,7 @@ def _write_fake_docker(
             f"""\
             #!/usr/bin/env bash
             set -eu
-            echo "$@" >> "{tmp_path / 'docker.log'}"
+            echo "$@" >> "{tmp_path / "docker.log"}"
             if [ "$1 $2 $3" = "compose config --images" ]; then echo "dvilela/micromech:latest"; exit 0; fi
             if [ "$1 $2 $3" = "compose ps -q" ]; then echo "micromech-cid"; exit 0; fi
             if [ "$1" = "inspect" ]; then
@@ -138,9 +137,9 @@ def _write_fake_docker(
               case "$fmt|$target" in
                 *".Image"*\\|micromech-cid) echo "sha256:old"; exit 0 ;;
                 *".Id"*\\|sha256:old) echo "sha256:old"; exit 0 ;;
-                *".Id"*\\|dvilela/micromech:latest) echo "{'sha256:old' if same_image else 'sha256:new'}"; exit 0 ;;
+                *".Id"*\\|dvilela/micromech:latest) echo "{"sha256:old" if same_image else "sha256:new"}"; exit 0 ;;
                 *"org.dvilela.micromech.version"*\\|sha256:old) echo "0.1.0"; exit 0 ;;
-                *"org.dvilela.micromech.version"*\\|dvilela/micromech:latest) echo "{'0.1.0' if same_image else '0.1.1'}"; exit 0 ;;
+                *"org.dvilela.micromech.version"*\\|dvilela/micromech:latest) echo "{"0.1.0" if same_image else "0.1.1"}"; exit 0 ;;
                 *".State.Status"*\\|micromech-cid) echo "running"; exit 0 ;;
                 *".State.Health"*\\|micromech-cid) {health_probe}; exit 0 ;;
               esac

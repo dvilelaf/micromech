@@ -111,8 +111,7 @@ EOF
     exit 1
     ;;
 esac
-"""
-        .replace("__QUICKSTART_SH__", str(QUICKSTART_SH))
+""".replace("__QUICKSTART_SH__", str(QUICKSTART_SH))
     )
     docker.chmod(0o755)
 
@@ -180,7 +179,7 @@ def test_update_config_uses_installer_owner(tmp_path: Path, sudo_user: str | Non
     assert "printf 'update\\n' > data/.update-request" in update_block
     assert "data/.update-result" in update_block
     assert "docker compose pull micromech" not in update_block
-    assert "bash -n \"$qs_tmp\"" not in update_block
+    assert 'bash -n "$qs_tmp"' not in update_block
     if sudo_user is not None:
         assert chown_log.read_text().splitlines() == [
             "-- 2001:3001 docker-compose.yml",
@@ -647,7 +646,7 @@ if [ "$1" = "compose" ]; then
                 -q) exit 0 ;;
                 *)
                     if [ "${{FAKE_NORMALIZED_UPDATER_ENV:-0}}" = "1" ]; then
-                        sed 's/- "UPDATER_RUN_AS=\([^"]*\)"/UPDATER_RUN_AS: \1/' docker-compose.yml 2>/dev/null || true
+                        sed 's/- "UPDATER_RUN_AS=\\([^"]*\\)"/UPDATER_RUN_AS: \1/' docker-compose.yml 2>/dev/null || true
                     else
                         cat docker-compose.yml 2>/dev/null || true
                     fi
@@ -739,7 +738,7 @@ services:
         (deploy_dir / "data").mkdir()
         (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
         (deploy_dir / "docker-compose.yml").write_text(
-            "services:\n  micromech:\n    image: dvilela/micromech:latest\n    user: \"1000:1000\"\n"
+            'services:\n  micromech:\n    image: dvilela/micromech:latest\n    user: "1000:1000"\n'
         )
         (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
         (deploy_dir / "updater.sh").write_text("#!/bin/sh\necho old\n")
@@ -765,14 +764,16 @@ services:
         assert "Micromech updater repair completed" in result.stdout
         assert (deploy_dir / "docker-compose.yml").read_text().startswith("name: micromech")
 
-    def test_repair_updater_preserves_testing_from_config_when_compose_detection_fails(self, tmp_path: Path) -> None:
+    def test_repair_updater_preserves_testing_from_config_when_compose_detection_fails(
+        self, tmp_path: Path
+    ) -> None:
         deploy_dir = tmp_path / "micromech"
         deploy_dir.mkdir()
         (deploy_dir / "data").mkdir()
         (deploy_dir / "data" / "config.yaml").write_text("update_channel: testing # keep testing\n")
         (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
         (deploy_dir / "docker-compose.yml").write_text(
-            "services:\n  micromech:\n    image: invalid\n    user: \"1000:1000\"\n"
+            'services:\n  micromech:\n    image: invalid\n    user: "1000:1000"\n'
         )
         (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
         (deploy_dir / "updater.sh").write_text("#!/bin/sh\necho old\n")
@@ -797,15 +798,20 @@ services:
         )
 
         assert result.returncode == 0, result.stderr + result.stdout
-        assert "image: dvilela/micromech-testing:latest" in (deploy_dir / "docker-compose.yml").read_text()
+        assert (
+            "image: dvilela/micromech-testing:latest"
+            in (deploy_dir / "docker-compose.yml").read_text()
+        )
 
-    def test_repair_updater_detects_quoted_image_when_compose_detection_fails(self, tmp_path: Path) -> None:
+    def test_repair_updater_detects_quoted_image_when_compose_detection_fails(
+        self, tmp_path: Path
+    ) -> None:
         deploy_dir = tmp_path / "micromech"
         deploy_dir.mkdir()
         (deploy_dir / "data").mkdir()
         (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
         (deploy_dir / "docker-compose.yml").write_text(
-            "services:\n  micromech:\n    image: \"dvilela/micromech-testing:latest\"\n    user: \"1000:1000\"\n"
+            'services:\n  micromech:\n    image: "dvilela/micromech-testing:latest"\n    user: "1000:1000"\n'
         )
         (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
         (deploy_dir / "updater.sh").write_text("#!/bin/sh\necho old\n")
@@ -830,7 +836,10 @@ services:
         )
 
         assert result.returncode == 0, result.stderr + result.stdout
-        assert "image: dvilela/micromech-testing:latest" in (deploy_dir / "docker-compose.yml").read_text()
+        assert (
+            "image: dvilela/micromech-testing:latest"
+            in (deploy_dir / "docker-compose.yml").read_text()
+        )
 
     def test_repair_updater_refuses_managed_symlink_install(self, tmp_path: Path) -> None:
         deploy_dir = tmp_path / "micromech"
@@ -840,7 +849,7 @@ services:
         (deploy_dir / "data").mkdir()
         (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
         (deploy_dir / "docker-compose.yml").write_text(
-            "services:\n  micromech:\n    image: dvilela/micromech:latest\n    user: \"1000:1000\"\n"
+            'services:\n  micromech:\n    image: dvilela/micromech:latest\n    user: "1000:1000"\n'
         )
         (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
         (managed_dir / "updater.sh").write_text("#!/bin/sh\necho old but valid\n")
@@ -866,14 +875,16 @@ services:
         assert result.returncode != 0
         assert "is a symlink" in result.stderr
 
-    def test_repair_updater_uses_subdir_when_parent_has_unrelated_compose(self, tmp_path: Path) -> None:
+    def test_repair_updater_uses_subdir_when_parent_has_unrelated_compose(
+        self, tmp_path: Path
+    ) -> None:
         (tmp_path / "docker-compose.yml").write_text("services:\n  other:\n    image: alpine\n")
         deploy_dir = tmp_path / "micromech"
         deploy_dir.mkdir()
         (deploy_dir / "data").mkdir()
         (deploy_dir / "secrets.env").write_text("wallet_password=test\n")
         (deploy_dir / "docker-compose.yml").write_text(
-            "services:\n  micromech:\n    image: dvilela/micromech:latest\n    user: \"1000:1000\"\n"
+            'services:\n  micromech:\n    image: dvilela/micromech:latest\n    user: "1000:1000"\n'
         )
         (deploy_dir / "Justfile").write_text("update:\n\t@echo broken\n")
         (deploy_dir / "updater.sh").write_text("#!/bin/sh\necho old\n")
@@ -896,10 +907,14 @@ services:
         )
 
         assert result.returncode == 0, result.stderr + result.stdout
-        assert (tmp_path / "docker-compose.yml").read_text() == "services:\n  other:\n    image: alpine\n"
+        assert (
+            tmp_path / "docker-compose.yml"
+        ).read_text() == "services:\n  other:\n    image: alpine\n"
         assert (deploy_dir / "docker-compose.yml").read_text().startswith("name: micromech")
 
-    def test_full_quickstart_rejects_invalid_image_override_before_pull(self, tmp_path: Path) -> None:
+    def test_full_quickstart_rejects_invalid_image_override_before_pull(
+        self, tmp_path: Path
+    ) -> None:
         fake_bin = tmp_path / "bin"
         fake_bin.mkdir()
         image_compose = tmp_path / "image-compose.yml"
