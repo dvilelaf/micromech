@@ -180,7 +180,7 @@ verify_generated_files() {
     compose config -q || die "generated docker-compose.yml is invalid"
     compose config --services | grep -qx "$SERVICE_NAME" || die "missing $SERVICE_NAME service"
     compose config --services | grep -qx updater || die "missing updater service"
-    compose config | grep -q 'UPDATER_RUN_AS=' || die "missing UPDATER_RUN_AS in updater service"
+    compose config | grep -Eq 'UPDATER_RUN_AS[[:space:]]*[:=]' || die "missing UPDATER_RUN_AS in updater service"
     generated_image=$(compose config --images "$SERVICE_NAME" 2>/dev/null | head -1 || true)
     [ "$generated_image" = "$expected_image" ] || die "generated image $generated_image does not match expected $expected_image"
 }

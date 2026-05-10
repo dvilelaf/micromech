@@ -645,7 +645,14 @@ if [ "$1" = "compose" ]; then
                     exit 0
                     ;;
                 -q) exit 0 ;;
-                *) cat docker-compose.yml 2>/dev/null || true; exit 0 ;;
+                *)
+                    if [ "${{FAKE_NORMALIZED_UPDATER_ENV:-0}}" = "1" ]; then
+                        sed 's/- "UPDATER_RUN_AS=\([^"]*\)"/UPDATER_RUN_AS: \1/' docker-compose.yml 2>/dev/null || true
+                    else
+                        cat docker-compose.yml 2>/dev/null || true
+                    fi
+                    exit 0
+                    ;;
             esac
             ;;
         pull|up|ps|exec)
@@ -699,6 +706,7 @@ services:
         env = os.environ.copy()
         env["PATH"] = f"{fake_bin}:{env['PATH']}"
         env["FAKE_IMAGE"] = "dvilela/micromech-testing:latest"
+        env["FAKE_NORMALIZED_UPDATER_ENV"] = "1"
 
         result = subprocess.run(
             ["bash", str(REPAIR_UPDATER_SH)],
