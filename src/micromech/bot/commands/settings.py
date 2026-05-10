@@ -16,6 +16,7 @@ ACTION_SETTINGS = "settings"
 _TOGGLES = [
     ("checkpoint_alert", "checkpoint_alert_enabled", "Checkpoint alerts"),
     ("low_balance_alert", "low_balance_alert_enabled", "Low balance alerts"),
+    ("staking_alert", "staking_alert_enabled", "Staking alerts"),
     ("fund", "fund_enabled", "Auto-fund"),
     ("payment_withdraw", "payment_withdraw_enabled", "Payment withdraw"),
     ("auto_update", "auto_update_enabled", "Auto-update"),

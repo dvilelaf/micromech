@@ -157,7 +157,7 @@ class TaskScheduler:
             startup_delay += 20
 
         # Low Balance Alert Task
-        if cfg.low_balance_alert_enabled:
+        if cfg.low_balance_alert_enabled or cfg.staking_alert_enabled:
             self.scheduler.add_job(
                 low_balance_alert_task,
                 "interval",

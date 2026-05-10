@@ -68,6 +68,47 @@ async def test_alert_on_eviction():
     assert "EVICTED" in body
 
 
+async def test_staking_alert_disabled_suppresses_eviction_event_alert():
+    """staking_alert_enabled=False suppresses staking event notifications."""
+    contract = _make_contract(
+        {"epoch": 5, "rewarded_services": {}, "inactivity_warnings": [3098], "evicted_services": []}
+    )
+    notif = _make_notif()
+    await _check_eviction_events(
+        contract,
+        service_id=3098,
+        chain_name="gnosis",
+        notification_service=notif,
+        staking_alert_enabled=False,
+    )
+    notif.send.assert_not_awaited()
+
+
+async def test_staking_alert_disabled_does_not_consume_epoch_dedup():
+    """Re-enabling staking alerts in the same epoch can still notify."""
+    contract = _make_contract(
+        {"epoch": 5, "rewarded_services": {}, "inactivity_warnings": [3098], "evicted_services": []}
+    )
+    notif = _make_notif()
+
+    await _check_eviction_events(
+        contract,
+        service_id=3098,
+        chain_name="gnosis",
+        notification_service=notif,
+        staking_alert_enabled=False,
+    )
+    await _check_eviction_events(
+        contract,
+        service_id=3098,
+        chain_name="gnosis",
+        notification_service=notif,
+        staking_alert_enabled=True,
+    )
+
+    notif.send.assert_awaited_once()
+
+
 async def test_no_alert_for_other_service():
     """Another service is evicted → no alert for our service."""
     contract = _make_contract(
@@ -139,6 +180,7 @@ async def test_checkpoint_task_calls_eviction_check_after_checkpoint():
     notif = _make_notif()
     config = MagicMock()
     config.checkpoint_alert_enabled = False
+    config.staking_alert_enabled = True
 
     lifecycle = MagicMock()
     lifecycle.chain_config.staking_address = "0xABC"
@@ -164,6 +206,7 @@ async def test_checkpoint_task_calls_eviction_check_after_checkpoint():
     call_kwargs = mock_check.call_args[1]
     assert call_kwargs["service_id"] == 3098
     assert call_kwargs["chain_name"] == "gnosis"
+    assert call_kwargs["staking_alert_enabled"] is True
 
 
 async def test_checkpoint_task_no_eviction_check_when_epoch_active():

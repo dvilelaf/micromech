@@ -652,6 +652,7 @@ class TestLowBalanceAlertTask:
 
         config = make_test_config()
         config.low_balance_alert_enabled = False
+        config.staking_alert_enabled = False
         notification = NotificationService()
         notification.send = AsyncMock()
         lifecycle = MagicMock()
@@ -662,6 +663,115 @@ class TestLowBalanceAlertTask:
 
         mock_cb.assert_not_called()
         notification.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_staking_alert_disabled_suppresses_eviction_only(self):
+        from micromech.tasks.low_balance_alert import low_balance_alert_task
+
+        config = make_test_config()
+        config.low_balance_alert_enabled = True
+        config.staking_alert_enabled = False
+        config.fund_threshold_native = 0.5
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        lifecycle = MagicMock()
+        lifecycle.get_status.return_value = {
+            "staking_state": "EVICTED",
+            "is_staked": False,
+        }
+
+        with (
+            patch("micromech.core.bridge.check_balances", return_value=(0.1, 10.0)),
+            patch("micromech.core.bridge.get_service_info") as mock_service_info,
+        ):
+            await low_balance_alert_task({"gnosis": lifecycle}, {}, notification, config)
+
+        mock_service_info.assert_not_called()
+        lifecycle.get_status.assert_not_called()
+        notification.send.assert_awaited_once()
+        assert notification.send.await_args.args[0] == "Low Balance Alert"
+
+    @pytest.mark.asyncio
+    async def test_low_balance_disabled_still_allows_staking_eviction_alert(self):
+        from micromech.tasks.low_balance_alert import low_balance_alert_task
+
+        config = make_test_config()
+        config.low_balance_alert_enabled = False
+        config.staking_alert_enabled = True
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        lifecycle = MagicMock()
+        lifecycle.get_status.return_value = {
+            "staking_state": "EVICTED",
+            "is_staked": False,
+        }
+
+        with (
+            patch("micromech.core.bridge.check_balances") as mock_check_balances,
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey", "service_id": 1},
+            ),
+        ):
+            await low_balance_alert_task({"gnosis": lifecycle}, {}, notification, config)
+
+        mock_check_balances.assert_not_called()
+        notification.send.assert_awaited()
+        assert "Eviction" in notification.send.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_balance_lookup_none_does_not_suppress_staking_eviction_alert(self):
+        from micromech.tasks.low_balance_alert import low_balance_alert_task
+
+        config = make_test_config()
+        config.low_balance_alert_enabled = True
+        config.staking_alert_enabled = True
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        lifecycle = MagicMock()
+        lifecycle.get_status.return_value = {
+            "staking_state": "EVICTED",
+            "is_staked": False,
+        }
+
+        with (
+            patch("micromech.core.bridge.check_balances", return_value=None),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey", "service_id": 1},
+            ),
+        ):
+            await low_balance_alert_task({"gnosis": lifecycle}, {}, notification, config)
+
+        notification.send.assert_awaited()
+        assert "Eviction" in notification.send.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_balance_lookup_error_does_not_suppress_staking_eviction_alert(self):
+        from micromech.tasks.low_balance_alert import low_balance_alert_task
+
+        config = make_test_config()
+        config.low_balance_alert_enabled = True
+        config.staking_alert_enabled = True
+        notification = NotificationService()
+        notification.send = AsyncMock()
+        lifecycle = MagicMock()
+        lifecycle.get_status.return_value = {
+            "staking_state": "EVICTED",
+            "is_staked": False,
+        }
+
+        with (
+            patch("micromech.core.bridge.check_balances", side_effect=Exception("rpc error")),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"service_key": "0xkey", "service_id": 1},
+            ),
+        ):
+            await low_balance_alert_task({"gnosis": lifecycle}, {}, notification, config)
+
+        notification.send.assert_awaited()
+        assert "Eviction" in notification.send.await_args.args[0]
 
     @pytest.mark.asyncio
     async def test_low_native_balance_triggers_alert(self):
@@ -743,6 +853,80 @@ class TestLowBalanceAlertTask:
         with patch("micromech.core.bridge.check_balances", side_effect=Exception("rpc error")):
             # Must not raise — error is per-chain and caught
             await low_balance_alert_task({"gnosis": lifecycle}, {}, notification, config)
+
+
+class TestTaskSchedulerAlertJobs:
+    def test_schedules_alert_task_when_only_staking_alerts_are_enabled(self):
+        from micromech.core.config import MicromechConfig
+        from micromech.tasks.notifications import NotificationService
+        from micromech.tasks.scheduler import TaskScheduler
+
+        config = MicromechConfig(
+            low_balance_alert_enabled=False,
+            staking_alert_enabled=True,
+            fund_enabled=False,
+            payment_withdraw_enabled=False,
+            xdai_sweep_enabled=False,
+            failed_deliveries_alert_enabled=False,
+            update_check_enabled=False,
+        )
+
+        with patch("micromech.tasks.scheduler.AsyncIOScheduler") as mock_scheduler_cls:
+            scheduler_mock = MagicMock()
+            mock_scheduler_cls.return_value = scheduler_mock
+
+            TaskScheduler(config, {}, NotificationService()).start()
+
+        job_ids = [call.kwargs["id"] for call in scheduler_mock.add_job.call_args_list]
+        assert "low_balance_alert_task" in job_ids
+
+    def test_schedules_alert_task_when_only_low_balance_alerts_are_enabled(self):
+        from micromech.core.config import MicromechConfig
+        from micromech.tasks.notifications import NotificationService
+        from micromech.tasks.scheduler import TaskScheduler
+
+        config = MicromechConfig(
+            low_balance_alert_enabled=True,
+            staking_alert_enabled=False,
+            fund_enabled=False,
+            payment_withdraw_enabled=False,
+            xdai_sweep_enabled=False,
+            failed_deliveries_alert_enabled=False,
+            update_check_enabled=False,
+        )
+
+        with patch("micromech.tasks.scheduler.AsyncIOScheduler") as mock_scheduler_cls:
+            scheduler_mock = MagicMock()
+            mock_scheduler_cls.return_value = scheduler_mock
+
+            TaskScheduler(config, {}, NotificationService()).start()
+
+        job_ids = [call.kwargs["id"] for call in scheduler_mock.add_job.call_args_list]
+        assert "low_balance_alert_task" in job_ids
+
+    def test_skips_alert_task_when_balance_and_staking_alerts_are_disabled(self):
+        from micromech.core.config import MicromechConfig
+        from micromech.tasks.notifications import NotificationService
+        from micromech.tasks.scheduler import TaskScheduler
+
+        config = MicromechConfig(
+            low_balance_alert_enabled=False,
+            staking_alert_enabled=False,
+            fund_enabled=False,
+            payment_withdraw_enabled=False,
+            xdai_sweep_enabled=False,
+            failed_deliveries_alert_enabled=False,
+            update_check_enabled=False,
+        )
+
+        with patch("micromech.tasks.scheduler.AsyncIOScheduler") as mock_scheduler_cls:
+            scheduler_mock = MagicMock()
+            mock_scheduler_cls.return_value = scheduler_mock
+
+            TaskScheduler(config, {}, NotificationService()).start()
+
+        job_ids = [call.kwargs["id"] for call in scheduler_mock.add_job.call_args_list]
+        assert "low_balance_alert_task" not in job_ids
 
 
 # ===========================================================================

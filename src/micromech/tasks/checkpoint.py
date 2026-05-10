@@ -30,6 +30,7 @@ async def _check_eviction_events(
     service_id: int,
     chain_name: str,
     notification_service: "NotificationService",
+    staking_alert_enabled: bool = True,
 ) -> None:
     """Check recent checkpoint events for inactivity warnings or eviction of our service.
 
@@ -60,7 +61,6 @@ async def _check_eviction_events(
         last = _last_alerted_epoch.get(chain_name, 0)
         if epoch <= last:
             return
-        _last_alerted_epoch[chain_name] = epoch
 
         warnings = events.get("inactivity_warnings", [])
         evicted = events.get("evicted_services", [])
@@ -71,15 +71,23 @@ async def _check_eviction_events(
         got_reward = service_id in rewarded
 
         if not is_warned and not is_evicted and got_reward:
+            _last_alerted_epoch[chain_name] = epoch
             logger.info(
                 f"[{chain_name}] Epoch {epoch}: service {service_id} received rewards — OK"
             )
             return
 
         if not is_warned and not is_evicted and not got_reward:
+            _last_alerted_epoch[chain_name] = epoch
             logger.warning(
                 f"[{chain_name}] Epoch {epoch}: service {service_id} got no reward "
                 f"(not warned, not evicted — may not be staked or already EVICTED)"
+            )
+            return
+
+        if not staking_alert_enabled:
+            logger.info(
+                f"[{chain_name}] Epoch {epoch}: staking alert suppressed for service {service_id}"
             )
             return
 
@@ -107,6 +115,7 @@ async def _check_eviction_events(
             "Staking Alert",
             "\n".join(lines),
         )
+        _last_alerted_epoch[chain_name] = epoch
 
     except Exception as e:
         logger.error(f"[{chain_name}] Error checking eviction events: {e}")
@@ -184,6 +193,7 @@ async def checkpoint_task(
                     service_id=int(service_id),
                     chain_name=chain_name,
                     notification_service=notification_service,
+                    staking_alert_enabled=getattr(config, "staking_alert_enabled", True),
                 )
 
         except Exception as e:

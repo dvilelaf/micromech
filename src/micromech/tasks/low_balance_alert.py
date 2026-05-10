@@ -19,7 +19,7 @@ async def low_balance_alert_task(
     config: "MicromechConfig",
 ) -> None:
     """Check and alert on low balances and eviction status."""
-    if not config.low_balance_alert_enabled:
+    if not config.low_balance_alert_enabled and not config.staking_alert_enabled:
         return
     logger.debug("Running low balance alert check...")
 
@@ -28,21 +28,29 @@ async def low_balance_alert_task(
     for chain_name, lifecycle in lifecycles.items():
         try:
             # Check balances
-            balances = await asyncio.to_thread(check_balances, chain_name)
-            if balances is None:
-                continue
-            native, olas = balances
+            if config.low_balance_alert_enabled:
+                try:
+                    balances = await asyncio.to_thread(check_balances, chain_name)
+                except Exception as e:
+                    logger.error(f"Error checking balance for {chain_name}: {e}")
+                    balances = None
 
-            if native < config.fund_threshold_native:
-                await notification_service.send(
-                    "Low Balance Alert",
-                    f"Chain: {chain_name}\n"
-                    f"Native balance: {native:.4f}\n"
-                    f"Threshold: {config.fund_threshold_native}",
-                    level="warning",
-                )
+                if balances is not None:
+                    native, _olas = balances
+
+                    if native < config.fund_threshold_native:
+                        await notification_service.send(
+                            "Low Balance Alert",
+                            f"Chain: {chain_name}\n"
+                            f"Native balance: {native:.4f}\n"
+                            f"Threshold: {config.fund_threshold_native}",
+                            level="warning",
+                        )
 
             # Check staking state for eviction
+            if not config.staking_alert_enabled:
+                continue
+
             from micromech.core.bridge import get_service_info
 
             svc_info = get_service_info(chain_name)

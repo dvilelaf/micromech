@@ -163,6 +163,7 @@ class MicromechConfig(BaseModel):
     xdai_sweep_interval_hours: int = Field(default=6, ge=1, le=168)
     low_balance_alert_enabled: bool = True
     low_balance_alert_interval_hours: int = Field(default=6, ge=1, le=48)
+    staking_alert_enabled: bool = True
     failed_deliveries_alert_enabled: bool = True
     failed_deliveries_alert_threshold: int = Field(default=10, ge=1)
     failed_deliveries_alert_interval_hours: int = Field(default=1, ge=1, le=48)
