@@ -29,6 +29,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from micromech.core.config import ChainConfig, MicromechConfig
+from micromech.core.constants import (
+    REQUEST_STATUS_DELIVERED,
+    REQUEST_STATUS_REQUESTED_PRIORITY,
+)
 from micromech.core.models import MechRequest, RequestRecord, ToolResult
 from micromech.runtime.delivery import (
     DeliveryManager,
@@ -790,6 +794,70 @@ class TestDeliverOnchainBatch:
         q.mark_failed.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_batch_missing_multisig_terminal_fails_without_status_reconciliation(
+        self, monkeypatch
+    ):
+        """Missing Safe config is terminal config failure, not ambiguous RPC submission."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        bridge = _make_bridge(has_safe=True)
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+
+        async def _fake_prepare(_rec):
+            return b"\x00" * 32, b"data", None
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_fake_prepare),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={},
+            ),
+            patch.object(
+                dm,
+                "_get_marketplace_status",
+                return_value=REQUEST_STATUS_REQUESTED_PRIORITY,
+            ) as mock_status,
+        ):
+            count = await dm._deliver_onchain_batch([record])
+
+        assert count == 0
+        mock_status.assert_not_called()
+        q.mark_failed.assert_called_once()
+        assert "config:" in q.mark_failed.call_args[0][1]
+
+    @pytest.mark.asyncio
+    async def test_batch_missing_mech_address_terminal_fails_without_status_reconciliation(
+        self, monkeypatch
+    ):
+        """Missing mech address is terminal config failure, not ambiguous RPC submission."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(mech_address=None), q, bridge)
+
+        async def _fake_prepare(_rec):
+            return b"\x00" * 32, b"data", None
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_fake_prepare),
+            patch.object(
+                dm,
+                "_get_marketplace_status",
+                return_value=REQUEST_STATUS_REQUESTED_PRIORITY,
+            ) as mock_status,
+        ):
+            count = await dm._deliver_onchain_batch([record])
+
+        assert count == 0
+        mock_status.assert_not_called()
+        q.mark_failed.assert_called_once()
+        assert "config:" in q.mark_failed.call_args[0][1]
+
+    @pytest.mark.asyncio
     async def test_batch_safe_submit_uses_lock_and_ignores_parallel_nonce(self):
         """Batch mode submits one Safe TX under the Safe lock, without NonceAllocator."""
         bridge = _make_bridge(has_safe=True)
@@ -1041,6 +1109,57 @@ class TestIncrementFailure:
         # Counter is cleared after reaching max
         assert "req-1" not in dm._delivery_failures
 
+    def test_tx_max_retries_marks_already_delivered_as_on_chain_unavailable(self, monkeypatch):
+        """TX/RPC max retries reconcile on-chain before terminal failure."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        q = _make_queue()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, _make_bridge())
+
+        with patch.object(
+            dm,
+            "_get_marketplace_status",
+            return_value=REQUEST_STATUS_DELIVERED,
+        ):
+            dm._increment_failure("0x" + "1" * 64, "tx: 400 Client Error")
+
+        q.mark_failed.assert_called_once_with(
+            "0x" + "1" * 64,
+            "on_chain_unavailable: delivered",
+        )
+        assert "0x" + "1" * 64 not in dm._delivery_failures
+
+    def test_tx_max_retries_keeps_deliverable_request_queued(self, monkeypatch):
+        """If chain says request is still deliverable, do not mark terminal failed."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        q = _make_queue()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, _make_bridge())
+
+        with patch.object(
+            dm,
+            "_get_marketplace_status",
+            return_value=REQUEST_STATUS_REQUESTED_PRIORITY,
+        ):
+            dm._increment_failure("0x" + "1" * 64, "tx: 408 Client Error")
+
+        q.mark_failed.assert_not_called()
+        assert dm._delivery_failures["0x" + "1" * 64] == 0
+
+    def test_tx_max_retries_keeps_queued_when_reconciliation_fails(self, monkeypatch):
+        """An RPC failure while reconciling should not terminal-fail the request."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        q = _make_queue()
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, _make_bridge())
+
+        with patch.object(
+            dm,
+            "_get_marketplace_status",
+            side_effect=RuntimeError("rpc down"),
+        ):
+            dm._increment_failure("0x" + "1" * 64, "tx: 408 Client Error")
+
+        q.mark_failed.assert_not_called()
+        assert dm._delivery_failures["0x" + "1" * 64] == 0
+
     def test_counter_cleared_on_success(self):
         """Successful delivery clears the failure counter for that request."""
         q = _make_queue()
@@ -1117,6 +1236,99 @@ class TestDeliverSingleOnchain:
 
         assert result is False
         q.mark_delivered.assert_not_called()
+        assert record.request.request_id not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_prep_failure_terminal_fails_without_status_reconciliation(self, monkeypatch):
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        dm._in_flight.add(record.request.request_id)
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=RuntimeError("bad payload")),
+            patch.object(
+                dm,
+                "_get_marketplace_status",
+                return_value=REQUEST_STATUS_REQUESTED_PRIORITY,
+            ) as mock_status,
+        ):
+            result = await dm._deliver_single_onchain(record)
+
+        assert result is False
+        mock_status.assert_not_called()
+        q.mark_failed.assert_called_once()
+        assert "prep:" in q.mark_failed.call_args[0][1]
+        assert record.request.request_id not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_submit_missing_multisig_terminal_fails_without_status_reconciliation(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+        dm._in_flight.add(record.request.request_id)
+
+        async def _fake_prepare(_rec):
+            return b"\x00" * 32, b"data", None
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_fake_prepare),
+            patch.object(dm, "_get_mech_contract", return_value=MagicMock()),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={},
+            ),
+            patch.object(
+                dm,
+                "_get_marketplace_status",
+                return_value=REQUEST_STATUS_REQUESTED_PRIORITY,
+            ) as mock_status,
+        ):
+            result = await dm._deliver_single_onchain(record)
+
+        assert result is False
+        mock_status.assert_not_called()
+        q.mark_failed.assert_called_once()
+        assert "config:" in q.mark_failed.call_args[0][1]
+        assert record.request.request_id not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_submit_missing_mech_address_terminal_fails_without_status_reconciliation(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        bridge = _make_bridge()
+        q = _make_queue()
+        record = _make_record()
+
+        dm = DeliveryManager(_make_config(), _make_chain_config(mech_address=None), q, bridge)
+        dm._in_flight.add(record.request.request_id)
+
+        async def _fake_prepare(_rec):
+            return b"\x00" * 32, b"data", None
+
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_fake_prepare),
+            patch.object(
+                dm,
+                "_get_marketplace_status",
+                return_value=REQUEST_STATUS_REQUESTED_PRIORITY,
+            ) as mock_status,
+        ):
+            result = await dm._deliver_single_onchain(record)
+
+        assert result is False
+        mock_status.assert_not_called()
+        q.mark_failed.assert_called_once()
+        assert "config:" in q.mark_failed.call_args[0][1]
         assert record.request.request_id not in dm._in_flight
 
     @pytest.mark.asyncio

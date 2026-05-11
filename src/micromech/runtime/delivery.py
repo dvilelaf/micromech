@@ -88,6 +88,12 @@ def _sanitize_error(exc: BaseException, _depth: int = 0) -> str:
     return msg
 
 
+def _failure_prefix_for_delivery_error(err_str: str, *, submit_started: bool) -> str:
+    if "multisig_address not configured" in err_str or "mech_address not configured" in err_str:
+        return "config"
+    return "tx" if submit_started else "prep"
+
+
 def _record_age_seconds(record: RequestRecord) -> float:
     created = record.request.created_at
     if created.tzinfo is None:
@@ -368,6 +374,8 @@ class DeliveryManager:
         count = self._delivery_failures.get(request_id, 0) + 1
         self._delivery_failures[request_id] = count
         if count >= DEFAULT_DELIVERY_MAX_RETRIES:
+            if self._reconcile_tx_failure_at_retry_limit(request_id, error):
+                return
             logger.error(
                 "Request {} failed {} consecutive times ({}), marking as failed",
                 request_id[:20] + "...",
@@ -384,6 +392,48 @@ class DeliveryManager:
                 DEFAULT_DELIVERY_MAX_RETRIES,
                 error,
             )
+
+    def _reconcile_tx_failure_at_retry_limit(self, request_id: str, error: str) -> bool:
+        """Reconcile ambiguous TX/RPC failures before terminally failing a request.
+
+        Safe/RPC calls can return 400/408 even when the marketplace state later
+        becomes final on-chain. Only non-TX failures such as IPFS prep errors
+        should terminal-fail purely on retry count.
+        """
+        if not error.startswith("tx:"):
+            return False
+
+        retry_floor = max(0, DEFAULT_DELIVERY_MAX_RETRIES - 1)
+        try:
+            status = self._get_marketplace_status(request_id)
+        except Exception as e:
+            logger.warning(
+                "Request {} hit TX retry limit, but status check failed ({}); keeping queued",
+                request_id[:20] + "...",
+                _sanitize_error(e),
+            )
+            self._delivery_failures[request_id] = retry_floor
+            return True
+
+        label = _REQUEST_STATUS_LABELS.get(status, f"status_{status}")
+        if status in (REQUEST_STATUS_DOES_NOT_EXIST, REQUEST_STATUS_DELIVERED):
+            reason = f"on_chain_unavailable: {label}"
+            logger.info(
+                "Request {} hit TX retry limit but is already final on-chain ({})",
+                request_id[:20] + "...",
+                label,
+            )
+            self.queue.mark_failed(request_id, reason)
+            self._delivery_failures.pop(request_id, None)
+            return True
+
+        logger.warning(
+            "Request {} hit TX retry limit but is still {} on-chain; keeping queued",
+            request_id[:20] + "...",
+            label,
+        )
+        self._delivery_failures[request_id] = retry_floor
+        return True
 
     async def deliver_batch(self) -> int:
         """Deliver undelivered responses. On-chain: batched; off-chain: 1:1.
@@ -628,6 +678,7 @@ class DeliveryManager:
                 DEFAULT_DELIVERY_MAX_RETRIES,
             )
             err_str = _sanitize_error(e)
+            prefix = _failure_prefix_for_delivery_error(err_str, submit_started=True)
             for record, *_ in good:
                 if self._metrics:
                     self._metrics.record_delivery_failed(
@@ -636,7 +687,7 @@ class DeliveryManager:
                 # Increment per-record counter; mark_failed only after MAX_RETRIES.
                 # TX reverts may be transient (gas, nonce, RPC) — leave in EXECUTED
                 # until the retry budget is exhausted.
-                self._increment_failure(record.request.request_id, f"tx: {err_str}")
+                self._increment_failure(record.request.request_id, f"{prefix}: {err_str}")
             return 0
 
     async def _prepare_onchain(self, record: RequestRecord) -> tuple[bytes, bytes, Optional[str]]:
@@ -1048,12 +1099,23 @@ class DeliveryManager:
             svc_info = get_service_info(self._chain_name)
             multisig = svc_info.get("multisig_address")
             if not multisig:
-                raise ValueError(
+                err_str = (
                     f"[{self._chain_name}] multisig_address not configured"
                     " — cannot dispatch on-chain"
                 )
+                logger.error(err_str)
+                for r in onchain:
+                    self._increment_failure(r.request.request_id, f"config: {err_str}")
+                    if self._metrics:
+                        self._metrics.record_delivery_failed(
+                            r.request.request_id,
+                            err_str,
+                            chain=self._chain_name,
+                        )
+                    self._in_flight.discard(r.request.request_id)
+                onchain = []
 
-            if self.config.parallel_nonce_enabled:
+            if onchain and self.config.parallel_nonce_enabled:
                 lock_wait_started = time.monotonic()
                 async with get_safe_lock(multisig):
                     safe_lock_wait_seconds = time.monotonic() - lock_wait_started
@@ -1074,12 +1136,14 @@ class DeliveryManager:
                         try:
                             prep_data = await self._prepare_onchain(r)
                         except Exception as e:
+                            err_str = _sanitize_error(e)
                             logger.warning(
                                 "[{}] Pre-allocation prep failed for {}: {}",
                                 self._chain_name,
                                 r.request.request_id,
-                                _sanitize_error(e),
+                                err_str,
                             )
+                            self._increment_failure(r.request.request_id, f"prep: {err_str}")
                             # H1: discard here — _deliver_single_onchain never called
                             self._in_flight.discard(r.request.request_id)
                             return False
@@ -1140,7 +1204,7 @@ class DeliveryManager:
                                 r.request.request_id[:20] + "...",
                                 err_str,
                             )
-                            self._increment_failure(r.request.request_id, f"tx: {err_str}")
+                            self._increment_failure(r.request.request_id, f"prep: {err_str}")
                             if self._metrics:
                                 self._metrics.record_delivery_failed(
                                     r.request.request_id,
@@ -1201,6 +1265,7 @@ class DeliveryManager:
         _prep_data: pre-computed (req_id_bytes, delivery_data, ipfs_cid_hex) tuple.
         Set by callers that prepare before entering nonce-sensitive sections.
         """
+        submit_started_at: float | None = None
         try:
             if _prep_data is not None:
                 req_id_bytes, delivery_data, ipfs_cid_hex = _prep_data
@@ -1208,14 +1273,14 @@ class DeliveryManager:
                 prep_started = time.monotonic()
                 req_id_bytes, delivery_data, ipfs_cid_hex = await self._prepare_onchain(record)
                 _prep_seconds = time.monotonic() - prep_started
-            submit_started = time.monotonic()
+            submit_started_at = time.monotonic()
             tx_hash, delivered_flags = await asyncio.to_thread(
                 self._submit_batch_delivery,
                 [req_id_bytes],
                 [delivery_data],
                 safe_nonce,
             )
-            safe_submit_seconds = time.monotonic() - submit_started
+            safe_submit_seconds = time.monotonic() - submit_started_at
             req_id = record.request.request_id
             self._delivery_failures.pop(req_id, None)
             if not delivered_flags:
@@ -1285,7 +1350,11 @@ class DeliveryManager:
                 record.request.request_id[:20] + "...",
                 err_str,
             )
-            self._increment_failure(record.request.request_id, f"tx: {err_str}")
+            prefix = _failure_prefix_for_delivery_error(
+                err_str,
+                submit_started=submit_started_at is not None,
+            )
+            self._increment_failure(record.request.request_id, f"{prefix}: {err_str}")
             if self._metrics:
                 self._metrics.record_delivery_failed(
                     record.request.request_id,

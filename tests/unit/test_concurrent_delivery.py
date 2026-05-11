@@ -829,6 +829,34 @@ class TestParallelNonceDispatch:
     """[Test] Parallel Safe TX dispatch via NonceAllocator (_has_safe=True)."""
 
     @pytest.mark.asyncio
+    async def test_missing_multisig_config_terminal_fails_and_cleans_in_flight(
+        self, monkeypatch
+    ):
+        """Safe concurrent config failures must not leak in-flight requests."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        record = _make_record(STALL_ID)
+        q = _make_queue([record])
+        bridge = _make_bridge_with_safe()
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={},
+        ):
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with patch.object(
+                dm,
+                "_get_marketplace_status",
+                return_value=2,
+            ) as mock_status:
+                delivered = await dm._deliver_concurrent()
+
+        assert delivered == 0
+        mock_status.assert_not_called()
+        q.mark_failed.assert_called_once()
+        assert "config:" in q.mark_failed.call_args[0][1]
+        assert STALL_ID not in dm._in_flight
+
+    @pytest.mark.asyncio
     async def test_each_worker_gets_unique_nonce(self):
         """Workers receive distinct pre-assigned nonces from the allocator."""
         records = [_make_record(STALL_ID), _make_record(FAST1_ID), _make_record(FAST2_ID)]
@@ -1245,6 +1273,40 @@ class TestParallelNonceDispatch:
 
         assert delivered == 0
         assert not lock.locked()
+        assert STALL_ID not in dm._in_flight
+
+    @pytest.mark.asyncio
+    async def test_serial_safe_prep_failure_terminal_fails_without_status_reconciliation(
+        self, monkeypatch
+    ):
+        """Serial Safe prep failures are non-TX poison pills, not RPC ambiguity."""
+        monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+        record = _make_record(STALL_ID)
+        q = _make_queue([record])
+        bridge = _make_bridge_with_safe()
+
+        async def _fail_prepare(_rec):
+            raise RuntimeError("IPFS upload failed")
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            dm = DeliveryManager(_make_config(), _make_chain_config(), q, bridge)
+            with (
+                patch.object(dm, "_prepare_onchain", side_effect=_fail_prepare),
+                patch.object(
+                    dm,
+                    "_get_marketplace_status",
+                    return_value=2,
+                ) as mock_status,
+            ):
+                delivered = await dm._deliver_concurrent()
+
+        assert delivered == 0
+        mock_status.assert_not_called()
+        q.mark_failed.assert_called_once()
+        assert "prep:" in q.mark_failed.call_args[0][1]
         assert STALL_ID not in dm._in_flight
 
     @pytest.mark.asyncio
@@ -1740,6 +1802,42 @@ async def test_prep_failure_does_not_allocate_nonce():
     assert STALL_ID not in dm._in_flight, (
         "Record with prep failure must be removed from _in_flight (H1+H4 combined)"
     )
+
+
+@pytest.mark.asyncio
+async def test_parallel_preallocation_prep_failure_counts_toward_terminal_failure(monkeypatch):
+    """Parallel Safe prep failures should eventually terminal-fail as non-TX errors."""
+    monkeypatch.setattr("micromech.runtime.delivery.DEFAULT_DELIVERY_MAX_RETRIES", 1)
+    fail_record = _make_record(STALL_ID)
+    q = _make_queue([fail_record])
+    bridge = _make_bridge_with_safe()
+    allocator = _make_allocator_mock([])
+    bridge.wallet.safe_service.get_allocator.return_value = allocator
+
+    async def _fail_prepare(_rec):
+        raise RuntimeError("IPFS upload failed")
+
+    with patch(
+        "micromech.core.bridge.get_service_info",
+        return_value={"multisig_address": MULTISIG},
+    ):
+        dm = DeliveryManager(_make_config(parallel_nonce=True), _make_chain_config(), q, bridge)
+        with (
+            patch.object(dm, "_prepare_onchain", side_effect=_fail_prepare),
+            patch.object(
+                dm,
+                "_get_marketplace_status",
+                return_value=2,
+            ) as mock_status,
+        ):
+            delivered = await dm._deliver_concurrent()
+
+    assert delivered == 0
+    allocator.allocate.assert_not_called()
+    mock_status.assert_not_called()
+    q.mark_failed.assert_called_once()
+    assert "prep:" in q.mark_failed.call_args[0][1]
+    assert STALL_ID not in dm._in_flight
 
 
 # ---------------------------------------------------------------------------
