@@ -1098,6 +1098,7 @@ class DeliveryManager:
 
             svc_info = get_service_info(self._chain_name)
             multisig = svc_info.get("multisig_address")
+            multisig_address = ""
             if not multisig:
                 err_str = (
                     f"[{self._chain_name}] multisig_address not configured"
@@ -1114,12 +1115,14 @@ class DeliveryManager:
                         )
                     self._in_flight.discard(r.request.request_id)
                 onchain = []
+            else:
+                multisig_address = str(multisig)
 
             if onchain and self.config.parallel_nonce_enabled:
                 lock_wait_started = time.monotonic()
-                async with get_safe_lock(multisig):
+                async with get_safe_lock(multisig_address):
                     safe_lock_wait_seconds = time.monotonic() - lock_wait_started
-                    allocator = self._get_nonce_allocator(multisig)
+                    allocator = self._get_nonce_allocator(multisig_address)
                     try:
                         allocator.check_stuck(len(onchain))
                     except Exception:
@@ -1217,7 +1220,7 @@ class DeliveryManager:
 
                     if prepared_onchain:
                         lock_wait_started = time.monotonic()
-                        async with get_safe_lock(multisig):
+                        async with get_safe_lock(multisig_address):
                             safe_lock_wait_seconds = time.monotonic() - lock_wait_started
                             for r, prep_data, prep_seconds in prepared_onchain:
                                 onchain_results.append(
