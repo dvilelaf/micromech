@@ -1358,16 +1358,22 @@ def create_web_app(
                     chain_cfg,
                     threshold_xdai=0.0,
                     safe_reserve_xdai=cfg.payment_withdraw_safe_reserve_xdai,
+                    sweep_existing_safe_excess=True,
+                    safe_lock_timeout_seconds=30,
                 )
                 message = (
                     "No pending payments"
                     if result.status == "no_funds"
+                    else "Safe lock busy — delivery in progress, try again shortly"
+                    if result.status == "lock_busy"
+                    else "Drained to Safe; nothing transferred to master because Safe excess is at or below reserve"
+                    if result.status == "drained_to_safe"
                     else "Transfer to master failed; funds remain in Safe"
                     if result.transfer_error is not None
                     else "Withdraw complete"
                 )
                 response = {
-                    "success": result.transfer_error is None,
+                    "success": result.transfer_error is None and result.status != "lock_busy",
                     "action": "withdraw",
                     "data": {
                         "status": result.status,
@@ -1382,7 +1388,7 @@ def create_web_app(
                         "message": message,
                     },
                 }
-                if result.transfer_error is not None:
+                if result.transfer_error is not None or result.status == "lock_busy":
                     response["error"] = message
                 return response
             except Exception:

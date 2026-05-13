@@ -581,9 +581,9 @@ class TestRunWithdraw:
         assert "drained to Safe" in msg
         assert "3.000000 xDAI" in msg
         assert "could not be transferred to master" in msg
-        assert "Safe tx failed" in msg
+        assert "Safe tx failed" not in msg
         assert "secret-api-token" not in msg
-        assert "[REDACTED]" in msg
+        assert "Check local logs" in msg
 
     @pytest.mark.asyncio
     async def test_safe_only_transfer_failure_reports_safe_amount(self):
@@ -613,6 +613,28 @@ class TestRunWithdraw:
         assert "33.420000 xDAI" in msg
         assert "remains in Safe" in msg
         assert "0.000000 xDAI drained" not in msg
+        assert "Safe tx failed" not in msg
+        assert "Check local logs" in msg
+
+    @pytest.mark.asyncio
+    async def test_drained_to_safe_reports_no_master_transfer(self):
+        """drained_to_safe is explicit instead of saying 0 xDAI was withdrawn."""
+        from micromech.bot.commands.withdraw import _run_withdraw
+
+        bridge = _make_bridge()
+        chain_config = _make_config_with_mech().enabled_chains["gnosis"]
+
+        with patch(
+            "micromech.tasks.payment_withdraw.execute_payment_withdraw",
+            new=AsyncMock(return_value=_make_withdraw_result("drained_to_safe", int(3e18), 0)),
+        ):
+            ok, msg = await _run_withdraw(bridge, "gnosis", chain_config)
+
+        assert ok is True
+        assert "Drained" in msg
+        assert "3.000000 xDAI" in msg
+        assert "nothing transferred to master" in msg
+        assert "Withdrawn `0.000000 xDAI`" not in msg
 
     @pytest.mark.asyncio
     async def test_withdraw_sweeps_stranded_safe_balance_without_pending(self):
@@ -622,12 +644,16 @@ class TestRunWithdraw:
         bridge = _make_bridge()
         chain_config = _make_config_with_mech().enabled_chains["gnosis"]
 
+        exec_mock = AsyncMock(return_value=_make_withdraw_result("swept_safe", 0, int(33.42e18)))
         with patch(
             "micromech.tasks.payment_withdraw.execute_payment_withdraw",
-            new=AsyncMock(return_value=_make_withdraw_result("swept_safe", 0, int(33.42e18))),
+            new=exec_mock,
         ):
             ok, msg = await _run_withdraw(bridge, "gnosis", chain_config, safe_reserve_xdai=0.5)
 
         assert ok is True
         assert "Swept" in msg
         assert "33.420000 xDAI" in msg
+        assert exec_mock.await_args.kwargs["threshold_xdai"] == 0.0
+        assert exec_mock.await_args.kwargs["safe_reserve_xdai"] == 0.5
+        assert exec_mock.await_args.kwargs["sweep_existing_safe_excess"] is True
