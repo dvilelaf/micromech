@@ -10,6 +10,7 @@ from micromech.core.marketplace import get_balance_tracker_address, get_pending_
 from micromech.tasks.notifications import NotificationService
 from micromech.tasks.payment_withdraw import (
     _drain_mech_to_safe,
+    _drain_mech_to_safe_with_retry,
     _transfer_to_master,
     _transfer_to_master_with_retry,
     _withdraw,
@@ -252,6 +253,46 @@ class TestDrainMechToSafe:
         """Even with zero amount, exec is called (contract decides to no-op)."""
         bridge = _make_bridge()
         _drain_mech_to_safe(bridge, "gnosis", MECH, MULTISIG, 0)
+        bridge.wallet.safe_service.execute_safe_transaction.assert_called_once()
+
+    def test_retry_wrapper_retries_gs026(self):
+        """GS026 during mech.exec can be a transient Safe nonce-state race."""
+        bridge = _make_bridge()
+        bridge.wallet.safe_service.execute_safe_transaction.side_effect = [
+            RuntimeError("Safe transaction failed: GS026"),
+            "0xtxhash",
+        ]
+
+        with patch("micromech.tasks.payment_withdraw.time.sleep") as sleep_mock:
+            _drain_mech_to_safe_with_retry(
+                bridge,
+                "gnosis",
+                MECH,
+                MULTISIG,
+                int(1e18),
+                retry_delay_seconds=0,
+            )
+
+        assert bridge.wallet.safe_service.execute_safe_transaction.call_count == 2
+        sleep_mock.assert_called_once_with(0)
+
+    def test_retry_wrapper_does_not_retry_non_gs026(self):
+        """Non-GS026 mech.exec failures still fail immediately."""
+        bridge = _make_bridge()
+        bridge.wallet.safe_service.execute_safe_transaction.side_effect = RuntimeError(
+            "mech.exec reverted"
+        )
+
+        with pytest.raises(RuntimeError, match="mech.exec reverted"):
+            _drain_mech_to_safe_with_retry(
+                bridge,
+                "gnosis",
+                MECH,
+                MULTISIG,
+                int(1e18),
+                retry_delay_seconds=0,
+            )
+
         bridge.wallet.safe_service.execute_safe_transaction.assert_called_once()
 
 
@@ -989,6 +1030,42 @@ class TestPaymentWithdrawTask:
         assert "Stage: mech.exec drain" in msg
         assert "Mech contract balance: 0.500000 xDAI" in msg
         bridge.wallet.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_drain_gs026_is_retried_and_flow_continues(self):
+        """Manual withdraw recovers when mech.exec hits a transient GS026 once."""
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 0.01
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18))
+        bridge.wallet.safe_service.execute_safe_transaction.side_effect = [
+            "0xprocess",
+            RuntimeError("Safe transaction failed: GS026"),
+            "0xdrain",
+        ]
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with (
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": MULTISIG},
+            ),
+            patch("micromech.tasks.payment_withdraw.time.sleep") as sleep_mock,
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        assert bridge.wallet.safe_service.execute_safe_transaction.call_count == 3
+        sleep_mock.assert_called_once()
+        bridge.wallet.send.assert_called_once()
+        notification.send.assert_awaited_once()
+        title, msg = notification.send.call_args[0][:2]
+        assert title == "Mech Payment Withdrawn"
+        assert "0.500000" in msg
 
     @pytest.mark.asyncio
     async def test_withdraw_step_failure_propagates_to_outer_except(self):

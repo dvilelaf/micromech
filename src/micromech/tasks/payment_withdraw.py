@@ -357,6 +357,44 @@ def _drain_mech_to_safe(
         raise RuntimeError(f"[{chain_name}] mech.exec drain reverted: {tx_hash_str}")
 
 
+def _drain_mech_to_safe_with_retry(
+    bridge: "IwaBridge",
+    chain_name: str,
+    mech_address: str,
+    multisig_address: str,
+    amount_wei: int,
+    *,
+    attempts: int = 3,
+    retry_delay_seconds: float = 5.0,
+) -> None:
+    """Drain mech xDAI to Safe, retrying transient Safe GS026 races."""
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            _drain_mech_to_safe(
+                bridge,
+                chain_name,
+                mech_address,
+                multisig_address,
+                amount_wei,
+            )
+            return
+        except Exception as e:
+            last_error = e
+            if not _is_gs026_error(e) or attempt >= attempts:
+                raise
+            logger.warning(
+                "[{}] mech.exec drain hit GS026 on attempt {}/{}; retrying in {:.1f}s",
+                chain_name,
+                attempt,
+                attempts,
+                retry_delay_seconds,
+            )
+            time.sleep(retry_delay_seconds)
+    if last_error is not None:
+        raise last_error
+
+
 def _meets_withdraw_threshold(amount_xdai: float, threshold_xdai: float) -> bool:
     """Manual threshold 0 means any positive amount; scheduled threshold is inclusive."""
     if threshold_xdai <= 0:
@@ -564,7 +602,7 @@ async def execute_payment_withdraw(
             if mech_actual_wei > 0:
                 try:
                     await asyncio.to_thread(
-                        _drain_mech_to_safe,
+                        _drain_mech_to_safe_with_retry,
                         bridge,
                         chain_name,
                         chain_config.mech_address,
