@@ -688,9 +688,15 @@ class TestPaymentWithdrawTask:
         notification = NotificationService()
         notification.send = AsyncMock()
 
-        with patch(
-            "micromech.tasks.payment_withdraw.get_balance_tracker_address",
-            side_effect=RuntimeError("tracker RPC timeout"),
+        with (
+            patch(
+                "micromech.tasks.payment_withdraw.get_balance_tracker_address",
+                side_effect=RuntimeError("tracker RPC timeout"),
+            ),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": MULTISIG},
+            ),
         ):
             await payment_withdraw_task(bridges, notification, cfg)
 
@@ -936,8 +942,12 @@ class TestPaymentWithdrawTask:
         notification = NotificationService()
         notification.send = AsyncMock()
 
-        # Should not raise
-        await payment_withdraw_task(bridges, notification, cfg)
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            # Should not raise
+            await payment_withdraw_task(bridges, notification, cfg)
 
         notification.send.assert_awaited_once()
         title, msg = notification.send.call_args[0][:2]
