@@ -247,7 +247,16 @@ class TestChainAPI:
 class TestManagementAPI:
     """Test the /api/management/{action} endpoint."""
 
-    CSRF = {"X-Micromech-Action": "test"}
+    CSRF = {"X-Micromech-Action": "test", "Authorization": "Bearer test-password"}
+
+    @pytest.fixture(autouse=True)
+    def _management_auth(self, monkeypatch):
+        """Management endpoints require completed setup and configured auth."""
+        monkeypatch.setattr("micromech.web.app._needs_setup", lambda: False)
+        monkeypatch.setattr(
+            "micromech.web.dependencies._get_webui_password",
+            lambda: "test-password",
+        )
 
     @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
@@ -361,8 +370,31 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/stake",
             json={"service_key": "svc-1"},
+            headers={"Authorization": "Bearer test-password"},
         )
         assert resp.status_code == 403
+
+    def test_management_rejects_setup_mode(self, monkeypatch, web_client: TestClient):
+        """Management actions are not available through the setup-mode bypass."""
+        monkeypatch.setattr("micromech.web.app._needs_setup", lambda: True)
+
+        resp = web_client.post(
+            "/api/management/stake",
+            json={"service_key": "svc-1"},
+            headers=self.CSRF,
+        )
+
+        assert resp.status_code == 401
+
+    def test_management_rejects_query_token_auth(self, web_client: TestClient):
+        """Management actions require Bearer auth; URL tokens are not accepted."""
+        resp = web_client.post(
+            "/api/management/stake?token=test-password",
+            json={"service_key": "svc-1"},
+            headers={"X-Micromech-Action": "test"},
+        )
+
+        assert resp.status_code == 401
 
     @patch("micromech.web.app.MicromechConfig")
     def test_withdraw_uses_shared_executor_for_safe_sweep(

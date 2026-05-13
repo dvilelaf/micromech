@@ -29,6 +29,7 @@ from micromech.web.dependencies import (
     require_csrf_header,
     verify_auth,
     verify_auth_or_setup_mode,
+    verify_management_auth,
 )
 
 if TYPE_CHECKING:
@@ -1297,7 +1298,7 @@ def create_web_app(
 
     @protected_router.post(
         "/management/{action}",
-        dependencies=[Depends(require_csrf_header)],
+        dependencies=[Depends(require_csrf_header), Depends(verify_management_auth)],
     )
     async def management_action(action: str, request: Request) -> dict:
         """Execute a management action (stake, unstake, claim, checkpoint).

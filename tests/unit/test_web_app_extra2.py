@@ -528,7 +528,7 @@ class TestMetricsEndpointsWithQueue:
 
 
 class TestManagementServiceKeyFallback:
-    @patch("micromech.web.app._needs_setup", return_value=True)
+    @patch("micromech.web.app._needs_setup", return_value=False)
     def test_service_key_from_bridge_when_not_in_body(self, _mock):
         """Management action falls back to get_service_info for service_key."""
         mock_cfg = MagicMock()
@@ -540,12 +540,13 @@ class TestManagementServiceKeyFallback:
             patch(
                 "micromech.core.bridge.get_service_info", return_value={"service_key": "0xabc123"}
             ),
+            patch("micromech.web.dependencies._get_webui_password", return_value="test-password"),
         ):
             c = _client()
             resp = c.post(
                 "/api/management/stake",
                 json={"chain": "gnosis"},  # No service_key in body
-                headers=CSRF,
+                headers={**CSRF, "Authorization": "Bearer test-password"},
             )
         assert resp.status_code == 200
         assert resp.json()["success"] is True

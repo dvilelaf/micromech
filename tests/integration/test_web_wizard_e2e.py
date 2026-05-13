@@ -834,21 +834,25 @@ class TestWebWizardE2E:
         """Fail-closed CI gate: every ``/api/*`` route must declare an auth dep.
 
         Walks ``app.routes`` and, for each path starting with ``/api/``, checks
-        that the route's merged dependency chain includes either ``verify_auth``
-        or ``verify_auth_or_setup_mode``. Endpoints intentionally left public
-        must be listed in ``PUBLIC_ALLOWLIST`` below — adding a new endpoint
+        that the route's merged dependency chain includes an approved auth
+        dependency. Endpoints intentionally left public must be listed in
+        ``PUBLIC_ALLOWLIST`` below — adding a new endpoint
         without updating either the allow-list or the protected router will
         make this test fail, preventing the class of regression that plagued
         the old path-parsing middleware.
         """
-        from micromech.web.dependencies import verify_auth, verify_auth_or_setup_mode
+        from micromech.web.dependencies import (
+            verify_auth,
+            verify_auth_or_setup_mode,
+            verify_management_auth,
+        )
 
         PUBLIC_ALLOWLIST = {
             "/api/health",  # monitoring probe — public by design
         }
 
         app = _make_web_app(tmp_path)
-        auth_deps = {verify_auth, verify_auth_or_setup_mode}
+        auth_deps = {verify_auth, verify_auth_or_setup_mode, verify_management_auth}
 
         missing: list[str] = []
         for route in app.routes:
