@@ -1,7 +1,5 @@
 """Withdraw command — manually trigger mech payment withdrawal (MarkdownV2)."""
 
-import asyncio
-
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
@@ -9,6 +7,7 @@ from telegram.ext import ContextTypes
 from micromech.bot.formatting import bold_md, code_md, user_error
 from micromech.bot.security import authorized_only, rate_limited
 from micromech.core.config import MicromechConfig
+from micromech.runtime.delivery import _sanitize_error
 
 ACTION_WITHDRAW = "withdraw"
 
@@ -34,67 +33,20 @@ def _build_chain_keyboard(chains: dict) -> InlineKeyboardMarkup:
                 )
             ]
         )
-    buttons.append(
-        [InlineKeyboardButton("Cancel", callback_data=f"{ACTION_WITHDRAW}:cancel")]
-    )
+    buttons.append([InlineKeyboardButton("Cancel", callback_data=f"{ACTION_WITHDRAW}:cancel")])
     return InlineKeyboardMarkup(buttons)
 
 
-async def _get_pending_balance(
-    bridge, chain_name: str, chain_config
-) -> float | None:
-    """Return pending mech balance in xDAI, or None on error."""
-    from micromech.core.marketplace import (
-        get_balance_tracker_address,
-        get_pending_balance,
+async def _get_withdraw_preview(bridge, chain_name: str, chain_config, safe_reserve_xdai: float):
+    """Return shared withdraw preview for Telegram UI."""
+    from micromech.tasks.payment_withdraw import preview_payment_withdraw
+
+    return await preview_payment_withdraw(
+        bridge,
+        chain_name,
+        chain_config,
+        safe_reserve_xdai=safe_reserve_xdai,
     )
-
-    try:
-        bt_address = await asyncio.to_thread(
-            get_balance_tracker_address,
-            bridge,
-            chain_name,
-            chain_config.mech_address,
-            chain_config.marketplace_address,
-        )
-        if not bt_address:
-            return None
-        return await asyncio.to_thread(
-            get_pending_balance,
-            bridge,
-            bt_address,
-            chain_config.mech_address,
-            raise_on_error=True,
-        )
-    except Exception:
-        return None
-
-
-async def _get_mech_balance_wei(bridge, chain_config) -> int | None:
-    """Return native xDAI balance held by the mech contract, or None on error."""
-    try:
-        web3 = bridge.web3
-        return await asyncio.to_thread(
-            bridge.with_retry,
-            lambda: web3.eth.get_balance(
-                web3.to_checksum_address(chain_config.mech_address)
-            ),
-        )
-    except Exception:
-        return None
-
-
-async def _get_withdraw_balances(
-    bridge,
-    chain_name: str,
-    chain_config,
-) -> tuple[float | None, int | None]:
-    """Return (balance-tracker pending xDAI, mech contract wei)."""
-    pending, mech_wei = await asyncio.gather(
-        _get_pending_balance(bridge, chain_name, chain_config),
-        _get_mech_balance_wei(bridge, chain_config),
-    )
-    return pending, mech_wei
 
 
 def _format_available_balance(pending: float | None, mech_wei: int | None) -> str:
@@ -107,97 +59,59 @@ def _format_available_balance(pending: float | None, mech_wei: int | None) -> st
     return "\n".join(parts)
 
 
+def _append_safe_balance_line(parts: str, safe_excess_wei: int | None) -> str:
+    """Append Safe excess balance to a confirmation message."""
+    if safe_excess_wei is None or safe_excess_wei <= 0:
+        return parts
+    safe_line = f"Safe excess: {code_md(f'{safe_excess_wei / 1e18:.6f} xDAI')}"
+    return f"{parts}\n{safe_line}" if parts else safe_line
+
+
 async def _run_withdraw(
-    bridge, chain_name: str, chain_config
+    bridge, chain_name: str, chain_config, safe_reserve_xdai: float = 0.0
 ) -> tuple[bool, str]:
-    """Run the full withdrawal pipeline for one chain.
+    """Run the shared withdrawal pipeline for one chain."""
+    from micromech.tasks.payment_withdraw import execute_payment_withdraw
 
-    Returns (success, result_message_md).
-    """
-    from micromech.core.bridge import get_service_info
-    from micromech.core.locks import get_safe_lock
-    from micromech.core.marketplace import get_balance_tracker_address
-    from micromech.tasks.payment_withdraw import (
-        _drain_mech_to_safe,
-        _transfer_to_master,
-        _withdraw,
-    )
-
-    svc_info = await asyncio.to_thread(get_service_info, chain_name)
-    multisig = svc_info.get("multisig_address")
-    if not multisig:
-        return False, f"{bold_md(chain_name.upper())}: No multisig address"
-
-    pending = await _get_pending_balance(bridge, chain_name, chain_config)
-    mech_wei_before = await _get_mech_balance_wei(bridge, chain_config)
-    if pending is None and mech_wei_before is None:
-        return False, f"{bold_md(chain_name.upper())}: Could not retrieve balances"
-    if pending is None and (mech_wei_before or 0) <= 0:
-        return False, (
-            f"{bold_md(chain_name.upper())}: Could not retrieve pending balance"
-        )
-
-    has_pending = (pending or 0.0) > 0
-    has_stranded = (mech_wei_before or 0) > 0
-    if not has_pending and not has_stranded:
-        return True, f"{bold_md(chain_name.upper())}: No pending payments"
-
-    async with get_safe_lock(multisig):
-        if has_pending:
-            bt_address = await asyncio.to_thread(
-                get_balance_tracker_address,
-                bridge,
-                chain_name,
-                chain_config.mech_address,
-                chain_config.marketplace_address,
-            )
-            if not bt_address:
-                return False, (
-                    f"{bold_md(chain_name.upper())}: Could not resolve balance tracker"
-                )
-            # Step 1: processPaymentByMultisig → xDAI to mech contract
-            await asyncio.to_thread(
-                _withdraw,
-                bridge,
-                chain_name,
-                bt_address,
-                chain_config.mech_address,
-                multisig,
-            )
-
-        # Step 2: mech.exec → drain mech to Safe (read exact wei first)
-        web3 = bridge.web3
-        mech_wei = await asyncio.to_thread(
-            bridge.with_retry,
-            lambda: web3.eth.get_balance(
-                web3.to_checksum_address(chain_config.mech_address)
-            ),
-        )
-        await asyncio.to_thread(
-            _drain_mech_to_safe,
+    try:
+        result = await execute_payment_withdraw(
             bridge,
             chain_name,
-            chain_config.mech_address,
-            multisig,
-            mech_wei,
+            chain_config,
+            threshold_xdai=0.0,
+            safe_reserve_xdai=safe_reserve_xdai,
+        )
+    except Exception as e:
+        return False, user_error(f"withdraw {chain_name}", e)
+
+    if result.status == "no_funds":
+        return True, f"{bold_md(chain_name.upper())}: No pending payments"
+
+    if result.status == "swept_safe":
+        return True, (
+            f"{bold_md(chain_name.upper())}: "
+            f"Swept {code_md(f'{result.transferred_to_master_wei / 1e18:.6f} xDAI')} "
+            "from Safe to master"
         )
 
-        # Step 3: Safe → master (funds are in Safe if this fails)
-        amount = mech_wei / 1e18
-        try:
-            await asyncio.to_thread(
-                _transfer_to_master, bridge, chain_name, multisig, mech_wei
-            )
-        except Exception as e:
+    if result.transfer_error is not None:
+        failed_amount = code_md(f"{result.attempted_transfer_to_master_wei / 1e18:.6f} xDAI")
+        if result.mech_withdrawn_wei <= 0:
             return True, (
                 f"{bold_md(chain_name.upper())}: "
-                f"{code_md(f'{amount:.6f} xDAI')} drained to Safe "
-                f"but transfer to master failed: {code_md(str(e))}"
+                f"Safe sweep failed; {failed_amount} remains in Safe: "
+                f"{code_md(_sanitize_error(result.transfer_error))}"
             )
+        return True, (
+            f"{bold_md(chain_name.upper())}: "
+            f"{code_md(f'{result.mech_withdrawn_wei / 1e18:.6f} xDAI')} drained to Safe "
+            f"but {failed_amount} could not be transferred to master: "
+            f"{code_md(_sanitize_error(result.transfer_error))}"
+        )
 
     return True, (
         f"{bold_md(chain_name.upper())}: "
-        f"Withdrawn {code_md(f'{amount:.6f} xDAI')} to master"
+        f"Withdrawn {code_md(f'{result.transferred_to_master_wei / 1e18:.6f} xDAI')} to master"
     )
 
 
@@ -215,9 +129,7 @@ def _chains_with_mech(config: MicromechConfig, bridges: dict) -> dict:
 
 @authorized_only
 @rate_limited
-async def withdraw_command(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> None:
+async def withdraw_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /withdraw command."""
     if not update.message:
         return
@@ -227,9 +139,7 @@ async def withdraw_command(
     chains = _chains_with_mech(config, bridges)
 
     if not chains:
-        await update.message.reply_text(
-            "No chains with mech payment configured."
-        )
+        await update.message.reply_text("No chains with mech payment configured.")
         return
 
     if len(chains) == 1:
@@ -259,22 +169,35 @@ async def _show_balance_and_confirm(
         parse_mode=ParseMode.MARKDOWN_V2,
     )
 
-    pending, mech_wei = await _get_withdraw_balances(bridge, chain_name, chain_config)
-    if pending is None and mech_wei is None:
+    try:
+        preview = await _get_withdraw_preview(
+            bridge,
+            chain_name,
+            chain_config,
+            config.payment_withdraw_safe_reserve_xdai,
+        )
+    except Exception:
+        preview = None
+
+    pending = preview.pending_xdai if preview else None
+    mech_wei = preview.mech_balance_wei if preview else None
+    safe_excess_wei = preview.safe_excess_wei if preview else None
+
+    if pending is None and mech_wei is None and (safe_excess_wei or 0) <= 0:
         await status_msg.edit_text(
             "Could not retrieve withdraw balances\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
-    if pending is None and (mech_wei or 0) <= 0:
+    if pending is None and (mech_wei or 0) <= 0 and (safe_excess_wei or 0) <= 0:
         await status_msg.edit_text(
             "Could not retrieve pending balance\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         return
 
-    if (pending or 0.0) <= 0 and (mech_wei or 0) <= 0:
+    if (pending or 0.0) <= 0 and (mech_wei or 0) <= 0 and (safe_excess_wei or 0) <= 0:
         await status_msg.edit_text(
             f"{bold_md(chain_name.upper())}: No pending payments\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
@@ -289,16 +212,13 @@ async def _show_balance_and_confirm(
                     callback_data=f"{ACTION_WITHDRAW}:confirm:{chain_name}",
                 )
             ],
-            [
-                InlineKeyboardButton(
-                    "Cancel", callback_data=f"{ACTION_WITHDRAW}:cancel"
-                )
-            ],
+            [InlineKeyboardButton("Cancel", callback_data=f"{ACTION_WITHDRAW}:cancel")],
         ]
     )
     await status_msg.edit_text(
         f"{bold_md(chain_name.upper())}: "
-        f"withdrawable balance\n{_format_available_balance(pending, mech_wei)}\n"
+        f"withdrawable balance\n"
+        f"{_append_safe_balance_line(_format_available_balance(pending, mech_wei), safe_excess_wei)}\n"
         f"Withdraw to master?",
         reply_markup=keyboard,
         parse_mode=ParseMode.MARKDOWN_V2,
@@ -319,9 +239,7 @@ async def handle_withdraw_callback(
 
     config: MicromechConfig = context.bot_data["config"]
     bridges: dict = context.bot_data.get("bridges", {})
-    withdraw_inflight: set = context.bot_data.setdefault(
-        "withdraw_inflight", set()
-    )
+    withdraw_inflight: set = context.bot_data.setdefault("withdraw_inflight", set())
 
     # Chain picker selected → show balance + confirm button
     if not payload.startswith("confirm:") and payload != "all":
@@ -337,10 +255,25 @@ async def handle_withdraw_callback(
             f"Checking balance for {bold_md(chain_name.upper())}\\.\\.\\.",
             parse_mode=ParseMode.MARKDOWN_V2,
         )
-        pending, mech_wei = await _get_withdraw_balances(bridge, chain_name, chain_config)
-        if (pending is None and mech_wei is None) or (
-            pending is None and (mech_wei or 0) <= 0
-        ) or ((pending or 0.0) <= 0 and (mech_wei or 0) <= 0):
+        try:
+            preview = await _get_withdraw_preview(
+                bridge,
+                chain_name,
+                chain_config,
+                config.payment_withdraw_safe_reserve_xdai,
+            )
+        except Exception:
+            preview = None
+
+        pending = preview.pending_xdai if preview else None
+        mech_wei = preview.mech_balance_wei if preview else None
+        safe_excess_wei = preview.safe_excess_wei if preview else None
+
+        if (
+            (pending is None and mech_wei is None and (safe_excess_wei or 0) <= 0)
+            or (pending is None and (mech_wei or 0) <= 0 and (safe_excess_wei or 0) <= 0)
+            or ((pending or 0.0) <= 0 and (mech_wei or 0) <= 0 and (safe_excess_wei or 0) <= 0)
+        ):
             msg = (
                 "No pending payments\\."
                 if pending is not None and (pending or 0.0) <= 0
@@ -357,9 +290,7 @@ async def handle_withdraw_callback(
                 [
                     InlineKeyboardButton(
                         "Withdraw",
-                        callback_data=(
-                            f"{ACTION_WITHDRAW}:confirm:{chain_name}"
-                        ),
+                        callback_data=(f"{ACTION_WITHDRAW}:confirm:{chain_name}"),
                     )
                 ],
                 [
@@ -372,7 +303,8 @@ async def handle_withdraw_callback(
         )
         await query.edit_message_text(
             f"{bold_md(chain_name.upper())}: "
-            f"withdrawable balance\n{_format_available_balance(pending, mech_wei)}\n"
+            f"withdrawable balance\n"
+            f"{_append_safe_balance_line(_format_available_balance(pending, mech_wei), safe_excess_wei)}\n"
             f"Withdraw to master?",
             reply_markup=keyboard,
             parse_mode=ParseMode.MARKDOWN_V2,
@@ -381,7 +313,7 @@ async def handle_withdraw_callback(
 
     # Confirm single chain
     if payload.startswith("confirm:"):
-        chain_name = payload[len("confirm:"):]
+        chain_name = payload[len("confirm:") :]
         chain_config = config.enabled_chains.get(chain_name)
         bridge = bridges.get(chain_name)
         if not chain_config or not bridge:
@@ -399,10 +331,13 @@ async def handle_withdraw_callback(
             parse_mode=ParseMode.MARKDOWN_V2,
         )
         try:
-            _ok, msg = await _run_withdraw(bridge, chain_name, chain_config)
-            await query.edit_message_text(
-                msg, parse_mode=ParseMode.MARKDOWN_V2
+            _ok, msg = await _run_withdraw(
+                bridge,
+                chain_name,
+                chain_config,
+                config.payment_withdraw_safe_reserve_xdai,
             )
+            await query.edit_message_text(msg, parse_mode=ParseMode.MARKDOWN_V2)
         except Exception as e:
             await query.edit_message_text(
                 user_error(f"withdraw {chain_name}", e),
@@ -423,14 +358,15 @@ async def handle_withdraw_callback(
     results = []
     for chain_name, chain_config in chains.items():
         if chain_name in withdraw_inflight:
-            results.append(
-                f"{bold_md(chain_name.upper())}: Already in progress"
-            )
+            results.append(f"{bold_md(chain_name.upper())}: Already in progress")
             continue
         withdraw_inflight.add(chain_name)
         try:
             _ok, msg = await _run_withdraw(
-                bridges[chain_name], chain_name, chain_config
+                bridges[chain_name],
+                chain_name,
+                chain_config,
+                config.payment_withdraw_safe_reserve_xdai,
             )
             results.append(msg)
         except Exception as e:

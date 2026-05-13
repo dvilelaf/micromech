@@ -10,7 +10,9 @@ from micromech.tasks.notifications import NotificationService
 from micromech.tasks.payment_withdraw import (
     _drain_mech_to_safe,
     _transfer_to_master,
+    _transfer_to_master_with_retry,
     _withdraw,
+    execute_payment_withdraw,
     payment_withdraw_task,
 )
 from tests.conftest import make_test_config
@@ -222,11 +224,11 @@ class TestDrainMechToSafe:
 
         mech_contract = bridge.web3.eth.contract(address=MECH)
         mech_contract.functions.exec.assert_called_once_with(
-            MULTISIG,   # to
-            amount_wei, # value (native xDAI)
-            b"",        # data
-            0,          # operation = Call
-            100_000,    # txGas
+            MULTISIG,  # to
+            amount_wei,  # value (native xDAI)
+            b"",  # data
+            0,  # operation = Call
+            100_000,  # txGas
         )
 
     def test_waits_for_receipt_via_with_retry(self):
@@ -267,6 +269,71 @@ class TestTransferToMaster:
 
         with pytest.raises(RuntimeError, match="transfer to master reverted"):
             _transfer_to_master(bridge, "gnosis", MULTISIG, int(1e18))
+
+    def test_retry_wrapper_retries_gs026(self):
+        """GS026 can be a transient Safe nonce-state race and is retried."""
+        bridge = _make_bridge()
+        bridge.wallet.send.side_effect = [
+            RuntimeError("Safe transaction failed: GS026"),
+            "0xtxhash_transfer",
+        ]
+
+        with patch("micromech.tasks.payment_withdraw.time.sleep") as sleep_mock:
+            _transfer_to_master_with_retry(
+                bridge,
+                "gnosis",
+                MULTISIG,
+                int(1e18),
+                retry_delay_seconds=0,
+            )
+
+        assert bridge.wallet.send.call_count == 2
+        sleep_mock.assert_called_once_with(0)
+
+    def test_retry_wrapper_does_not_retry_non_gs026(self):
+        """Non-GS026 Safe transfer errors still fail immediately."""
+        bridge = _make_bridge()
+        bridge.wallet.send.side_effect = RuntimeError("insufficient funds")
+
+        with pytest.raises(RuntimeError, match="insufficient funds"):
+            _transfer_to_master_with_retry(
+                bridge,
+                "gnosis",
+                MULTISIG,
+                int(1e18),
+                retry_delay_seconds=0,
+            )
+
+        bridge.wallet.send.assert_called_once()
+
+    def test_transfers_safe_excess_above_reserve(self):
+        """Stranded xDAI already in the Safe can be swept to master."""
+        from micromech.tasks.payment_withdraw import _transfer_safe_excess_to_master
+
+        bridge = _make_bridge()
+        bridge.web3.eth.get_balance.return_value = int(33.92e18)
+
+        swept = _transfer_safe_excess_to_master(bridge, "gnosis", MULTISIG, reserve_xdai=0.5)
+
+        assert swept == int(33.42e18)
+        bridge.wallet.send.assert_called_once_with(
+            from_address_or_tag=MULTISIG,
+            to_address_or_tag=str(bridge.wallet.master_account.address),
+            amount_wei=int(33.42e18),
+            chain_name="gnosis",
+        )
+
+    def test_safe_excess_below_reserve_is_noop(self):
+        """Safe reserve is not swept."""
+        from micromech.tasks.payment_withdraw import _transfer_safe_excess_to_master
+
+        bridge = _make_bridge()
+        bridge.web3.eth.get_balance.return_value = int(0.5e18)
+
+        swept = _transfer_safe_excess_to_master(bridge, "gnosis", MULTISIG, reserve_xdai=0.5)
+
+        assert swept == 0
+        bridge.wallet.send.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +388,8 @@ class TestPaymentWithdrawTask:
         cfg.chains = {"gnosis": chain_cfg}
 
         bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.01e18))
+        # Mech has dust below threshold; Safe has no stranded balance.
+        bridge.web3.eth.get_balance.side_effect = [int(0.01e18), 0]
         bridges = {"gnosis": bridge}
         notification = NotificationService()
         notification.send = AsyncMock()
@@ -333,6 +402,62 @@ class TestPaymentWithdrawTask:
 
         bridge.wallet.safe_service.execute_safe_transaction.assert_not_called()
         notification.send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sweeps_stranded_safe_balance_when_pending_below_threshold(self):
+        """The next scheduled payment task retries Safe→master leftovers."""
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 30.0
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=0)
+        # First balance read is the mech contract, second is the Safe.
+        bridge.web3.eth.get_balance.side_effect = [0, int(33.92e18)]
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        bridge.wallet.safe_service.execute_safe_transaction.assert_not_called()
+        bridge.wallet.send.assert_called_once()
+        assert bridge.wallet.send.call_args.kwargs["amount_wei"] == int(33.92e18)
+        notification.send.assert_awaited_once()
+        assert "Safe Payment Swept" in notification.send.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_safe_only_sweep_failure_reports_safe_amount(self):
+        """Safe-only transfer failures report the stranded Safe amount, not 0 drained."""
+        cfg = _make_config()
+        cfg.payment_withdraw_threshold_xdai = 30.0
+
+        chain_cfg = _make_chain_config()
+        cfg.chains = {"gnosis": chain_cfg}
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=0)
+        bridge.web3.eth.get_balance.side_effect = [0, int(33.42e18)]
+        bridge.wallet.send.side_effect = RuntimeError("Safe tx failed")
+        bridges = {"gnosis": bridge}
+        notification = NotificationService()
+        notification.send = AsyncMock()
+
+        with patch(
+            "micromech.core.bridge.get_service_info",
+            return_value={"multisig_address": MULTISIG},
+        ):
+            await payment_withdraw_task(bridges, notification, cfg)
+
+        notification.send.assert_awaited_once()
+        title, msg = notification.send.call_args.args[:2]
+        assert title == "Safe Payment Sweep Failed"
+        assert "33.420000 xDAI" in msg
+        assert "Amount: 0.000000" not in msg
 
     @pytest.mark.asyncio
     async def test_full_flow_calls_three_steps(self):
@@ -461,8 +586,8 @@ class TestPaymentWithdrawTask:
         chain_cfg = _make_chain_config()
         cfg.chains = {"gnosis": chain_cfg}
 
-        bt_balance_raw = int(41.79e18)        # tracker amount (above threshold)
-        actual_mech_wei = int(41.78e18)       # mech received less (fees)
+        bt_balance_raw = int(41.79e18)  # tracker amount (above threshold)
+        actual_mech_wei = int(41.78e18)  # mech received less (fees)
         assert bt_balance_raw != actual_mech_wei, "values must differ to prove divergence"
 
         bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=bt_balance_raw)
@@ -499,7 +624,11 @@ class TestPaymentWithdrawTask:
         existing_wei = int(0.2e18)
         combined_wei = int(0.7e18)
         bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=int(0.5e18))
-        bridge.web3.eth.get_balance.side_effect = [existing_wei, combined_wei]
+        bridge.web3.eth.get_balance.side_effect = [
+            existing_wei,
+            combined_wei,
+            combined_wei,
+        ]
         bridges = {"gnosis": bridge}
         notification = NotificationService()
         notification.send = AsyncMock()
@@ -574,6 +703,39 @@ class TestPaymentWithdrawTask:
         assert "Stage: resolve balance tracker" in msg
         assert "tracker RPC timeout" in msg
         bridge.wallet.safe_service.execute_safe_transaction.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_tracker_failure_still_sweeps_stranded_safe_balance(self):
+        """Safe-only recovery is not blocked by tracker RPC failures."""
+        chain_cfg = _make_chain_config()
+
+        bridge = _make_bridge(bt_address=BT_ADDR, mech_balance_raw=0)
+        # First read: mech has no xDAI. Second read: Safe has stranded xDAI.
+        bridge.web3.eth.get_balance.side_effect = [0, int(33.42e18)]
+
+        with (
+            patch(
+                "micromech.tasks.payment_withdraw.get_balance_tracker_address",
+                side_effect=RuntimeError("tracker RPC timeout"),
+            ),
+            patch(
+                "micromech.core.bridge.get_service_info",
+                return_value={"multisig_address": MULTISIG},
+            ),
+            patch("micromech.tasks.payment_withdraw.time.sleep"),
+        ):
+            result = await execute_payment_withdraw(
+                bridge,
+                "gnosis",
+                chain_cfg,
+                threshold_xdai=1.0,
+                safe_reserve_xdai=0.0,
+            )
+
+        assert result.status == "swept_safe"
+        assert result.transferred_to_master_wei == int(33.42e18)
+        bridge.wallet.safe_service.execute_safe_transaction.assert_not_called()
+        bridge.wallet.send.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_pending_read_failure_still_drains_existing_mech_balance(self):

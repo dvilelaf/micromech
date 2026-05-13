@@ -1,6 +1,6 @@
 """Tests for the web UI."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -247,7 +247,16 @@ class TestChainAPI:
 class TestManagementAPI:
     """Test the /api/management/{action} endpoint."""
 
-    CSRF = {"X-Micromech-Action": "test"}
+    CSRF = {"X-Micromech-Action": "test", "Authorization": "Bearer test-password"}
+
+    @pytest.fixture(autouse=True)
+    def _management_auth(self, monkeypatch):
+        """Management endpoints require completed setup and configured auth."""
+        monkeypatch.setattr("micromech.web.app._needs_setup", lambda: False)
+        monkeypatch.setattr(
+            "micromech.web.dependencies._get_webui_password",
+            lambda: "test-password",
+        )
 
     @patch("micromech.management.MechLifecycle")
     @patch("micromech.web.app.MicromechConfig")
@@ -361,8 +370,117 @@ class TestManagementAPI:
         resp = web_client.post(
             "/api/management/stake",
             json={"service_key": "svc-1"},
+            headers={"Authorization": "Bearer test-password"},
         )
         assert resp.status_code == 403
+
+    def test_management_rejects_setup_mode(self, monkeypatch, web_client: TestClient):
+        """Management actions are not available through the setup-mode bypass."""
+        monkeypatch.setattr("micromech.web.app._needs_setup", lambda: True)
+
+        resp = web_client.post(
+            "/api/management/stake",
+            json={"service_key": "svc-1"},
+            headers=self.CSRF,
+        )
+
+        assert resp.status_code == 401
+
+    def test_management_rejects_query_token_auth(self, web_client: TestClient):
+        """Management actions require Bearer auth; URL tokens are not accepted."""
+        resp = web_client.post(
+            "/api/management/stake?token=test-password",
+            json={"service_key": "svc-1"},
+            headers={"X-Micromech-Action": "test"},
+        )
+
+        assert resp.status_code == 401
+
+    @patch("micromech.web.app.MicromechConfig")
+    def test_withdraw_uses_shared_executor_for_safe_sweep(
+        self, mock_cfg_cls, web_client: TestClient
+    ):
+        """Web withdraw uses the shared executor, including Safe-only sweeps."""
+        from micromech.tasks.payment_withdraw import PaymentWithdrawResult
+
+        chain_cfg = MagicMock()
+        chain_cfg.mech_address = "0x" + "a" * 40
+        mock_cfg = MagicMock()
+        mock_cfg.enabled_chains = {"gnosis": chain_cfg}
+        mock_cfg.payment_withdraw_safe_reserve_xdai = 0.0
+        mock_cfg_cls.load.return_value = mock_cfg
+
+        result = PaymentWithdrawResult(
+            chain_name="gnosis",
+            status="swept_safe",
+            transferred_to_master_wei=int(33.42e18),
+            multisig_address="0x" + "c" * 40,
+        )
+
+        with (
+            patch("micromech.core.bridge.IwaBridge", return_value=MagicMock()),
+            patch(
+                "micromech.tasks.payment_withdraw.execute_payment_withdraw",
+                new=AsyncMock(return_value=result),
+            ) as exec_mock,
+        ):
+            resp = web_client.post(
+                "/api/management/withdraw",
+                json={"chain": "gnosis"},
+                headers=self.CSRF,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["data"]["status"] == "swept_safe"
+        assert data["data"]["amount_xdai"] == 33.42
+        exec_mock.assert_awaited_once()
+
+    @patch("micromech.web.app.MicromechConfig")
+    def test_withdraw_transfer_failure_has_top_level_error(
+        self, mock_cfg_cls, web_client: TestClient
+    ):
+        """Web withdraw returns a coherent partial-failure payload."""
+        from micromech.tasks.payment_withdraw import PaymentWithdrawResult
+
+        chain_cfg = MagicMock()
+        chain_cfg.mech_address = "0x" + "a" * 40
+        mock_cfg = MagicMock()
+        mock_cfg.enabled_chains = {"gnosis": chain_cfg}
+        mock_cfg.payment_withdraw_safe_reserve_xdai = 0.0
+        mock_cfg_cls.load.return_value = mock_cfg
+
+        result = PaymentWithdrawResult(
+            chain_name="gnosis",
+            status="transfer_failed",
+            mech_withdrawn_wei=0,
+            transferred_to_master_wei=0,
+            attempted_transfer_to_master_wei=int(33.42e18),
+            multisig_address="0x" + "c" * 40,
+            transfer_error=RuntimeError("Safe tx failed"),
+        )
+
+        with (
+            patch("micromech.core.bridge.IwaBridge", return_value=MagicMock()),
+            patch(
+                "micromech.tasks.payment_withdraw.execute_payment_withdraw",
+                new=AsyncMock(return_value=result),
+            ),
+        ):
+            resp = web_client.post(
+                "/api/management/withdraw",
+                json={"chain": "gnosis"},
+                headers=self.CSRF,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert "error" in data
+        assert data["data"]["status"] == "transfer_failed"
+        assert data["data"]["amount_xdai"] == 0.0
+        assert data["data"]["safe_remaining_xdai"] == 33.42
 
 
 class TestToolsHotReload:

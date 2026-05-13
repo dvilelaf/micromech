@@ -29,6 +29,7 @@ from micromech.web.dependencies import (
     require_csrf_header,
     verify_auth,
     verify_auth_or_setup_mode,
+    verify_management_auth,
 )
 
 if TYPE_CHECKING:
@@ -1297,7 +1298,7 @@ def create_web_app(
 
     @protected_router.post(
         "/management/{action}",
-        dependencies=[Depends(require_csrf_header)],
+        dependencies=[Depends(require_csrf_header), Depends(verify_management_auth)],
     )
     async def management_action(action: str, request: Request) -> dict:
         """Execute a management action (stake, unstake, claim, checkpoint).
@@ -1341,17 +1342,8 @@ def create_web_app(
         # withdraw must run in the async event loop (needs get_safe_lock, an asyncio.Lock)
         if action == "withdraw":
             try:
-                from micromech.core.bridge import IwaBridge, get_service_info
-                from micromech.core.locks import get_safe_lock
-                from micromech.core.marketplace import (
-                    get_balance_tracker_address,
-                    get_pending_balance,
-                )
-                from micromech.tasks.payment_withdraw import (
-                    _drain_mech_to_safe,
-                    _transfer_to_master,
-                    _withdraw,
-                )
+                from micromech.core.bridge import IwaBridge
+                from micromech.tasks.payment_withdraw import execute_payment_withdraw
 
                 cfg = MicromechConfig.load()
                 chain = body.get("chain", "gnosis")
@@ -1360,45 +1352,39 @@ def create_web_app(
                     return {"success": False, "error": "No mech_address configured for this chain"}
 
                 bridge = IwaBridge(chain_name=chain)
-                bt_address = await asyncio.to_thread(
-                    get_balance_tracker_address,
-                    bridge, chain, chain_cfg.mech_address, chain_cfg.marketplace_address,
+                result = await execute_payment_withdraw(
+                    bridge,
+                    chain,
+                    chain_cfg,
+                    threshold_xdai=0.0,
+                    safe_reserve_xdai=cfg.payment_withdraw_safe_reserve_xdai,
                 )
-                if not bt_address:
-                    return {"success": False, "error": "Could not find balance tracker address"}
-
-                balance = await asyncio.to_thread(
-                    get_pending_balance, bridge, bt_address, chain_cfg.mech_address
+                message = (
+                    "No pending payments"
+                    if result.status == "no_funds"
+                    else "Transfer to master failed; funds remain in Safe"
+                    if result.transfer_error is not None
+                    else "Withdraw complete"
                 )
-                if balance <= 0:
-                    return {"success": True, "action": "withdraw", "data": {"amount_xdai": 0.0, "message": "No pending payments"}}
-
-                svc_info = await asyncio.to_thread(get_service_info, chain)
-                multisig = svc_info.get("multisig_address")
-                if not multisig:
-                    return {"success": False, "error": "No multisig_address found"}
-
-                _WITHDRAW_LOCK_TIMEOUT = 30  # seconds to wait for the Safe lock
-                try:
-                    lock = get_safe_lock(multisig)
-                    await asyncio.wait_for(lock.acquire(), timeout=_WITHDRAW_LOCK_TIMEOUT)
-                except asyncio.TimeoutError:
-                    return {"success": False, "error": "Safe lock busy — delivery in progress, try again shortly"}
-                mech_wei = 0
-                try:
-                    await asyncio.to_thread(_withdraw, bridge, chain, bt_address, chain_cfg.mech_address, multisig)
-                    web3 = bridge.web3
-                    mech_wei = await asyncio.to_thread(
-                        bridge.with_retry,
-                        lambda: web3.eth.get_balance(web3.to_checksum_address(chain_cfg.mech_address)),
-                    )
-                    await asyncio.to_thread(_drain_mech_to_safe, bridge, chain, chain_cfg.mech_address, multisig, mech_wei)
-                    await asyncio.to_thread(_transfer_to_master, bridge, chain, multisig, mech_wei)
-                    amount_xdai = round(mech_wei / 1e18, 6)
-                finally:
-                    lock.release()
-
-                return {"success": True, "action": "withdraw", "data": {"amount_xdai": amount_xdai}}
+                response = {
+                    "success": result.transfer_error is None,
+                    "action": "withdraw",
+                    "data": {
+                        "status": result.status,
+                        "amount_xdai": round(result.transferred_to_master_wei / 1e18, 6),
+                        "mech_withdrawn_xdai": round(result.mech_withdrawn_wei / 1e18, 6),
+                        "safe_remaining_xdai": round(
+                            result.attempted_transfer_to_master_wei / 1e18,
+                            6,
+                        )
+                        if result.transfer_error is not None
+                        else 0.0,
+                        "message": message,
+                    },
+                }
+                if result.transfer_error is not None:
+                    response["error"] = message
+                return response
             except Exception:
                 logger.exception("withdraw action failed")
                 return {"success": False, "error": "Withdraw failed. Check server logs."}
@@ -1500,20 +1486,14 @@ def create_web_app(
                 pass
         return result
 
-    def _profits_date_range(
-        year: int, month: Optional[int]
-    ) -> tuple:
+    def _profits_date_range(year: int, month: Optional[int]) -> tuple:
         import datetime as dt
 
         start = dt.datetime(year, 1, 1)
         end = dt.datetime(year + 1, 1, 1)
         if month and 1 <= month <= 12:
             start = dt.datetime(year, month, 1)
-            end = (
-                dt.datetime(year + 1, 1, 1)
-                if month == 12
-                else dt.datetime(year, month + 1, 1)
-            )
+            end = dt.datetime(year + 1, 1, 1) if month == 12 else dt.datetime(year, month + 1, 1)
         return start, end
 
     def _profits_is_xdai(tx: Any) -> bool:
@@ -1559,17 +1539,15 @@ def create_web_app(
                 multisig_txs = [tx for tx in all_txs if tx.to_tag == "master"]
             else:
                 multisig_txs = [
-                    tx for tx in all_txs
+                    tx
+                    for tx in all_txs
                     if tx.from_address and tx.from_address.lower() in multisig_set
                 ]
             withdrawals = [
-                tx for tx in multisig_txs
-                if _profits_is_xdai(tx) and (tx.value_eur or 0) > 0.001
+                tx for tx in multisig_txs if _profits_is_xdai(tx) and (tx.value_eur or 0) > 0.001
             ]
 
-            total_xdai = sum(
-                int(tx.amount_wei or 0) / 1e18 for tx in withdrawals
-            )
+            total_xdai = sum(int(tx.amount_wei or 0) / 1e18 for tx in withdrawals)
             total_eur = sum(tx.value_eur or 0 for tx in withdrawals)
             total_gas = sum(tx.gas_value_eur or 0 for tx in withdrawals)
 
@@ -1593,15 +1571,17 @@ def create_web_app(
                 d = monthly[m]
                 m_pre_tax = d["eur"] - d["gas"]
                 m_tax = m_pre_tax * effective_rate if m_pre_tax > 0 else 0.0
-                months.append({
-                    "month": m,
-                    "xdai": round(d["xdai"], 6),
-                    "eur": round(d["eur"], 2),
-                    "gas": round(d["gas"], 2),
-                    "tax": round(m_tax, 2),
-                    "net": round(m_pre_tax - m_tax, 2),
-                    "count": d["count"],
-                })
+                months.append(
+                    {
+                        "month": m,
+                        "xdai": round(d["xdai"], 6),
+                        "eur": round(d["eur"], 2),
+                        "gas": round(d["gas"], 2),
+                        "tax": round(m_tax, 2),
+                        "net": round(m_pre_tax - m_tax, 2),
+                        "count": d["count"],
+                    }
+                )
 
             return {
                 "year": effective_year,
@@ -1654,14 +1634,16 @@ def create_web_app(
             )
             if use_tag_filter:
                 withdrawals = [
-                    tx for tx in txs
+                    tx
+                    for tx in txs
                     if tx.to_tag == "master"
                     and _profits_is_xdai(tx)
                     and (tx.value_eur or 0) > 0.001
                 ]
             else:
                 withdrawals = [
-                    tx for tx in txs
+                    tx
+                    for tx in txs
                     if tx.from_address
                     and tx.from_address.lower() in multisig_set
                     and _profits_is_xdai(tx)
@@ -1670,18 +1652,24 @@ def create_web_app(
 
             result = []
             for tx in withdrawals:
-                chain_name = addr_to_chain.get(tx.from_address.lower() if tx.from_address else "", "")
+                chain_name = addr_to_chain.get(
+                    tx.from_address.lower() if tx.from_address else "", ""
+                )
                 if not chain_name and use_tag_filter:
                     chain_name = getattr(tx, "chain_name", "") or "gnosis"
-                explorer = f"https://gnosisscan.io/tx/{tx.tx_hash}" if chain_name == "gnosis" else ""
-                result.append({
-                    "date": tx.timestamp.isoformat(),
-                    "chain": chain_name,
-                    "xdai": round(int(tx.amount_wei or 0) / 1e18, 6),
-                    "eur": round(tx.value_eur or 0, 2),
-                    "tx_hash": tx.tx_hash or "",
-                    "explorer_url": explorer,
-                })
+                explorer = (
+                    f"https://gnosisscan.io/tx/{tx.tx_hash}" if chain_name == "gnosis" else ""
+                )
+                result.append(
+                    {
+                        "date": tx.timestamp.isoformat(),
+                        "chain": chain_name,
+                        "xdai": round(int(tx.amount_wei or 0) / 1e18, 6),
+                        "eur": round(tx.value_eur or 0, 2),
+                        "tx_hash": tx.tx_hash or "",
+                        "explorer_url": explorer,
+                    }
+                )
             return result
 
         try:

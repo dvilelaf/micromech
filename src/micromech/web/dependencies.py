@@ -136,6 +136,35 @@ def verify_auth_or_setup_mode(
     raise unauthorized
 
 
+def verify_management_auth(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> None:
+    """Require configured auth for mutating management actions.
+
+    Management actions submit transactions or change service state, so they
+    never inherit the setup wizard bypass and never allow the fresh-install
+    "no password yet" shortcut used by read-only dashboard endpoints.
+    """
+    from micromech.web.app import _needs_setup
+
+    unauthorized = HTTPException(
+        status_code=401,
+        detail="Unauthorized",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    if _needs_setup():
+        raise unauthorized
+
+    password = _get_webui_password()
+    if not password:
+        raise unauthorized
+
+    if _check_token(authorization, None, password):
+        return
+    raise unauthorized
+
+
 def require_csrf_header(
     x_micromech_action: Optional[str] = Header(None, alias=CSRF_HEADER),
 ) -> None:
