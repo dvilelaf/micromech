@@ -7,7 +7,6 @@ from telegram.ext import ContextTypes
 from micromech.bot.formatting import bold_md, code_md, user_error
 from micromech.bot.security import authorized_only, rate_limited
 from micromech.core.config import MicromechConfig
-from micromech.runtime.delivery import _sanitize_error
 
 ACTION_WITHDRAW = "withdraw"
 
@@ -80,6 +79,7 @@ async def _run_withdraw(
             chain_config,
             threshold_xdai=0.0,
             safe_reserve_xdai=safe_reserve_xdai,
+            sweep_existing_safe_excess=True,
         )
     except Exception as e:
         return False, user_error(f"withdraw {chain_name}", e)
@@ -94,19 +94,27 @@ async def _run_withdraw(
             "from Safe to master"
         )
 
+    if result.status == "drained_to_safe":
+        return True, (
+            f"{bold_md(chain_name.upper())}: "
+            f"Drained {code_md(f'{result.mech_withdrawn_wei / 1e18:.6f} xDAI')} to Safe; "
+            "nothing transferred to master because Safe excess is at or below reserve"
+        )
+
+    if result.status == "lock_busy":
+        return True, f"{bold_md(chain_name.upper())}: Safe is busy, try again shortly"
+
     if result.transfer_error is not None:
         failed_amount = code_md(f"{result.attempted_transfer_to_master_wei / 1e18:.6f} xDAI")
         if result.mech_withdrawn_wei <= 0:
             return True, (
                 f"{bold_md(chain_name.upper())}: "
-                f"Safe sweep failed; {failed_amount} remains in Safe: "
-                f"{code_md(_sanitize_error(result.transfer_error))}"
+                f"Safe sweep failed; {failed_amount} remains in Safe. Check local logs."
             )
         return True, (
             f"{bold_md(chain_name.upper())}: "
             f"{code_md(f'{result.mech_withdrawn_wei / 1e18:.6f} xDAI')} drained to Safe "
-            f"but {failed_amount} could not be transferred to master: "
-            f"{code_md(_sanitize_error(result.transfer_error))}"
+            f"but {failed_amount} could not be transferred to master. Check local logs."
         )
 
     return True, (

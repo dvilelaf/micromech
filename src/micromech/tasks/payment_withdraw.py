@@ -22,6 +22,7 @@ before the standard Safe→master transfer can happen.
 
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
@@ -104,6 +105,22 @@ class PaymentWithdrawExecutionError(RuntimeError):
         self.mech_balance_wei = mech_balance_wei
 
 
+@asynccontextmanager
+async def _safe_lock(multisig_address: str, timeout_seconds: float | None = None):
+    """Acquire the per-Safe lock, optionally with a bounded wait."""
+    lock = get_safe_lock(multisig_address)
+    if timeout_seconds is None:
+        async with lock:
+            yield
+        return
+
+    await asyncio.wait_for(lock.acquire(), timeout=timeout_seconds)
+    try:
+        yield
+    finally:
+        lock.release()
+
+
 async def _notify_withdraw_failure(
     notification_service: "NotificationService",
     chain_name: str,
@@ -129,7 +146,7 @@ async def _notify_withdraw_failure(
         lines.append(f"Mech contract balance: {mech_balance_wei / 1e18:.6f} xDAI")
     lines.extend(
         [
-            f"Error: {_sanitize_error(error)}",
+            "Error details: check local logs.",
             "Action: check mech, Safe and balance-tracker balances before assuming payments are missing.",
         ]
     )
@@ -422,6 +439,8 @@ async def execute_payment_withdraw(
     *,
     threshold_xdai: float = 0.0,
     safe_reserve_xdai: float = 0.0,
+    sweep_existing_safe_excess: bool = False,
+    safe_lock_timeout_seconds: float | None = None,
 ) -> PaymentWithdrawResult:
     """Execute the single shared payment withdraw/sweep flow.
 
@@ -491,7 +510,20 @@ async def execute_payment_withdraw(
     mech_actual_wei = 0
     transfer_error: Exception | None = None
 
-    async with get_safe_lock(multisig):
+    try:
+        lock_context = _safe_lock(multisig, safe_lock_timeout_seconds)
+        await lock_context.__aenter__()
+    except asyncio.TimeoutError:
+        return PaymentWithdrawResult(
+            chain_name=chain_name,
+            status="lock_busy",
+            pending_xdai=pending,
+            mech_withdrawn_wei=0,
+            multisig_address=multisig,
+            pending_read_error=pending_read_error,
+        )
+
+    try:
         if should_process_pending:
             if not bt_address:
                 raise RuntimeError(
@@ -547,21 +579,27 @@ async def execute_payment_withdraw(
                         mech_balance_wei=mech_actual_wei,
                     ) from e
 
-        try:
-            transfer_to_master_wei = await asyncio.to_thread(
-                _get_safe_excess_balance_wei,
-                bridge,
-                chain_name,
-                multisig,
-                safe_reserve_xdai,
-            )
-        except Exception as e:
-            raise PaymentWithdrawExecutionError(
-                "read Safe excess balance",
-                e,
-                pending_xdai=pending,
-                mech_balance_wei=mech_actual_wei,
-            ) from e
+        if sweep_existing_safe_excess:
+            try:
+                transfer_to_master_wei = await asyncio.to_thread(
+                    _get_safe_excess_balance_wei,
+                    bridge,
+                    chain_name,
+                    multisig,
+                    safe_reserve_xdai,
+                )
+            except Exception as e:
+                raise PaymentWithdrawExecutionError(
+                    "read Safe excess balance",
+                    e,
+                    pending_xdai=pending,
+                    mech_balance_wei=mech_actual_wei,
+                ) from e
+        elif should_process_pending or should_drain_mech:
+            transfer_to_master_wei = mech_actual_wei
+        else:
+            transfer_to_master_wei = 0
+
         if transfer_to_master_wei <= 0:
             if tracker_resolution_error is not None:
                 raise PaymentWithdrawExecutionError(
@@ -594,6 +632,13 @@ async def execute_payment_withdraw(
             )
         except Exception as e:
             transfer_error = e
+            logger.warning(
+                "[{}] Safe→master transfer failed after withdraw/sweep: {}",
+                chain_name,
+                _sanitize_error(e),
+            )
+    finally:
+        await lock_context.__aexit__(None, None, None)
 
     if transfer_error is not None:
         return PaymentWithdrawResult(
@@ -659,6 +704,7 @@ async def payment_withdraw_task(
                 chain_config,
                 threshold_xdai=threshold,
                 safe_reserve_xdai=config.payment_withdraw_safe_reserve_xdai,
+                sweep_existing_safe_excess=False,
             )
             if result.status == "no_funds":
                 logger.debug("[{}] No payment withdraw funds available", chain_name)
@@ -675,6 +721,17 @@ async def payment_withdraw_task(
                 )
                 continue
 
+            if result.status == "drained_to_safe":
+                await notification_service.send(
+                    "Mech Payment Drained",
+                    (
+                        f"Chain: {chain_name}\n"
+                        f"Amount: {result.mech_withdrawn_wei / 1e18:.6f} xDAI\n"
+                        "To Safe: transfer to master skipped because Safe excess is at or below reserve."
+                    ),
+                )
+                continue
+
             if result.transfer_error is None:
                 master = str(bridge.wallet.master_account.address)
                 await notification_service.send(
@@ -684,8 +741,7 @@ async def payment_withdraw_task(
                         f"\nTransferred to master: {result.transferred_to_master_wei / 1e18:.6f} xDAI"
                         f"\nMaster: {master}"
                         + (
-                            "\nWARNING: pending balance read failed before drain: "
-                            f"{_sanitize_error(result.pending_read_error)}"
+                            "\nWARNING: pending balance read failed before drain; check local logs."
                             if result.pending_read_error is not None
                             else ""
                         )
@@ -708,10 +764,9 @@ async def payment_withdraw_task(
                     (
                         f"Chain: {chain_name}\n{amount_line}"
                         f"\nSafe: {result.multisig_address}"
-                        f"\nWARNING: transfer to master failed: {_sanitize_error(result.transfer_error)}"
+                        "\nWARNING: transfer to master failed; check local logs."
                         + (
-                            "\nWARNING: pending balance read failed before drain: "
-                            f"{_sanitize_error(result.pending_read_error)}"
+                            "\nWARNING: pending balance read failed before drain; check local logs."
                             if result.pending_read_error is not None
                             else ""
                         )

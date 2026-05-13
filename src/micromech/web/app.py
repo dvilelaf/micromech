@@ -1358,16 +1358,22 @@ def create_web_app(
                     chain_cfg,
                     threshold_xdai=0.0,
                     safe_reserve_xdai=cfg.payment_withdraw_safe_reserve_xdai,
+                    sweep_existing_safe_excess=True,
+                    safe_lock_timeout_seconds=30,
                 )
                 message = (
                     "No pending payments"
                     if result.status == "no_funds"
+                    else "Safe lock busy — delivery in progress, try again shortly"
+                    if result.status == "lock_busy"
+                    else "Drained to Safe; nothing transferred to master because Safe excess is at or below reserve"
+                    if result.status == "drained_to_safe"
                     else "Transfer to master failed; funds remain in Safe"
                     if result.transfer_error is not None
                     else "Withdraw complete"
                 )
                 response = {
-                    "success": result.transfer_error is None,
+                    "success": result.transfer_error is None and result.status != "lock_busy",
                     "action": "withdraw",
                     "data": {
                         "status": result.status,
@@ -1382,7 +1388,7 @@ def create_web_app(
                         "message": message,
                     },
                 }
-                if result.transfer_error is not None:
+                if result.transfer_error is not None or result.status == "lock_busy":
                     response["error"] = message
                 return response
             except Exception:
@@ -1486,20 +1492,14 @@ def create_web_app(
                 pass
         return result
 
-    def _profits_date_range(
-        year: int, month: Optional[int]
-    ) -> tuple:
+    def _profits_date_range(year: int, month: Optional[int]) -> tuple:
         import datetime as dt
 
         start = dt.datetime(year, 1, 1)
         end = dt.datetime(year + 1, 1, 1)
         if month and 1 <= month <= 12:
             start = dt.datetime(year, month, 1)
-            end = (
-                dt.datetime(year + 1, 1, 1)
-                if month == 12
-                else dt.datetime(year, month + 1, 1)
-            )
+            end = dt.datetime(year + 1, 1, 1) if month == 12 else dt.datetime(year, month + 1, 1)
         return start, end
 
     def _profits_is_xdai(tx: Any) -> bool:
@@ -1545,17 +1545,15 @@ def create_web_app(
                 multisig_txs = [tx for tx in all_txs if tx.to_tag == "master"]
             else:
                 multisig_txs = [
-                    tx for tx in all_txs
+                    tx
+                    for tx in all_txs
                     if tx.from_address and tx.from_address.lower() in multisig_set
                 ]
             withdrawals = [
-                tx for tx in multisig_txs
-                if _profits_is_xdai(tx) and (tx.value_eur or 0) > 0.001
+                tx for tx in multisig_txs if _profits_is_xdai(tx) and (tx.value_eur or 0) > 0.001
             ]
 
-            total_xdai = sum(
-                int(tx.amount_wei or 0) / 1e18 for tx in withdrawals
-            )
+            total_xdai = sum(int(tx.amount_wei or 0) / 1e18 for tx in withdrawals)
             total_eur = sum(tx.value_eur or 0 for tx in withdrawals)
             total_gas = sum(tx.gas_value_eur or 0 for tx in withdrawals)
 
@@ -1579,15 +1577,17 @@ def create_web_app(
                 d = monthly[m]
                 m_pre_tax = d["eur"] - d["gas"]
                 m_tax = m_pre_tax * effective_rate if m_pre_tax > 0 else 0.0
-                months.append({
-                    "month": m,
-                    "xdai": round(d["xdai"], 6),
-                    "eur": round(d["eur"], 2),
-                    "gas": round(d["gas"], 2),
-                    "tax": round(m_tax, 2),
-                    "net": round(m_pre_tax - m_tax, 2),
-                    "count": d["count"],
-                })
+                months.append(
+                    {
+                        "month": m,
+                        "xdai": round(d["xdai"], 6),
+                        "eur": round(d["eur"], 2),
+                        "gas": round(d["gas"], 2),
+                        "tax": round(m_tax, 2),
+                        "net": round(m_pre_tax - m_tax, 2),
+                        "count": d["count"],
+                    }
+                )
 
             return {
                 "year": effective_year,
@@ -1640,14 +1640,16 @@ def create_web_app(
             )
             if use_tag_filter:
                 withdrawals = [
-                    tx for tx in txs
+                    tx
+                    for tx in txs
                     if tx.to_tag == "master"
                     and _profits_is_xdai(tx)
                     and (tx.value_eur or 0) > 0.001
                 ]
             else:
                 withdrawals = [
-                    tx for tx in txs
+                    tx
+                    for tx in txs
                     if tx.from_address
                     and tx.from_address.lower() in multisig_set
                     and _profits_is_xdai(tx)
@@ -1656,18 +1658,24 @@ def create_web_app(
 
             result = []
             for tx in withdrawals:
-                chain_name = addr_to_chain.get(tx.from_address.lower() if tx.from_address else "", "")
+                chain_name = addr_to_chain.get(
+                    tx.from_address.lower() if tx.from_address else "", ""
+                )
                 if not chain_name and use_tag_filter:
                     chain_name = getattr(tx, "chain_name", "") or "gnosis"
-                explorer = f"https://gnosisscan.io/tx/{tx.tx_hash}" if chain_name == "gnosis" else ""
-                result.append({
-                    "date": tx.timestamp.isoformat(),
-                    "chain": chain_name,
-                    "xdai": round(int(tx.amount_wei or 0) / 1e18, 6),
-                    "eur": round(tx.value_eur or 0, 2),
-                    "tx_hash": tx.tx_hash or "",
-                    "explorer_url": explorer,
-                })
+                explorer = (
+                    f"https://gnosisscan.io/tx/{tx.tx_hash}" if chain_name == "gnosis" else ""
+                )
+                result.append(
+                    {
+                        "date": tx.timestamp.isoformat(),
+                        "chain": chain_name,
+                        "xdai": round(int(tx.amount_wei or 0) / 1e18, 6),
+                        "eur": round(tx.value_eur or 0, 2),
+                        "tx_hash": tx.tx_hash or "",
+                        "explorer_url": explorer,
+                    }
+                )
             return result
 
         try:

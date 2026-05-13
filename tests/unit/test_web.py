@@ -396,6 +396,20 @@ class TestManagementAPI:
 
         assert resp.status_code == 401
 
+    def test_management_rejects_missing_password_post_setup(
+        self, monkeypatch, web_client: TestClient
+    ):
+        """Management actions fail closed when setup is complete but auth is missing."""
+        monkeypatch.setattr("micromech.web.dependencies._get_webui_password", lambda: None)
+
+        resp = web_client.post(
+            "/api/management/stake",
+            json={"service_key": "svc-1"},
+            headers={"X-Micromech-Action": "test"},
+        )
+
+        assert resp.status_code == 401
+
     @patch("micromech.web.app.MicromechConfig")
     def test_withdraw_uses_shared_executor_for_safe_sweep(
         self, mock_cfg_cls, web_client: TestClient
@@ -436,6 +450,83 @@ class TestManagementAPI:
         assert data["data"]["status"] == "swept_safe"
         assert data["data"]["amount_xdai"] == 33.42
         exec_mock.assert_awaited_once()
+        assert exec_mock.await_args.kwargs["threshold_xdai"] == 0.0
+        assert exec_mock.await_args.kwargs["safe_reserve_xdai"] == 0.0
+        assert exec_mock.await_args.kwargs["sweep_existing_safe_excess"] is True
+        assert exec_mock.await_args.kwargs["safe_lock_timeout_seconds"] == 30
+
+    @patch("micromech.web.app.MicromechConfig")
+    def test_withdraw_drained_to_safe_message(self, mock_cfg_cls, web_client: TestClient):
+        """Web withdraw reports drained_to_safe explicitly."""
+        from micromech.tasks.payment_withdraw import PaymentWithdrawResult
+
+        chain_cfg = MagicMock()
+        chain_cfg.mech_address = "0x" + "a" * 40
+        mock_cfg = MagicMock()
+        mock_cfg.enabled_chains = {"gnosis": chain_cfg}
+        mock_cfg.payment_withdraw_safe_reserve_xdai = 0.0
+        mock_cfg_cls.load.return_value = mock_cfg
+
+        result = PaymentWithdrawResult(
+            chain_name="gnosis",
+            status="drained_to_safe",
+            mech_withdrawn_wei=int(3e18),
+            transferred_to_master_wei=0,
+            multisig_address="0x" + "c" * 40,
+        )
+
+        with (
+            patch("micromech.core.bridge.IwaBridge", return_value=MagicMock()),
+            patch(
+                "micromech.tasks.payment_withdraw.execute_payment_withdraw",
+                new=AsyncMock(return_value=result),
+            ),
+        ):
+            resp = web_client.post(
+                "/api/management/withdraw",
+                json={"chain": "gnosis"},
+                headers=self.CSRF,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is True
+        assert data["data"]["status"] == "drained_to_safe"
+        assert data["data"]["mech_withdrawn_xdai"] == 3.0
+        assert "nothing transferred to master" in data["data"]["message"]
+
+    @patch("micromech.web.app.MicromechConfig")
+    def test_withdraw_lock_busy_has_error(self, mock_cfg_cls, web_client: TestClient):
+        """Web withdraw maps lock_busy to a bounded failure."""
+        from micromech.tasks.payment_withdraw import PaymentWithdrawResult
+
+        chain_cfg = MagicMock()
+        chain_cfg.mech_address = "0x" + "a" * 40
+        mock_cfg = MagicMock()
+        mock_cfg.enabled_chains = {"gnosis": chain_cfg}
+        mock_cfg.payment_withdraw_safe_reserve_xdai = 0.0
+        mock_cfg_cls.load.return_value = mock_cfg
+
+        result = PaymentWithdrawResult(chain_name="gnosis", status="lock_busy")
+
+        with (
+            patch("micromech.core.bridge.IwaBridge", return_value=MagicMock()),
+            patch(
+                "micromech.tasks.payment_withdraw.execute_payment_withdraw",
+                new=AsyncMock(return_value=result),
+            ),
+        ):
+            resp = web_client.post(
+                "/api/management/withdraw",
+                json={"chain": "gnosis"},
+                headers=self.CSRF,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["success"] is False
+        assert data["data"]["status"] == "lock_busy"
+        assert "error" in data
 
     @patch("micromech.web.app.MicromechConfig")
     def test_withdraw_transfer_failure_has_top_level_error(
